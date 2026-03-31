@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' file: blob: data: snipfocus-media:; media-src 'self' file: blob: data: snipfocus-media:; font-src 'self' data:; connect-src 'self';" />
+    <title>Select Capture Region</title>
+    <style>
+        /* Basic reset and ensure full coverage */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body,
+        #capture-root {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            cursor: crosshair;
+            background: transparent;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="capture-root"></div>
+</body>
+
+</html>

@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' file: blob: data: snipfocus-media:; media-src 'self' file: blob: data: snipfocus-media:; font-src 'self' data:; connect-src 'self';" />
+    <title>Recording Controls</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: transparent;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            overflow: hidden;
+            padding: 0;
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 6px;
+            background: rgba(18, 18, 23, 0.75);
+            backdrop-filter: blur(24px);
+            border-radius: 12px;
+            /* Dynamic border */
+            border: 1px solid var(--widget-border-color, rgba(255, 255, 255, 0.1));
+            box-shadow: inset 0 0 0 1px var(--widget-glow-color, transparent);
+            -webkit-app-region: drag;
+            cursor: grab;
+            transition: border-color 0.4s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.4s ease;
+            --widget-border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .timer-section {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 6px 0 2px;
+            border-right: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .health-badge {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .health-badge.healthy {
+            background: #22c55e;
+        }
+
+        .health-badge.degraded {
+            background: #eab308;
+        }
+
+        .health-badge.poor {
+            background: #ef4444;
+        }
+
+        .dot {
+            width: 3px;
+            height: 3px;
+            background: #f87171;
+            border-radius: 50%;
+            animation: pulse 2.5s ease-in-out infinite;
+        }
+
+        .timer {
+            font-size: 10px;
+            font-weight: 400;
+            color: rgba(255, 255, 255, 0.85);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.01em;
+        }
+
+        .btn {
+            width: 26px;
+            height: 26px;
+            border-radius: 6px;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            -webkit-app-region: no-drag;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.5);
+            position: relative;
+        }
+
+        .btn:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .btn:active {
+            transform: translateY(0) scale(0.95);
+        }
+
+        .btn svg {
+            width: 14px;
+            height: 14px;
+            stroke-width: 1.5;
+        }
+
+        .btn-camera:hover {
+            color: #60a5fa;
+        }
+
+        .btn-zoom:hover {
+            color: #34d399;
+        }
+
+        .btn-tele:hover {
+            color: #a78bfa;
+        }
+
+        .btn-bg-color:hover {
+            color: #f8fafc;
+        }
+
+        .btn-draw.active {
+            color: #fbbf24;
+            background: rgba(251, 191, 36, 0.1);
+        }
+
+        .btn-edit.active {
+            color: #60a5fa;
+            background: rgba(96, 165, 250, 0.1);
+        }
+
+
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="controls">
+        <div class="timer-section">
+            <div class="dot"></div>
+            <span class="timer" id="timer">00:00</span>
+            <div class="health-badge healthy" id="healthBadge" title="Capture health"></div>
+        </div>
+
+        <button class="btn btn-camera" id="cameraBtn" title="Toggle Camera">
+            <!-- Lucide Camera Icon -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+            </svg>
+        </button>
+
+        <button class="btn btn-zoom" id="zoomBtn" title="Zoom Camera">
+            <!-- Lucide Search Icon -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                <line x1="11" y1="8" x2="11" y2="14" />
+                <line x1="8" y1="11" x2="14" y2="11" />
+            </svg>
+        </button>
+
+        <button class="btn btn-tele" id="teleBtn" title="Teleprompter">
+            <!-- Lucide AlignLeft Icon -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <line x1="17" y1="10" x2="3" y2="10" />
+                <line x1="21" y1="6" x2="3" y2="6" />
+                <line x1="21" y1="14" x2="3" y2="14" />
+                <line x1="17" y1="18" x2="3" y2="18" />
+            </svg>
+        </button>
+
+        <button class="btn btn-draw" id="drawBtn" title="Draw on screen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+            </svg>
+        </button>
+
+        <button class="btn btn-stop" id="stopBtn" title="Stop Recording">
+            <!-- Lucide Square Icon -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+            </svg>
+        </button>
+    </div>
+    <script>
+        // Apply feature flags on load
+        (function applyFeatureFlags() {
+            const api = window.recordingWidgetAPI;
+            if (api && api.getFeatureFlags) {
+                api.getFeatureFlags().then((flags) => {
+                    if (!flags.ENABLE_TELEPROMPTER) {
+                        const tele = document.getElementById('teleBtn');
+                        if (tele) tele.style.display = 'none';
+                    }
+                    if (!flags.ENABLE_DRAWING) {
+                        const draw = document.getElementById('drawBtn');
+                        if (draw) draw.style.display = 'none';
+                    }
+                }).catch(() => { });
+            }
+        })();
+
+        // Timer logic
+        let startTime = Date.now();
+        let timerElement = document.getElementById('timer');
+
+        function updateTimer() {
+            let elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const secs = (elapsed % 60).toString().padStart(2, '0');
+            timerElement.textContent = `${mins}:${secs}`;
+        }
+
+        const timerInterval = setInterval(updateTimer, 1000);
+
+        // Get API
+        const api = window.recordingWidgetAPI;
+
+        // Capture health badge
+        const healthBadge = document.getElementById('healthBadge');
+        if (api && api.onCaptureHealth && healthBadge) {
+            api.onCaptureHealth((metrics) => {
+                const status = metrics.status || 'healthy';
+                healthBadge.className = 'health-badge ' + status;
+                healthBadge.title = 'Capture ' + status + (metrics.effectiveFps != null ? ' (' + metrics.effectiveFps + ' fps)' : '');
+
+                if (currentHealthStatus !== status) {
+                    currentHealthStatus = status;
+                    if (!isDrawingEnabled) updateWidgetBorder();
+                }
+            });
+        }
+
+        // Camera toggle
+        let isCameraVisible = true;
+        document.getElementById('cameraBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            console.log('[RecordingWidget] Camera button clicked');
+            if (api && api.showWebcam) {
+                api.showWebcam();
+            }
+        });
+
+        // Create canvas for composition
+        // Zoom toggle
+        document.getElementById('zoomBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            console.log('[RecordingWidget] Zoom button clicked');
+            if (api && api.toggleZoom) {
+                api.toggleZoom();
+            }
+        });
+
+        // Teleprompter toggle
+        document.getElementById('teleBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            console.log('[RecordingWidget] Teleprompter button clicked');
+            if (api && api.toggleTeleprompter) {
+                api.toggleTeleprompter();
+            }
+        });
+
+        // Drawing toggle
+        let isDrawingEnabled = false;
+        let currentDrawColor = '#ef4444';
+        let currentHealthStatus = 'healthy';
+        const drawBtn = document.getElementById('drawBtn');
+
+        const STATUS_COLORS = {
+            healthy: 'rgba(34, 197, 94, 0.4)',
+            degraded: 'rgba(234, 179, 8, 0.5)',
+            poor: 'rgba(239, 68, 68, 0.5)'
+        };
+
+        const STATUS_GLOWS = {
+            healthy: 'rgba(34, 197, 94, 0.1)',
+            degraded: 'rgba(234, 179, 8, 0.15)',
+            poor: 'rgba(239, 68, 68, 0.15)'
+        };
+
+        function updateWidgetBorder() {
+            const controls = document.querySelector('.controls');
+            if (!controls) return;
+
+            if (isDrawingEnabled) {
+                controls.style.setProperty('--widget-border-color', currentDrawColor);
+                // Extract RGB from hex for glow
+                const hex = currentDrawColor.replace('#', '');
+                const r = parseInt(hex.substring(0, 2), 16);
+                const g = parseInt(hex.substring(2, 4), 16);
+                const b = parseInt(hex.substring(4, 6), 16);
+                controls.style.setProperty('--widget-glow-color', `rgba(${r}, ${g}, ${b}, 0.15)`);
+            } else {
+                const color = STATUS_COLORS[currentHealthStatus] || 'rgba(255, 255, 255, 0.1)';
+                const glow = STATUS_GLOWS[currentHealthStatus] || 'transparent';
+                controls.style.setProperty('--widget-border-color', color);
+                controls.style.setProperty('--widget-glow-color', glow);
+            }
+        }
+
+        updateWidgetBorder();
+
+        drawBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            isDrawingEnabled = !isDrawingEnabled;
+            drawBtn.classList.toggle('active', isDrawingEnabled);
+
+            if (api && api.toggleDrawingOverlay) {
+                api.toggleDrawingOverlay(isDrawingEnabled);
+            }
+            if (isDrawingEnabled && api && api.setDrawingColor) {
+                api.setDrawingColor(currentDrawColor);
+            }
+            updateWidgetBorder();
+        });
+
+        if (api && api.onDrawingToggled) {
+            api.onDrawingToggled((enabled) => {
+                isDrawingEnabled = !!enabled;
+                drawBtn.classList.toggle('active', isDrawingEnabled);
+                updateWidgetBorder();
+            });
+        }
+
+        // Close dropdowns
+        document.addEventListener('click', (e) => {
+            // Dropdown logic removed
+        });
+
+        // Check recording mode to show/hide window controls - Removed since controls are gone
+        api.onRecordingSettings?.((config) => {
+            // Logic removed as windowControls is gone
+        });
+
+
+
+        // Stop recording
+        document.getElementById('stopBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            console.log('[RecordingWidget] Stop button clicked');
+            if (api && api.stopRecording) {
+                api.stopRecording();
+            }
+        });
+        console.log('[RecordingWidget] Loaded, API:', api);
+        // Hover state persistence
+        document.body.addEventListener('mouseenter', () => {
+            if (api && api.sendHoverState) api.sendHoverState(true);
+        });
+        document.body.addEventListener('mouseleave', () => {
+            if (api && api.sendHoverState) api.sendHoverState(false);
+        });
+    </script>
+</body>
+
+</html>

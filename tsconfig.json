@@ -1,0 +1,38 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": [
+            "ES2022",
+            "DOM",
+            "DOM.Iterable"
+        ],
+        "allowJs": true,
+        "module": "esnext",
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "downlevelIteration": true,
+        "noImplicitAny": true,
+        "sourceMap": true,
+        "baseUrl": ".",
+        "outDir": "dist",
+        "moduleResolution": "node",
+        "resolveJsonModule": true,
+        "jsx": "react-jsx",
+        "strict": false,
+        "paths": {
+            "*": [
+                "node_modules/*"
+            ],
+            "@config/*": [
+                "src/config/*"
+            ],
+            "@services/*": [
+                "src/services/*"
+            ]
+        }
+    },
+    "include": [
+        "src/**/*"
+    ]
+}

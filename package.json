@@ -1,0 +1,83 @@
+{
+    "name": "snip-focus",
+    "productName": "SnipFocus",
+    "version": "1.0.0",
+    "description": "Screen capture and focus productivity tool",
+    "main": ".webpack/main",
+    "engines": {
+        "node": "22.x",
+        "npm": ">=11"
+    },
+    "scripts": {
+        "start": "cross-env SNIPFOCUS_RELEASE_PROFILE=dev electron-forge start",
+        "test": "node tests/run-core-helpers.js",
+        "clean:generated": "node scripts/clean-generated.js",
+        "postinstall": "patch-package",
+        "package": "node scripts/run-forge.js package --profile=direct-download",
+        "make": "node scripts/run-forge.js make --profile=direct-download",
+        "make:win-arm64": "node scripts/run-forge.js make --profile=direct-download --platform=win32 --arch=arm64",
+        "make:win-x64": "node scripts/run-forge.js make --profile=direct-download --platform=win32 --arch=x64",
+        "make:store-win-x64": "node scripts/run-forge.js make --profile=store --platform=win32 --arch=x64",
+        "make:store-win-arm64": "node scripts/run-forge.js make --profile=store --platform=win32 --arch=arm64",
+        "make:store-win-all": "npm run make:store-win-x64 && npm run make:store-win-arm64",
+        "audit:package-size": "node scripts/audit-package-size.js",
+        "lint": "eslint --ext .ts,.tsx .",
+        "build:native": "npx node-gyp rebuild --directory=src/native/capture_engine",
+        "build:native:win-arm64": "npx node-gyp rebuild --directory=src/native/capture_engine --arch=arm64",
+        "rebuild:native": "electron-rebuild -f -w capture_engine",
+        "rebuild:native:win-arm64": "electron-rebuild -f -w capture_engine --arch=arm64"
+    },
+    "keywords": [
+        "screenshot",
+        "snipping",
+        "focus",
+        "productivity"
+    ],
+    "author": {
+        "name": "gmiez",
+        "email": "gabl@inbox.lv"
+    },
+    "license": "MIT",
+    "devDependencies": {
+        "@electron-forge/cli": "^7.8.0",
+        "@electron-forge/maker-msix": "^7.10.2",
+        "@electron-forge/maker-squirrel": "^7.8.0",
+        "@electron-forge/maker-zip": "^7.8.0",
+        "@electron-forge/plugin-auto-unpack-natives": "^7.8.0",
+        "@electron-forge/plugin-fuses": "^7.8.0",
+        "@electron-forge/plugin-webpack": "^7.8.0",
+        "@electron/fuses": "^1.8.0",
+        "@types/react": "^19.0.12",
+        "@types/react-dom": "^19.0.4",
+        "@types/three": "^0.182.0",
+        "@typescript-eslint/eslint-plugin": "^8.28.0",
+        "@typescript-eslint/parser": "^8.28.0",
+        "@vercel/webpack-asset-relocator-loader": "1.7.0",
+        "cross-env": "^7.0.3",
+        "css-loader": "^6.11.0",
+        "electron": "35.1.2",
+        "eslint": "^9.23.0",
+        "fork-ts-checker-webpack-plugin": "^7.3.0",
+        "node-addon-api": "^8.6.0",
+        "node-gyp": "^12.2.0",
+        "node-loader": "^2.1.0",
+        "patch-package": "^8.0.1",
+        "style-loader": "^3.3.4",
+        "ts-loader": "^9.5.2",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.3.0",
+        "webpack": "~5.88.0",
+        "webpack-cli": "^6.0.1"
+    },
+    "dependencies": {
+        "@ffmpeg-installer/ffmpeg": "^1.1.0",
+        "electron-squirrel-startup": "^1.0.1",
+        "electron-store": "^11.0.2",
+        "lucide-react": "^0.554.0",
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0",
+        "tesseract.js": "^7.0.0",
+        "three": "^0.182.0",
+        "zustand": "^5.0.7"
+    }
+}

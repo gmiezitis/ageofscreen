@@ -1,0 +1,49 @@
+diff --git a/node_modules/@electron-forge/plugin-webpack/dist/WebpackPlugin.js b/node_modules/@electron-forge/plugin-webpack/dist/WebpackPlugin.js
+index bb9c86b..c1833f5 100644
+--- a/node_modules/@electron-forge/plugin-webpack/dist/WebpackPlugin.js
++++ b/node_modules/@electron-forge/plugin-webpack/dist/WebpackPlugin.js
+@@ -429,13 +429,30 @@ the generated files). Instead, it is ${JSON.stringify(pj.main)}`);
+                             task: async () => {
+                                 await this.compileMain();
+                                 await this.compileRenderers();
++                                if (otherArches.length === 0) {
++                                    return;
++                                }
+                                 // Store it in a place that won't get messed with
+                                 // We'll restore the right "arch" in the afterCopy hook further down
+                                 const preExistingChildren = await fs_extra_1.default.readdir(this.baseDir);
+                                 const targetDir = node_path_1.default.resolve(this.baseDir, firstArch);
+                                 await fs_extra_1.default.mkdirp(targetDir);
+                                 for (const child of preExistingChildren) {
+-                                    await fs_extra_1.default.move(node_path_1.default.resolve(this.baseDir, child), node_path_1.default.resolve(targetDir, child));
++                                    const sourcePath = node_path_1.default.resolve(this.baseDir, child);
++                                    const destinationPath = node_path_1.default.resolve(targetDir, child);
++                                    if (sourcePath === targetDir) {
++                                        continue;
++                                    }
++                                    try {
++                                        await fs_extra_1.default.move(sourcePath, destinationPath, { overwrite: true });
++                                    }
++                                    catch (error) {
++                                        if (error && typeof error === 'object' && 'code' in error && error.code === 'EPERM') {
++                                            await fs_extra_1.default.copy(sourcePath, destinationPath, { overwrite: true, recursive: true });
++                                            continue;
++                                        }
++                                        throw error;
++                                    }
+                                 }
+                             },
+                             rendererOptions: {
+@@ -460,7 +477,11 @@ the generated files). Instead, it is ${JSON.stringify(pj.main)}`);
+                     // Restore the correct 'arch' build of webpack
+                     // Steal the correct arch, wipe the folder, move it back to pretend to be ".webpack" root
+                     const tmpWebpackDir = node_path_1.default.resolve(buildPath, '.webpack.tmp');
+-                    await fs_extra_1.default.move(node_path_1.default.resolve(buildPath, '.webpack', pArch), tmpWebpackDir);
++                    const archWebpackDir = node_path_1.default.resolve(buildPath, '.webpack', pArch);
++                    if (!(await fs_extra_1.default.pathExists(archWebpackDir))) {
++                        return;
++                    }
++                    await fs_extra_1.default.move(archWebpackDir, tmpWebpackDir);
+                     await fs_extra_1.default.remove(node_path_1.default.resolve(buildPath, '.webpack'));
+                     await fs_extra_1.default.move(tmpWebpackDir, node_path_1.default.resolve(buildPath, '.webpack'));
+                 },

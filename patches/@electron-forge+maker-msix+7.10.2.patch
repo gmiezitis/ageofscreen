@@ -1,0 +1,84 @@
+diff --git a/node_modules/@electron-forge/maker-msix/dist/MakerMSIX.js b/node_modules/@electron-forge/maker-msix/dist/MakerMSIX.js
+index c5c42bd..4296070 100644
+--- a/node_modules/@electron-forge/maker-msix/dist/MakerMSIX.js
++++ b/node_modules/@electron-forge/maker-msix/dist/MakerMSIX.js
+@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.MakerMSIX = void 0;
+ const node_os_1 = __importDefault(require("node:os"));
+ const node_path_1 = __importDefault(require("node:path"));
++const child_process_1 = require("node:child_process");
+ const core_utils_1 = require("@electron-forge/core-utils");
+ const maker_base_1 = require("@electron-forge/maker-base");
+ const electron_windows_msix_1 = require("electron-windows-msix");
+@@ -24,13 +25,61 @@ class MakerMSIX extends maker_base_1.MakerBase {
+     isSupportedOnCurrentPlatform() {
+         return process.platform === 'win32';
+     }
++    async signMsix(msixPath, windowsSignOptions = {}) {
++        const certificateFile = windowsSignOptions.certificateFile || process.env.WINDOWS_CERTIFICATE_FILE || process.env.WINDOWS_CERT_FILE;
++        const certificatePassword = windowsSignOptions.certificatePassword || process.env.WINDOWS_CERTIFICATE_PASSWORD || process.env.WINDOWS_CERT_PASSWORD;
++        const signToolPath = windowsSignOptions.signToolPath || process.env.WINDOWS_SIGNTOOL_PATH || 'signtool.exe';
++        if (!certificateFile || !certificatePassword) {
++            throw new Error('MSIX signing requires certificate file and password.');
++        }
++        const args = ['sign', '/fd', 'sha256', '/f', certificateFile, '/p', certificatePassword];
++        if (windowsSignOptions.description) {
++            args.push('/d', windowsSignOptions.description);
++        }
++        if (windowsSignOptions.website) {
++            args.push('/du', windowsSignOptions.website);
++        }
++        const timestampServer = windowsSignOptions.timestampServer || process.env.WINDOWS_TIMESTAMP_SERVER;
++        if (timestampServer) {
++            args.push('/tr', timestampServer, '/td', 'sha256');
++        }
++        args.push(msixPath);
++        await new Promise((resolve) => setTimeout(resolve, 250));
++        await new Promise((resolve, reject) => {
++            const child = (0, child_process_1.spawn)(signToolPath, args, {
++                stdio: 'pipe',
++            });
++            let stdout = '';
++            let stderr = '';
++            child.stdout.on('data', (chunk) => {
++                stdout += chunk.toString();
++            });
++            child.stderr.on('data', (chunk) => {
++                stderr += chunk.toString();
++            });
++            child.on('error', reject);
++            child.on('exit', (code) => {
++                if (code !== 0) {
++                    reject(new Error(`Signtool exited with code ${code}. Stderr: ${stderr}. Stdout: ${stdout}`));
++                    return;
++                }
++                resolve(undefined);
++            });
++        });
++    }
+     async make({ dir, makeDir, targetArch, packageJSON, appName, }) {
+         const { manifestVariables, ...packageOptions } = this.config;
++        const windowsKitPath = packageOptions.windowsKitPath || process.env.WINDOWS_KIT_PATH;
++        const windowsKitVersion = packageOptions.windowsKitVersion || process.env.WINDOWS_KIT_VERSION;
++        const shouldSign = packageOptions.sign !== false;
+         // Do all the scratch work in a temporary folder
+         const tmpFolder = await fs_extra_1.default.mkdtemp(node_path_1.default.resolve(node_os_1.default.tmpdir(), 'msix-maker-'));
+         try {
+             const result = await (0, electron_windows_msix_1.packageMSIX)({
+                 ...packageOptions,
++                ...(windowsKitPath ? { windowsKitPath } : {}),
++                ...(windowsKitVersion ? { windowsKitVersion } : {}),
++                sign: false,
+                 manifestVariables: {
+                     packageDescription: packageJSON.description,
+                     appExecutable: `${appName}.exe`,
+@@ -46,6 +95,9 @@ class MakerMSIX extends maker_base_1.MakerBase {
+             const outputPath = node_path_1.default.resolve(makeDir, 'msix', targetArch, `${appName}.msix`);
+             await fs_extra_1.default.mkdirp(node_path_1.default.dirname(outputPath));
+             await fs_extra_1.default.move(result.msixPackage, outputPath);
++            if (shouldSign) {
++                await this.signMsix(outputPath, packageOptions.windowsSignOptions);
++            }
+             return [outputPath];
+         }
+         finally {

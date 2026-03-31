@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' file: blob: data: snipfocus-media:; media-src 'self' file: blob: data: snipfocus-media:; font-src 'self' data:; connect-src 'self';" />
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scale(1);
+            transform-origin: center center;
+            transition: transform-origin 0.1s ease-out;
+        }
+
+        .indicator {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(16, 185, 129, 0.9);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-family: system-ui;
+            font-size: 14px;
+            font-weight: 600;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="indicator">ZOOM ACTIVE (Alt+1 to exit)</div>
+    <video id="video" autoplay playsinline muted></video>
+    <script>
+        const video = document.getElementById('video');
+        const ZOOM_LEVEL = 2.0;
+
+        const params = new URLSearchParams(window.location.search);
+        const sourceId = params.get('sourceId');
+
+        async function startStream() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: {
+                        mandatory: {
+                            chromeMediaSource: 'desktop',
+                            chromeMediaSourceId: sourceId,
+                            minWidth: 1920,
+                            maxWidth: 3840,
+                            minHeight: 1080,
+                            maxHeight: 2160
+                        }
+                    }
+                });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    video.play();
+                    video.style.transform = `scale(${ZOOM_LEVEL})`;
+                };
+            } catch (e) {
+                console.error('Failed to get screen stream', e);
+            }
+        }
+
+        if (sourceId) {
+            startStream();
+        }
+
+        window.zoomOverlayAPI?.onMouseUpdate(({ x, y, screenW, screenH }) => {
+            const pX = (x / screenW) * 100;
+            const pY = (y / screenH) * 100;
+            video.style.transformOrigin = `${pX}% ${pY}%`;
+        });
+    </script>
+</body>
+
+</html>

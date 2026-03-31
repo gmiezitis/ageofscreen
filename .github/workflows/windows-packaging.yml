@@ -1,0 +1,77 @@
+name: Windows Packaging
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        channel: [direct, store]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build direct-download package
+        if: matrix.channel == 'direct' && matrix.arch == 'x64'
+        run: npm run make:win-x64
+
+      - name: Build direct-download package (ARM64)
+        if: matrix.channel == 'direct' && matrix.arch == 'arm64'
+        run: npm run make:win-arm64
+
+      - name: Build Store MSIX package
+        if: matrix.channel == 'store' && matrix.arch == 'x64'
+        env:
+          WINDOWS_CERT_FILE: ${{ secrets.WINDOWS_CERT_FILE }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          WINDOWS_PUBLISHER: ${{ secrets.WINDOWS_PUBLISHER }}
+          WINDOWS_STORE_IDENTITY_NAME: ${{ secrets.WINDOWS_STORE_IDENTITY_NAME }}
+        run: npm run make:store-win-x64
+
+      - name: Build Store MSIX package (ARM64)
+        if: matrix.channel == 'store' && matrix.arch == 'arm64'
+        env:
+          WINDOWS_CERT_FILE: ${{ secrets.WINDOWS_CERT_FILE }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          WINDOWS_PUBLISHER: ${{ secrets.WINDOWS_PUBLISHER }}
+          WINDOWS_STORE_IDENTITY_NAME: ${{ secrets.WINDOWS_STORE_IDENTITY_NAME }}
+        run: npm run make:store-win-arm64
+
+      - name: Audit packaged app size
+        if: success()
+        run: npm run audit:package-size
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.channel }}-${{ matrix.arch }}
+          path: out/make/**
+          if-no-files-found: ignore

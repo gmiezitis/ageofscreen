@@ -1,0 +1,514 @@
+/* Focus Setup Panel - Clean & Modern */
+
+/* Task color variables */
+.panel {
+  --task-green: #10b981;
+  --task-yellow: #f59e0b;
+  --task-red: #ef4444;
+}
+
+.panel {
+  background: transparent;
+  color: #f8faff;
+  display: flex;
+  flex-direction: column;
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.headerIcon {
+  color: rgba(45, 226, 255, 0.9);
+  flex-shrink: 0;
+}
+
+.headerTitle {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #ffffff;
+  flex: 1;
+}
+
+.closeButton {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.closeButton:hover {
+  background: rgba(255, 100, 100, 0.15);
+  color: rgba(255, 100, 100, 0.9);
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sectionLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.taskModeToggle {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.modeButton {
+  flex: 1;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.modeButtonActive {
+  background: rgba(45, 226, 255, 0.12);
+  color: rgba(45, 226, 255, 0.95);
+}
+
+.taskList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.taskOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.taskOption:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.taskOptionActive {
+  background: rgba(45, 226, 255, 0.12);
+  border-color: rgba(45, 226, 255, 0.4);
+  color: rgba(45, 226, 255, 0.95);
+}
+
+.taskColor {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.taskTitle {
+  flex: 1;
+}
+
+.emptyState {
+  padding: 14px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+}
+
+.adHocInput {
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.adHocInput:focus {
+  outline: none;
+  border-color: rgba(45, 226, 255, 0.5);
+}
+
+.presetSelector {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.presetButton {
+  padding: 8px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.presetButton:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.presetButtonActive {
+  background: rgba(45, 226, 255, 0.12);
+  border-color: rgba(45, 226, 255, 0.4);
+  color: rgba(45, 226, 255, 0.95);
+}
+
+.presetTime {
+  font-size: 8px;
+  opacity: 0.6;
+}
+
+.customInput {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(18, 22, 32, 0.9);
+  color: rgba(45, 226, 255, 0.95);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  -webkit-appearance: none;
+  -moz-appearance: textfield;
+}
+
+.customInput::-webkit-inner-spin-button,
+.customInput::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.customInput::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.customInput:focus {
+  outline: none;
+  border-color: rgba(45, 226, 255, 0.5);
+  box-shadow: 0 0 0 2px rgba(45, 226, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.toggleLabel {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s ease;
+  padding: 2px;
+}
+
+.toggleActive {
+  background: rgba(45, 226, 255, 0.3);
+}
+
+.toggleThumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  transition: transform 0.15s ease;
+  transform: translateX(0);
+}
+
+.toggleActive .toggleThumb {
+  transform: translateX(16px);
+  background: rgba(45, 226, 255, 0.95);
+}
+
+.blocklistSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.blocklistLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.blocklistInput {
+  display: flex;
+  gap: 6px;
+}
+
+.blocklistInput input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #ffffff;
+  font-size: 12px;
+}
+
+.blocklistInput input:focus {
+  outline: none;
+  border-color: rgba(45, 226, 255, 0.5);
+}
+
+.suggestionRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.recentRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.recentLabel {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.recentChips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.recentChip {
+  padding: 4px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.recentChip:hover:not(:disabled) {
+  background: rgba(45, 226, 255, 0.12);
+  border-color: rgba(45, 226, 255, 0.5);
+}
+
+.recentChip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.suggestionChip {
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.suggestionChip:hover:not(:disabled) {
+  background: rgba(45, 226, 255, 0.12);
+  border-color: rgba(45, 226, 255, 0.4);
+  color: rgba(45, 226, 255, 0.95);
+}
+
+.suggestionChip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.addButton {
+  padding: 8px 16px;
+  border: 1px solid rgba(45, 226, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(45, 226, 255, 0.1);
+  color: rgba(45, 226, 255, 0.95);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.addButton:hover {
+  background: rgba(45, 226, 255, 0.2);
+}
+
+.blocklistItems {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.blocklistItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.removeButton {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 100, 100, 0.1);
+  color: rgba(255, 100, 100, 0.7);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.removeButton:hover {
+  background: rgba(255, 100, 100, 0.2);
+  color: rgba(255, 100, 100, 0.9);
+}
+
+.footer {
+  padding: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.startButton {
+  width: 100%;
+  padding: 14px 20px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(45, 226, 255, 0.2) 0%, rgba(45, 226, 255, 0.1) 100%);
+  border: 1px solid rgba(45, 226, 255, 0.3);
+  color: rgba(45, 226, 255, 0.95);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.startButton:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(45, 226, 255, 0.3) 0%, rgba(45, 226, 255, 0.2) 100%);
+  border-color: rgba(45, 226, 255, 0.5);
+  transform: scale(1.02);
+}
+
+.startButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.startButton:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.stopButton {
+  width: 100%;
+  padding: 14px 20px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 80, 80, 0.2) 0%, rgba(255, 80, 80, 0.1) 100%);
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  color: rgba(255, 100, 100, 0.95);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.stopButton:hover {
+  background: linear-gradient(135deg, rgba(255, 80, 80, 0.3) 0%, rgba(255, 80, 80, 0.2) 100%);
+  border-color: rgba(255, 80, 80, 0.5);
+  transform: scale(1.02);
+}
+
+.stopButton:active {
+  transform: scale(0.98);
+}
+

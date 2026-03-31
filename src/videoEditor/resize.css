@@ -1,0 +1,43 @@
+/* Add these to videoEditor.css */
+
+.resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    /* Grabbable area */
+    cursor: ew-resize;
+    z-index: 20;
+    /* Above content */
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.resize-handle:hover {
+    background: var(--accent);
+    opacity: 1 !important;
+}
+
+.segment:hover .resize-handle,
+.audio-segment:hover .resize-handle,
+.effect-segment:hover .resize-handle {
+    opacity: 0.5;
+}
+
+.resize-handle.left {
+    left: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.resize-handle.right {
+    right: 0;
+    border-right: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+/* Ensure segments have relative positioning */
+.segment,
+.audio-segment,
+.effect-segment {
+    position: absolute;
+    /* They are already usually absolute/relative */
+}

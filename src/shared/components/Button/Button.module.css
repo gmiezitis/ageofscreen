@@ -1,0 +1,126 @@
+.button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: none;
+    border-radius: 8px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 250ms cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.button:hover {
+    transform: translateY(-1px);
+}
+
+.button:active {
+    transform: translateY(0);
+}
+
+.button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+/* Sizes */
+.sm {
+    padding: 6px 12px;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.md {
+    padding: 10px 20px;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.lg {
+    padding: 14px 28px;
+    font-size: 16px;
+    line-height: 1;
+}
+
+/* Variants */
+.primary {
+    background: linear-gradient(135deg, #627d98 0%, #486581 100%);
+    color: white;
+    box-shadow: 0 4px 6px -1px rgba(98, 125, 152, 0.3);
+}
+
+.primary:hover {
+    box-shadow: 0 10px 15px -3px rgba(98, 125, 152, 0.4);
+}
+
+.secondary {
+    background: #f7f9fa;
+    color: #334e68;
+    border: 1px solid #e9ecef;
+}
+
+.secondary:hover {
+    background: #f1f3f5;
+    border-color: #dee2e6;
+}
+
+.ghost {
+    background: transparent;
+    color: #627d98;
+}
+
+.ghost:hover {
+    background: rgba(98, 125, 152, 0.1);
+}
+
+.danger {
+    background: linear-gradient(135deg, #ff3d3d 0%, #e62e2e 100%);
+    color: white;
+    box-shadow: 0 4px 6px -1px rgba(255, 61, 61, 0.3);
+}
+
+.danger:hover {
+    box-shadow: 0 10px 15px -3px rgba(255, 61, 61, 0.4);
+}
+
+/* Full width */
+.fullWidth {
+    width: 100%;
+}
+
+/* Loading state */
+.loading {
+    color: transparent !important;
+}
+
+.spinner {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Icon positioning */
+.iconLeft,
+.iconRight {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.label {
+    display: inline-block;
+}

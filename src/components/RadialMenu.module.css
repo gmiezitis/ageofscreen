@@ -1,0 +1,82 @@
+/* src/components/RadialMenu.module.css - Enhanced Design */
+
+.svgContainer {
+  height: auto;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.svgContainer>svg {
+  pointer-events: auto;
+}
+
+.hexGroup {
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.hexGroup:hover {
+  opacity: 1;
+}
+
+.hexagon {
+  fill: rgba(0, 0, 0, 0.4); /* Adds contrast on light backgrounds while remaining transparent */
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 1;
+  transition: all 0.3s ease;
+}
+
+.hexGroup:hover .hexagon {
+  fill: rgba(255, 255, 255, 0.05);
+  stroke: rgba(255, 255, 255, 0.3);
+}
+
+.centerHexagon {
+  fill: rgba(0, 0, 0, 0.4);
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 1;
+}
+
+.hexLabel {
+  fill: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  -webkit-font-smoothing: antialiased;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
+}
+
+.hexGroup:hover .hexLabel {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hexIcon {
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.hexGroup:hover .hexIcon {
+  color: #ffffff;
+  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.6));
+  transform: translateY(-8px) scale(1.1);
+}
+
+/* Clean unified borders for all colors */
+.hexagon[data-color] {
+  stroke: rgba(255, 255, 255, 0.15); /* Slightly more visible */
+}
+.hexGroup:hover .hexagon[data-color] {
+  stroke: rgba(255, 255, 255, 0.3);
+}
