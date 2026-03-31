@@ -42,6 +42,7 @@ export interface IMenuElectronAPI {
 
     onStartRecordingRequested: (callback: (config?: AgentRecordingRequest) => void) => () => void;
     onStopRecordingRequested: (callback: () => void) => () => void;
+    onMouseMoved: (callback: (point: { screenX: number; screenY: number; localX: number; localY: number }) => void) => () => void;
     onWidgetStopRecording: (callback: () => void) => () => void;
     sendRecordingStatus: (status: boolean) => void;
     sendRecordingProgress: (progress: number) => void;
@@ -121,6 +122,11 @@ const menuAPI: IMenuElectronAPI = {
         const listener = () => callback();
         ipcRenderer.on("stop-recording-requested", listener);
         return () => ipcRenderer.removeListener("stop-recording-requested", listener);
+    },
+    onMouseMoved: (callback: (point: { screenX: number; screenY: number; localX: number; localY: number }) => void) => {
+        const listener = (_event: IpcRendererEvent, point: { screenX: number; screenY: number; localX: number; localY: number }) => callback(point);
+        ipcRenderer.on("mouse-moved", listener);
+        return () => ipcRenderer.removeListener("mouse-moved", listener);
     },
     onWidgetStopRecording: (callback: () => void) => {
         const listener = () => callback();

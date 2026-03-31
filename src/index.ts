@@ -1645,7 +1645,13 @@ const startMouseTracking = (bounds?: { x: number; y: number; width: number; heig
 
             // Notify windows of mouse move (limited frequency)
             if (menuWindow && !menuWindow.isDestroyed() && menuWindow.isVisible()) {
-                menuWindow.webContents.send('mouse-moved', cursorPoint);
+                const menuBounds = menuWindow.getBounds();
+                menuWindow.webContents.send('mouse-moved', {
+                    screenX: cursorPoint.x,
+                    screenY: cursorPoint.y,
+                    localX: cursorPoint.x - menuBounds.x,
+                    localY: cursorPoint.y - menuBounds.y,
+                });
             }
 
             // Only proceed with heavy auto-zoom/webcam logic if enabled.
