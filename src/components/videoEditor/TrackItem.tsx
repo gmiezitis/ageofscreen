@@ -22,7 +22,15 @@ interface TrackItemProps {
     duration: number;
 }
 
-const TrackItem: React.FC<TrackItemProps> = ({
+const getIconSignature = (icon: React.ReactNode): string => {
+    if (React.isValidElement(icon)) {
+        const props = icon.props as { size?: number | string } | null;
+        return `${String(icon.type)}:${String(props?.size ?? '')}`;
+    }
+    return String(icon ?? '');
+};
+
+const TrackItemComponent: React.FC<TrackItemProps> = ({
     id, leftPct, widthPct, topPx, heightPx, background, thumbnailUrl,
     isSelected, isDragging, icon, label,
     onPointerDownSeek, onStartDrag, onClick, onDelete, onResizeStart,
@@ -152,5 +160,23 @@ const TrackItem: React.FC<TrackItemProps> = ({
         </div>
     );
 };
+
+const areTrackItemPropsEqual = (prev: TrackItemProps, next: TrackItemProps) => (
+    prev.id === next.id
+    && prev.leftPct === next.leftPct
+    && prev.widthPct === next.widthPct
+    && prev.topPx === next.topPx
+    && prev.heightPx === next.heightPx
+    && prev.background === next.background
+    && prev.thumbnailUrl === next.thumbnailUrl
+    && prev.isSelected === next.isSelected
+    && prev.isDragging === next.isDragging
+    && prev.label === next.label
+    && prev.startTime === next.startTime
+    && prev.duration === next.duration
+    && getIconSignature(prev.icon) === getIconSignature(next.icon)
+);
+
+const TrackItem = React.memo(TrackItemComponent, areTrackItemPropsEqual);
 
 export default TrackItem;

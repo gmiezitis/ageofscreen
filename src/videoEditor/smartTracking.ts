@@ -461,40 +461,9 @@ function buildClickZoom(intent: FocusIntent, index: number, durationLimit: numbe
     };
 }
 
-function buildTypingZooms(intent: FocusIntent, index: number, durationLimit: number | null, profile: SmartTrackingProfileConfig): ZoomCandidate[] {
-    const trackPoints = intent.trackPoints?.length
-        ? intent.trackPoints
-        : [{ timeSec: intent.startTime, centerX: intent.centerX, centerY: intent.centerY }];
-    const candidates: ZoomCandidate[] = [];
-    const intentEnd = intent.startTime + intent.duration;
-
-    for (let i = 0; i < trackPoints.length; i++) {
-        const point = trackPoints[i];
-        const nextPoint = trackPoints[i + 1];
-        const startTime = i === 0 ? intent.startTime : Math.max(intent.startTime, point.timeSec - 0.12);
-        const rawEnd = nextPoint ? Math.max(startTime + 0.82, nextPoint.timeSec + 0.28) : intentEnd;
-        const endTime = Math.min(intentEnd, rawEnd);
-        const boundedStart = durationLimit != null
-            ? clamp(startTime, 0, Math.max(0, durationLimit - MIN_ZOOM_DURATION))
-            : Math.max(0, startTime);
-        const maxDuration = durationLimit != null ? Math.max(MIN_ZOOM_DURATION, durationLimit - boundedStart) : endTime - boundedStart;
-        const duration = Math.min(endTime - boundedStart, maxDuration);
-        if (duration < MIN_ZOOM_DURATION) continue;
-
-        candidates.push({
-            id: `smart-track-type-${index}-${i}-${Math.round(boundedStart * 1000)}`,
-            type: 'zoom',
-            startTime: boundedStart,
-            duration,
-            label: 'SMART TYPE FOLLOW',
-            intensity: profile.typingZoomIntensity,
-            tilt: 0,
-            zoomArea: createZoomArea(point.centerX, point.centerY, profile.typingZoomArea),
-            sourceKind: 'typing',
-        });
-    }
-
-    return candidates;
+function buildTypingZooms(_intent: FocusIntent, _index: number, _durationLimit: number | null, _profile: SmartTrackingProfileConfig): ZoomCandidate[] {
+    // Typing-follow zooms are intentionally disabled; auto zoom now only uses click focus.
+    return [];
 }
 
 function packZoomCandidates(candidates: ZoomCandidate[], durationLimit: number | null, profile: SmartTrackingProfileConfig): ZoomCandidate[] {
@@ -611,7 +580,7 @@ export function buildSmartTrackingEffects(
     });
 
     const packedZooms = packZoomCandidates(zoomCandidates, durationLimit, profile);
-    const effects: SmartEffect[] = packedZooms.map(({ sourceKind, ...effect }) => effect);
+    const effects: SmartEffect[] = packedZooms.map(({ sourceKind: _sourceKind, ...effect }) => effect);
 
     for (const zoom of packedZooms) {
         if (zoom.sourceKind !== 'click') continue;

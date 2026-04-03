@@ -35,7 +35,7 @@ export const getExternalWindowBounds = (sourceId: string): ExternalWindowBounds 
     } catch (error) {
         if (!loggedNativeBoundsFailure) {
             loggedNativeBoundsFailure = true;
-            console.warn("[SnipFocus] Native window bounds lookup unavailable. Window-mode capture will fall back without external bounds.", error);
+            console.warn("[ageofscreen] Native window bounds lookup unavailable. Window-mode capture will fall back without external bounds.", error);
         }
         return null;
     }

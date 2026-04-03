@@ -1,4 +1,5 @@
 import type { SmartTrackingProfile } from '../videoEditor/types';
+import type { CameraShape } from './cameraShapes';
 
 export type ShieldMode = 'human_local' | 'agent_local';
 
@@ -26,7 +27,7 @@ export interface AgentRecordingRequest {
     micEnabled?: boolean;
     captureCursorData?: boolean;
     liveMagnifierEnabled?: boolean;
-    cameraShape?: 'circle' | 'rounded' | 'pill' | 'square';
+    cameraShape?: CameraShape;
     cameraSize?: number;
     cameraBorderColor?: string;
     presenterNameEnabled?: boolean;

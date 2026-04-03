@@ -1,6 +1,6 @@
 # Windows Support Matrix
 
-SnipFocus supports modern Windows desktop releases through two distribution channels:
+ageofscreen supports modern Windows desktop releases through two distribution channels:
 
 | Architecture | Minimum OS | Latest Windows 11 | Direct Download | Microsoft Store |
 | --- | --- | --- | --- | --- |
@@ -21,8 +21,8 @@ These values are read by Forge for Microsoft Store packaging and signing:
 
 - `WINDOWS_CERT_FILE`: path to the `.pfx` signing certificate
 - `WINDOWS_CERT_PASSWORD`: password for the signing certificate
-- `WINDOWS_PUBLISHER`: package publisher, for example `CN=SnipFocus LLC`
-- `WINDOWS_STORE_IDENTITY_NAME`: Store package identity, for example `SnipFocus.Desktop`
+- `WINDOWS_PUBLISHER`: package publisher, for example `CN=ageofscreen LLC`
+- `WINDOWS_STORE_IDENTITY_NAME`: Store package identity, for example `ageofscreen.Desktop`
 - `WINDOWS_KIT_PATH`: optional full path to the Windows SDK bin folder, for example `C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64`
 - `WINDOWS_KIT_VERSION`: optional SDK version if you want Forge to resolve the bin folder by version instead of path
 
@@ -30,8 +30,8 @@ If `WINDOWS_CERT_FILE` and `WINDOWS_CERT_PASSWORD` are not set, the Store build 
 
 Defaults are development-safe:
 
-- `WINDOWS_PUBLISHER`: `CN=SnipFocus Dev`
-- `WINDOWS_STORE_IDENTITY_NAME`: `SnipFocus.Desktop`
+- `WINDOWS_PUBLISHER`: `CN=ageofscreen Dev`
+- `WINDOWS_STORE_IDENTITY_NAME`: `ageofscreen.Desktop`
 
 ## Notes
 

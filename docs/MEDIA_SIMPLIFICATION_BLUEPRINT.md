@@ -1,10 +1,10 @@
-# Media Simplification Blueprint for SnipFocus
+# Media Simplification Blueprint for ageofscreen
 
 Last updated: 2026-03-24
 
 ## Goal
 
-Keep SnipFocus feeling like SnipFocus.
+Keep ageofscreen feeling like ageofscreen.
 Do not redesign the product.
 Do not change the core flow:
 
@@ -193,7 +193,7 @@ It means one shared timing model behind the UI.
 - Images can be placed over the video
 - Users can drag and resize overlays
 - Timeline still shows when overlays appear
-- Existing SnipFocus layout can stay mostly intact
+- Existing ageofscreen layout can stay mostly intact
 
 ### Replace
 
@@ -275,7 +275,7 @@ Instead, copy the parts of its workflow that make annotation feel obvious:
 - stable undo/redo
 - one object model for pen, arrow, shape, text, step
 
-Then keep our own small SnipFocus toolbar and styling.
+Then keep our own small ageofscreen toolbar and styling.
 
 ### Concrete simplification path
 
@@ -383,7 +383,7 @@ it becomes easier once timeline items and export inputs are normalized.
 - Do not make overlay editing more advanced than users need
 - Do not rebuild everything at once
 
-## Best practical choices for SnipFocus
+## Best practical choices for ageofscreen
 
 If we want the lowest-risk set of ideas to implement, the best combination is:
 

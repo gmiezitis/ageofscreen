@@ -1,10 +1,10 @@
-# Open Source MIT Research for SnipFocus
+# Open Source MIT Research for ageofscreen
 
 Last updated: 2026-03-24
 
 ## Why this exists
 
-SnipFocus is in a pivot where reliability and simplicity matter more than feature count.
+ageofscreen is in a pivot where reliability and simplicity matter more than feature count.
 The current pain is not "missing features" but "existing features feel laggy, fragile, and too complex."
 
 This document maps our current feature surface to MIT-licensed GitHub projects that already solve similar problems well enough to benchmark, learn from, or partially adopt.
@@ -19,7 +19,7 @@ The goal is:
 Important note:
 MIT on the repo is a strong starting filter, but we still need to review each repo's dependency tree, bundled binaries, attribution requirements, and platform limitations before vendoring or copying code.
 
-## SnipFocus feature inventory
+## ageofscreen feature inventory
 
 ### Core flow
 
@@ -43,11 +43,11 @@ MIT on the repo is a strong starting filter, but we still need to review each re
 ## Feature-to-reference map
 
 Use this section when we want to answer a simple question:
-"For this SnipFocus feature, which MIT project should we benchmark first?"
+"For this ageofscreen feature, which MIT project should we benchmark first?"
 
 ### Core recording and media features
 
-| SnipFocus feature | Priority | Best MIT benchmark repos | What to learn |
+| ageofscreen feature | Priority | Best MIT benchmark repos | What to learn |
 | --- | --- | --- | --- |
 | Fullscreen recording | P0 | `robmikh/Win32CaptureSample`, `evansalter/kap` | Stable capture loop, frame delivery, native-vs-Electron boundaries |
 | Window recording | P0 | `robmikh/Win32CaptureSample`, `sunnyone/ScreenCaptureWrapper` | Window-target capture flow, simpler capture presets, fallback paths |
@@ -61,7 +61,7 @@ Use this section when we want to answer a simple question:
 
 ### Secondary and legacy features
 
-| SnipFocus feature | Priority | Best MIT benchmark repos | What to learn |
+| ageofscreen feature | Priority | Best MIT benchmark repos | What to learn |
 | --- | --- | --- | --- |
 | Teleprompter | P2 | `addyosmani/recorder` | How to keep it useful without adding setup complexity |
 | Drawing overlay | P2 | `excalidraw/excalidraw` | Better scene model, simpler input handling, exportable annotations |
@@ -88,12 +88,12 @@ If we want the fastest possible research sequence, start here:
 - Repo: https://github.com/robmikh/Win32CaptureSample
 - License: MIT
 - Why it matters:
-  Windows-native capture benchmark for the exact platform that matters most to SnipFocus.
+  Windows-native capture benchmark for the exact platform that matters most to ageofscreen.
 - What to study:
   Windows.Graphics.Capture usage, frame pool threading, picker setup, preview presentation path.
 - Why it is especially relevant:
   The sample explicitly documents `Create` vs `CreateFreeThreaded`, which is directly relevant to dropped frames, callback threading, and deadlock-prone capture loops.
-- SnipFocus use:
+- ageofscreen use:
   Benchmark against our current Windows capture engine and main-process orchestration before changing anything UI-side.
 
 #### evansalter/kap
@@ -103,7 +103,7 @@ If we want the fastest possible research sequence, start here:
   Electron screen recorder built with web technology.
 - What to study:
   App structure, recorder lifecycle boundaries, separation between capture UI and processing, packaging discipline.
-- SnipFocus use:
+- ageofscreen use:
   Good benchmark for "simple recorder product shape" and what should stay out of the hot path during capture.
 
 #### addyosmani/recorder
@@ -113,7 +113,7 @@ If we want the fastest possible research sequence, start here:
   Browser-based local recorder with screen + camera, camera shape controls, teleprompter, and MP4-oriented workflow.
 - What to study:
   Screen/camera composition, preview UX, teleprompter integration, camera customization, local-first flow.
-- SnipFocus use:
+- ageofscreen use:
   Strong benchmark for simplifying our recording setup UX without losing useful creator features.
 
 #### contrastio/recorder
@@ -123,7 +123,7 @@ If we want the fastest possible research sequence, start here:
   Local screen and camera recording with picture-in-picture and insertable-streams focus.
 - What to study:
   Camera + screen recording flow, browser-native composition patterns, local-first UX.
-- SnipFocus use:
+- ageofscreen use:
   Benchmark for how much of our camera/preview path can be simplified before we reach export.
 
 #### sunnyone/ScreenCaptureWrapper
@@ -145,7 +145,7 @@ If we want the fastest possible research sequence, start here:
   Very close to one of our laggiest surfaces: floating webcam window for screen recording.
 - What to study:
   Always-on-top window behavior, move/resize simplicity, camera-only product shape, separation from the recorder itself.
-- SnipFocus use:
+- ageofscreen use:
   Likely the best benchmark for simplifying our webcam window into a more reliable standalone subsystem.
 
 #### SnosMe/electron-overlay-window
@@ -155,7 +155,7 @@ If we want the fastest possible research sequence, start here:
   Dedicated overlay-window syncing library for Electron.
 - What to study:
   Window position/size sync, target tracking, lifecycle handling.
-- SnipFocus use:
+- ageofscreen use:
   Benchmark for whether our webcam / recording widget / overlay positioning logic should be simplified around a proven sync primitive instead of custom code in `src/index.ts`.
 
 ### 3. Timeline and trim UX
@@ -167,7 +167,7 @@ If we want the fastest possible research sequence, start here:
   Lightweight purpose-built timeline library with React package support.
 - What to study:
   Timeline rendering model, zoom strategy, clip interaction model, canvas-based performance approach.
-- SnipFocus use:
+- ageofscreen use:
   Benchmark for replacing custom heavy DOM timeline behavior if our current timeline gets janky with more clips/effects.
 
 #### limistah/react-video-trimmer
@@ -177,7 +177,7 @@ If we want the fastest possible research sequence, start here:
   Focused trimmer component rather than full editor.
 - What to study:
   Trim-first UX, minimal control surface, ffmpeg-in-browser loading states.
-- SnipFocus use:
+- ageofscreen use:
   Benchmark for reducing trim complexity in the editor and tightening the beginner path.
 
 ### 4. Video editor / export architecture
@@ -189,7 +189,7 @@ If we want the fastest possible research sequence, start here:
   Electron + FFmpeg editor with a timeline, preview, and filter editor.
 - What to study:
   Main/renderer split, FFmpeg command orchestration, preview streaming, IPC boundary design.
-- SnipFocus use:
+- ageofscreen use:
   Benchmark for simplifying our `renderer -> IPC -> FFmpeg` architecture around clear render instructions.
 
 #### drawcall/FFCreatorLite
@@ -199,7 +199,7 @@ If we want the fastest possible research sequence, start here:
   FFmpeg-first composition library that explicitly prioritizes speed and simpler installation over maximum features.
 - What to study:
   Filter graph construction, fast composition philosophy, effect selection discipline.
-- SnipFocus use:
+- ageofscreen use:
   Great benchmark for deciding which export effects should remain FFmpeg-native and which should be cut.
 
 #### OpenNewsLabs/autoEdit_2
@@ -209,7 +209,7 @@ If we want the fastest possible research sequence, start here:
   Electron desktop editor built around a simplified editing workflow instead of a feature-maximal timeline.
 - What to study:
   Workflow design, deterministic editing pipeline, how to reduce editor complexity around a specific production use case.
-- SnipFocus use:
+- ageofscreen use:
   Useful benchmark for the future of Auto-Polish and simplified edit flows.
 
 ### 5. Drawing / annotation
@@ -221,7 +221,7 @@ If we want the fastest possible research sequence, start here:
   Mature MIT drawing/annotation engine with strong export and interaction primitives.
 - What to study:
   Input handling, scene data model, lightweight annotation UX, export primitives.
-- SnipFocus use:
+- ageofscreen use:
   Benchmark for whether our drawing overlay should become much simpler and more declarative instead of custom ad hoc canvas behavior.
 
 ## Recommended research order
@@ -234,7 +234,7 @@ If we want the fastest possible research sequence, start here:
 4. `contrastio/recorder`
 
 Why:
-This is the highest-value cluster for SnipFocus because our biggest product risk is still recording lag, black preview, duplicate webcam behavior, and unstable capture flow.
+This is the highest-value cluster for ageofscreen because our biggest product risk is still recording lag, black preview, duplicate webcam behavior, and unstable capture flow.
 
 ### P1: editor simplification
 
@@ -267,7 +267,7 @@ These features should not be rewritten until recording and export are stable.
 
 For every candidate repo we should capture the same fields:
 
-- Feature match to SnipFocus
+- Feature match to ageofscreen
 - Platform match
 - License confirmed
 - Last meaningful activity
@@ -282,7 +282,7 @@ For every candidate repo we should capture the same fields:
   wrap a library,
   or rewrite our implementation using the repo only as a benchmark
 
-## SnipFocus-specific hypotheses to test
+## ageofscreen-specific hypotheses to test
 
 ### Recording lag
 
@@ -328,7 +328,7 @@ Best repos to benchmark:
    - preview composition
    - overlay/window strategy
    - performance-critical choices
-3. Convert findings into concrete SnipFocus refactor tickets:
+3. Convert findings into concrete ageofscreen refactor tickets:
    - capture engine
    - webcam overlay isolation
    - recording setup simplification

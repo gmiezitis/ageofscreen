@@ -4,7 +4,7 @@ import path from "path";
 import { FEATURES } from "../config/features";
 import { RELEASE_PROFILE } from "../config/releaseProfile";
 import { getWindowsRuntimeSupport } from "../config/windowsSupport";
-import { getSnipFocusTempDir, getSupportBundleDir, listRecentTempLogs } from "./runtimePaths";
+import { getageofscreenTempDir, getSupportBundleDir, listRecentTempLogs } from "./runtimePaths";
 
 export interface SupportBundleInput {
     captureHealth: { droppedFrames: number; bufferErrors: number; effectiveFps: number | null; status: string } | null;
@@ -21,7 +21,7 @@ const readUtf8IfPresent = (filePath: string): string | null => {
 };
 
 export const buildSupportBundlePayload = ({ captureHealth, sourceStatus, ffmpegPath }: SupportBundleInput) => {
-    const recentLogs = listRecentTempLogs("snipfocus-ffmpeg-error-", 5)
+    const recentLogs = listRecentTempLogs("ageofscreen-ffmpeg-error-", 5)
         .map((entry) => ({
             name: entry.name,
             contents: readUtf8IfPresent(entry.path),
@@ -41,7 +41,7 @@ export const buildSupportBundlePayload = ({ captureHealth, sourceStatus, ffmpegP
             chrome: process.versions.chrome,
             node: process.versions.node,
             v8: process.versions.v8,
-            tempDir: getSnipFocusTempDir(),
+            tempDir: getageofscreenTempDir(),
             supportDir: getSupportBundleDir(),
         },
         features: FEATURES,

@@ -1,7 +1,7 @@
-# SnipFocus Agent Execution Playbook
+# ageofscreen Agent Execution Playbook
 
 ## Purpose
-This is the operational plan for agents to simplify SnipFocus without losing existing project potential.
+This is the operational plan for agents to simplify ageofscreen without losing existing project potential.
 
 Primary goal: make the app instantly understandable and reliable for
 `Record -> Trim -> Style -> Export` local AI demo videos.
@@ -110,7 +110,7 @@ Primary goal: make the app instantly understandable and reliable for
 1. Add plan config (`src/config/plan.ts`):
    - `plan: 'free' | 'pro'`
 2. Implement export watermark in free plan:
-   - `Made with SnipFocus`
+   - `Made with ageofscreen`
    - bottom-right, low-opacity, resolution-aware.
 3. Add watermark toggle logic at export stage only.
 4. Keep core quality same in free and pro.

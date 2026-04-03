@@ -1,5 +1,5 @@
 /**
- * Central feature flags for SnipFocus.
+ * Central feature flags for ageofscreen.
  * Hidden features are disabled by default; enable in dev for testing.
  */
 
@@ -35,8 +35,6 @@ export const FEATURES = {
     ENABLE_LIVE_MAGNIFIER: envFlag("ENABLE_LIVE_MAGNIFIER", RELEASE_PROFILE.defaultFeatures.liveMagnifier),
     /** Advanced auto-zoom variants (Alt+Z, Alt+3) */
     ENABLE_AUTO_ZOOM_ADVANCED: envFlag("ENABLE_AUTO_ZOOM_ADVANCED", RELEASE_PROFILE.defaultFeatures.autoZoomAdvanced),
-    /** Frame/padding + zoom on typing/click area; webcam shrinks when zoomed */
-    ENABLE_TYPING_ZOOM: envFlag("ENABLE_TYPING_ZOOM", RELEASE_PROFILE.defaultFeatures.typingZoom),
     /** Pro tier features (watermark removal, advanced effects) */
     ENABLE_PRO_FEATURES: envFlag("ENABLE_PRO_FEATURES", RELEASE_PROFILE.defaultFeatures.proFeatures),
     /** Agent/demo automation surfaces in the launcher */

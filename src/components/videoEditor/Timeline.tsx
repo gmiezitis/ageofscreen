@@ -86,8 +86,6 @@ interface TimelineProps {
     onSplit: () => void;
     onAddImageClip: () => void;
     onDelete: () => void;
-    onMoveSelectedMainTrackLeft: () => void;
-    onMoveSelectedMainTrackRight: () => void;
     onDeleteOverlayImage: (id: string) => void;
     onToggleOverlayRenderMode: (id: string) => void;
     onCloseGaps: () => void;
@@ -150,12 +148,6 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
     const [segmentThumbnailStrips, setSegmentThumbnailStrips] = useState<Record<string, string[]>>({});
 
     const mainTrackItems = useMemo(() => buildVisualTimelineSceneItems(segments, imageClips), [segments, imageClips]);
-    const selectedMainTrackId = selectedImageClipId ?? selectedSegmentId ?? null;
-    const selectedMainTrackIndex = selectedMainTrackId
-        ? mainTrackItems.findIndex((item) => item.id === selectedMainTrackId)
-        : -1;
-    const canMoveSelectedMainTrackLeft = selectedMainTrackIndex > 0;
-    const canMoveSelectedMainTrackRight = selectedMainTrackIndex >= 0 && selectedMainTrackIndex < mainTrackItems.length - 1;
     const mainTrackDropBoundaries = useMemo(() => {
         if (mainTrackItems.length === 0 || totalKeptDuration <= 0) {
             return [];
@@ -190,16 +182,22 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
         return index >= 0 ? index : mainTrackItems.length;
     }, [mainTrackItems, totalKeptDuration]);
 
-    const allItems = [
+    const allItems = useMemo(() => ([
         ...smartEffects.map((e: SmartEffect) => ({ kind: 'effect' as const, item: e })),
         ...overlayImages.map((i: OverlayImage) => ({ kind: 'image' as const, item: i })),
         ...textOverlays.map((t: TextOverlay) => ({ kind: 'text' as const, item: t })),
-    ];
-    const laneMap = computeLanes(allItems.map((a: { item: any }) => a.item));
-    const laneCount = Math.max(1, ...Array.from(laneMap.values()).map((v: number) => v + 1));
-    const trackHeight = laneCount * (LANE_H + LANE_GAP) + LANE_GAP;
-    const getOverlayThumbnail = (overlay: OverlayImage) =>
-        overlay.thumbnail || mediaLibrary.find((item) => item.type === 'image' && item.path === overlay.file)?.thumbnail || toMediaFileUrl(overlay.file);
+    ]), [overlayImages, smartEffects, textOverlays]);
+    const laneMap = useMemo(() => computeLanes(allItems.map((a: { item: any }) => a.item)), [allItems]);
+    const laneCount = useMemo(
+        () => Math.max(1, ...Array.from(laneMap.values()).map((v: number) => v + 1)),
+        [laneMap],
+    );
+    const trackHeight = useMemo(() => laneCount * (LANE_H + LANE_GAP) + LANE_GAP, [laneCount]);
+    const getOverlayThumbnail = useCallback((overlay: OverlayImage) => (
+        overlay.thumbnail
+        || mediaLibrary.find((item) => item.type === 'image' && item.path === overlay.file)?.thumbnail
+        || toMediaFileUrl(overlay.file)
+    ), [mediaLibrary]);
 
     useEffect(() => {
         if (!mediaPath || segments.length === 0) {
@@ -288,27 +286,34 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
         };
     }, [mediaPath, props.isPlaying, segments]);
 
-    const clearSelection = () => {
+    const clearSelection = useCallback(() => {
         setSelectedSegmentId(null);
         setSelectedAudioId(null);
         setSelectedEffectId(null);
         setSelectedOverlayId(null);
         setSelectedImageClipId(null);
         setSelectedTextOverlayId(null);
-    };
-    const selectEffect = (id: string | null) => {
+    }, [
+        setSelectedAudioId,
+        setSelectedEffectId,
+        setSelectedImageClipId,
+        setSelectedOverlayId,
+        setSelectedSegmentId,
+        setSelectedTextOverlayId,
+    ]);
+    const selectEffect = useCallback((id: string | null) => {
         clearSelection();
         setSelectedEffectId(id);
-    };
-    const selectOverlay = (id: string | null) => {
+    }, [clearSelection, setSelectedEffectId]);
+    const selectOverlay = useCallback((id: string | null) => {
         clearSelection();
         setSelectedOverlayId(id);
-    };
-    const selectTextOverlay = (id: string | null) => {
+    }, [clearSelection, setSelectedOverlayId]);
+    const selectTextOverlay = useCallback((id: string | null) => {
         clearSelection();
         setSelectedTextOverlayId(id);
-    };
-    const getClampedPlacement = (leftPct: number, widthPct: number, minWidthPct = 2) => {
+    }, [clearSelection, setSelectedTextOverlayId]);
+    const getClampedPlacement = useCallback((leftPct: number, widthPct: number, minWidthPct = 2) => {
         const safeLeft = Math.max(0, Math.min(leftPct, 100));
         const availableWidth = Math.max(0, 100 - safeLeft);
         if (availableWidth <= 0) return null;
@@ -317,14 +322,14 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
             leftPct: safeLeft,
             widthPct: Math.min(Math.max(widthPct, minVisibleWidth), availableWidth),
         };
-    };
-    const handleTimelinePointerDown = (e: React.MouseEvent) => {
+    }, []);
+    const handleTimelinePointerDown = useCallback((e: React.MouseEvent) => {
         if (e.button !== 0) return;
         const target = e.target as HTMLElement | null;
         if (target?.closest('.track-label, .ruler-header-spacer, .resize-handle, button, .playhead')) return;
         e.preventDefault();
         seekTimelineToClientX(e.clientX, e.target);
-    };
+    }, [seekTimelineToClientX]);
 
     return (
         <div className="editor-timeline">
@@ -340,16 +345,12 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
                 onSplit={props.onSplit}
                 onAddImageClip={props.onAddImageClip}
                 onDelete={onDelete}
-                onMoveSelectedMainTrackLeft={props.onMoveSelectedMainTrackLeft}
-                onMoveSelectedMainTrackRight={props.onMoveSelectedMainTrackRight}
                 onAddTextOverlay={props.onAddTextOverlay}
                 onAddEffect={props.onAddEffect}
                 annotationToolsVisible={props.annotationToolsVisible}
                 onToggleAnnotationTools={props.onToggleAnnotationTools}
                 selectedSegmentId={selectedSegmentId}
                 selectedImageClipId={selectedImageClipId}
-                canMoveSelectedMainTrackLeft={canMoveSelectedMainTrackLeft}
-                canMoveSelectedMainTrackRight={canMoveSelectedMainTrackRight}
                 selectedAudioId={selectedAudioId}
                 selectedEffectId={selectedEffectId}
                 selectedOverlayId={selectedOverlayId}

@@ -1,36 +1,37 @@
 /**
- * SnipFocus - Main Process
+ * ageofscreen - Main Process
  * Lightweight screen capture and focus tool
  */
 
-import { app, BrowserWindow, ipcMain, screen, desktopCapturer, nativeImage, Menu, Tray, dialog, globalShortcut, protocol, session } from "electron";
+import { app, BrowserWindow, ipcMain, screen, desktopCapturer, nativeImage, Menu, Tray, dialog, globalShortcut, protocol, session, shell } from "electron";
 import path from "path";
 import { FEATURES } from "./config/features";
 import { PLAN_CONFIG, type PlanTier } from "./config/plan";
 import { RELEASE_PROFILE } from "./config/releaseProfile";
 import { planAutoPolish, runAutoPolish } from "./services/autoPolish";
-import { createTypingZoomDetector, TypingZoomDetector, TypingZoomState } from "./services/typingZoom";
 import fs from "fs";
 import { spawn } from "child_process";
 import Store from "electron-store";
 import { EventEmitter } from "events";
 import { Readable } from "stream";
 import { fromMediaFileUrl, toMediaFileUrl } from "./shared/mediaPaths";
+import { getCameraDimensionsForWidth, normalizeCameraShape, type CameraShape } from "./shared/cameraShapes";
 import { isPathInsideDirectory, isSupportedCaptureInvokeType, isSupportedMediaDialogType, isSupportedMediaFilePath } from "./shared/pathSecurity";
 import { buildSmartTrackingEffects, DEFAULT_SMART_TRACKING_PROFILE, remapSmartTrackingEffects } from "./videoEditor/smartTracking";
 import type { SmartTrackingProfile } from "./videoEditor/types";
 import type { AgentJob, AgentJobResult, AgentRecordingRequest, AgentSummaryPayload, ShieldMode, ShieldState } from "./shared/agent";
 import { getWindowsRuntimeSupport, isWindowsStorePackage } from "./config/windowsSupport";
-import { getSnipFocusTempDir } from "./services/runtimePaths";
+import { getageofscreenTempDir } from "./services/runtimePaths";
 import type {
     CaptureShortcutPreference,
     EntitlementProvider,
     EntitlementState,
     OnboardingState,
-    PrintScreenRegistrationStatus,
+
     PurchaseProResult,
     UpgradeSource,
 } from "./shared/licensing";
+import type { MenuOpenReason, MenuOpenedPayload } from "./menu/menuLifecycle";
 
 import { getExternalWindowBounds } from "./services/windowsInterop";
 
@@ -41,24 +42,16 @@ let videoRenderer: any = null;
 type AppPreferences = {
     hasCompletedOnboarding: boolean;
     preferredCaptureShortcut: CaptureShortcutPreference;
-    printScreenOptIn: boolean;
-    printScreenRegistrationStatus: PrintScreenRegistrationStatus;
     devEntitlementOverride: PlanTier | null;
 };
 
-const PRINT_SCREEN_FALLBACK_INSTRUCTIONS = [
-    'Open Settings > Accessibility > Keyboard.',
-    'Turn off "Use the Print Screen button to open screen snipping".',
-    'Return to SnipFocus and try the Print Screen setup again.',
-];
+
 
 const appPreferencesStore = new (Store as any)({
     name: "app-preferences",
     defaults: {
         hasCompletedOnboarding: false,
         preferredCaptureShortcut: "trigger_line",
-        printScreenOptIn: false,
-        printScreenRegistrationStatus: "unknown",
         devEntitlementOverride: PLAN_CONFIG.allowManualTierOverride ? (PLAN_CONFIG.devOverrideTier ?? null) : null,
     } satisfies AppPreferences,
 });
@@ -74,7 +67,6 @@ let cachedEntitlementState: EntitlementState = {
     provider: PLAN_CONFIG.allowManualTierOverride && RELEASE_PROFILE.name === "dev" ? "manual" : (isWindowsStorePackage() ? "store_stub" : "manual"),
     lastSyncAt: null,
 };
-let printScreenShortcutRegistered = false;
 
 const readAppPreference = <T = unknown>(key: keyof AppPreferences): T => (
     (appPreferencesStore as any).get(key as string) as T
@@ -138,10 +130,6 @@ const broadcastLicenseState = (state: EntitlementState = cachedEntitlementState)
 const getOnboardingState = (): OnboardingState => ({
     hasCompletedOnboarding: Boolean(readAppPreference<boolean>("hasCompletedOnboarding")),
     preferredCaptureShortcut: readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut"),
-    printScreenOptIn: Boolean(readAppPreference<boolean>("printScreenOptIn")),
-    printScreenRegistrationStatus: readAppPreference<PrintScreenRegistrationStatus>("printScreenRegistrationStatus"),
-    printScreenSupported: process.platform === "win32",
-    fallbackInstructions: process.platform === "win32" ? PRINT_SCREEN_FALLBACK_INSTRUCTIONS : [],
 });
 
 const broadcastOnboardingState = (state: OnboardingState = getOnboardingState()) => {
@@ -152,68 +140,18 @@ const broadcastOnboardingState = (state: OnboardingState = getOnboardingState())
     });
 };
 
-const unregisterPrintScreenShortcut = () => {
-    try {
-        if (globalShortcut.isRegistered("PrintScreen")) {
-            globalShortcut.unregister("PrintScreen");
-        }
-    } catch (error) {
-        console.warn("[SnipFocus] Failed to unregister PrintScreen shortcut", error);
-    } finally {
-        printScreenShortcutRegistered = false;
-    }
-};
 
-const openPrimaryAppEntryPoint = () => {
-    if (isRecordingActive) {
-        return;
-    }
-    createMenuWindow();
-};
 
-const syncPrintScreenShortcutRegistration = (): OnboardingState => {
-    if (!app.isReady()) {
-        return getOnboardingState();
-    }
 
-    unregisterPrintScreenShortcut();
-
-    const wantsPrintScreen = Boolean(readAppPreference<boolean>("printScreenOptIn"));
-    let nextStatus: PrintScreenRegistrationStatus = "disabled";
-
-    if (process.platform !== "win32") {
-        nextStatus = "unsupported";
-    } else if (wantsPrintScreen) {
-        try {
-            printScreenShortcutRegistered = globalShortcut.register("PrintScreen", () => {
-                openPrimaryAppEntryPoint();
-            });
-            nextStatus = printScreenShortcutRegistered ? "registered" : "blocked";
-        } catch (error) {
-            console.warn("[SnipFocus] Failed to register PrintScreen shortcut", error);
-            nextStatus = "blocked";
-        }
-    }
-
-    writeAppPreference("printScreenRegistrationStatus", nextStatus);
-    const onboardingState = getOnboardingState();
-    broadcastOnboardingState(onboardingState);
-    return onboardingState;
-};
 
 const setCaptureShortcutPreference = (preference: CaptureShortcutPreference): OnboardingState => {
-    const wantsPrintScreen = preference === "print_screen";
-    const canUsePrintScreen = process.platform === "win32";
-    const resolvedPreference = wantsPrintScreen && !canUsePrintScreen ? "trigger_line" : preference;
-    writeAppPreference("preferredCaptureShortcut", resolvedPreference);
-    writeAppPreference("printScreenOptIn", wantsPrintScreen && canUsePrintScreen);
-    if (wantsPrintScreen && !canUsePrintScreen) {
-        writeAppPreference("printScreenRegistrationStatus", "unsupported");
+    writeAppPreference("preferredCaptureShortcut", "trigger_line");
+    
+    if (app.isReady()) {
+        rearmTriggerWindow();
     }
-    if (!wantsPrintScreen) {
-        writeAppPreference("printScreenRegistrationStatus", process.platform === "win32" ? "disabled" : "unsupported");
-    }
-    return syncPrintScreenShortcutRegistration();
+
+    return getOnboardingState();
 };
 
 const completeOnboarding = (): OnboardingState => {
@@ -222,6 +160,8 @@ const completeOnboarding = (): OnboardingState => {
     broadcastOnboardingState(nextState);
     return nextState;
 };
+
+
 
 const manualEntitlementProvider: EntitlementProvider = {
     async initialize() {
@@ -320,16 +260,16 @@ const loadCursorMetadataSidecar = async (mediaFilePath: string): Promise<any[] |
             const parsed = JSON.parse(raw);
             const cursorData = normalizeCursorSidecarPayload(parsed);
             if (cursorData) {
-                console.log('[SnipFocus] Loaded cursor metadata sidecar:', {
+                console.log('[ageofscreen] Loaded cursor metadata sidecar:', {
                     mediaFilePath,
                     candidatePath,
                     events: cursorData.length,
                 });
                 return cursorData;
             }
-            console.warn('[SnipFocus] Ignoring unsupported cursor metadata sidecar format:', candidatePath);
+            console.warn('[ageofscreen] Ignoring unsupported cursor metadata sidecar format:', candidatePath);
         } catch (error) {
-            console.warn('[SnipFocus] Failed to read cursor metadata sidecar:', candidatePath, error);
+            console.warn('[ageofscreen] Failed to read cursor metadata sidecar:', candidatePath, error);
         }
     }
 
@@ -346,7 +286,7 @@ const getFocusLogic = async () => {
             const module = await import("@services/focusLogic");
             focusLogic = module.focusLogic;
         } catch (err) {
-            console.warn('[SnipFocus] FocusLogic not available:', err);
+            console.warn('[ageofscreen] FocusLogic not available:', err);
         }
     }
     return focusLogic;
@@ -358,7 +298,7 @@ const getVideoRenderer = async () => {
             const module = await import("./services/videoRenderer");
             videoRenderer = module.videoRenderer;
         } catch (err) {
-            console.warn('[SnipFocus] VideoRenderer not available:', err);
+            console.warn('[ageofscreen] VideoRenderer not available:', err);
         }
     }
     return videoRenderer;
@@ -416,7 +356,7 @@ const normalizeTempRecordingForEditor = async (sourcePath: string): Promise<stri
     }
 
     const normalizedPath = sourcePath.replace(/\.[^.]+$/, '.mp4');
-    console.log('[SnipFocus] Recording duration metadata missing; normalizing temp recording for editor', {
+    console.log('[ageofscreen] Recording duration metadata missing; normalizing temp recording for editor', {
         sourcePath,
         normalizedPath,
     });
@@ -609,7 +549,7 @@ const createMediaFileResponse = async (request: Request, filePath: string): Prom
 // without disabling Chromium web security for the whole editor.
 protocol.registerSchemesAsPrivileged([
     { scheme: 'file', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
-    { scheme: 'snipfocus-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }
+    { scheme: 'ageofscreen-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }
 ]);
 
 // Enable Hardware Acceleration for peak performance, especially on ARM64/Surface devices.
@@ -628,10 +568,10 @@ if (!isWindowsStorePackage() && require("electron-squirrel-startup")) {
 
 const windowsRuntimeSupport = getWindowsRuntimeSupport();
 if (windowsRuntimeSupport.platform === "win32") {
-    console.log("[SnipFocus] Windows runtime support:", windowsRuntimeSupport);
-    console.log("[SnipFocus] Release profile:", RELEASE_PROFILE);
+    console.log("[ageofscreen] Windows runtime support:", windowsRuntimeSupport);
+    console.log("[ageofscreen] Release profile:", RELEASE_PROFILE);
     if (windowsRuntimeSupport.isArm64) {
-        console.log("[SnipFocus] Windows ARM64 detected. Validate capture, export, FFmpeg, and MSIX flows on this device before release.");
+        console.log("[ageofscreen] Windows ARM64 detected. Validate capture, export, FFmpeg, and MSIX flows on this device before release.");
     }
 }
 
@@ -652,6 +592,8 @@ let drawingOverlayWindow: BrowserWindow | null = null;
 let videoEditorWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let wasWebcamVisibleBeforeDrawing = false;
+let shouldRestoreEditorAfterCaptureCancel = false;
+let isCaptureSessionActive = false;
 
 // Shield state
 const shieldStore = new (Store as any)({
@@ -670,6 +612,11 @@ const shieldEvents = new EventEmitter();
 let webRequestInstalled = false;
 let lastBlockedNoticeAt = 0;
 let triggerMouseResetTimeout: NodeJS.Timeout | null = null;
+let menuTriggerRearmTimeout: NodeJS.Timeout | null = null;
+let menuIdleReleaseTimeout: NodeJS.Timeout | null = null;
+let menuReopenBlockedUntil = 0;
+let menuWindowShouldShowOnReady = true;
+let menuWindowBlurGuardUntil = 0;
 
 const toShieldState = (mode: ShieldMode): ShieldState => ({
     mode,
@@ -694,7 +641,7 @@ const installShieldRequestFilter = () => {
     if (webRequestInstalled) return;
     const defaultSession = session.defaultSession;
     if (!defaultSession) {
-        console.warn("[SnipFocus] Shield filter skipped: no defaultSession");
+        console.warn("[ageofscreen] Shield filter skipped: no defaultSession");
         return;
     }
 
@@ -720,7 +667,7 @@ const installShieldRequestFilter = () => {
                     return;
                 }
             } catch (err) {
-                console.warn("[SnipFocus] Shield filter parse failure, allowing request:", url, err);
+                console.warn("[ageofscreen] Shield filter parse failure, allowing request:", url, err);
                 callback({});
                 return;
             }
@@ -732,13 +679,13 @@ const installShieldRequestFilter = () => {
             }
             callback({ cancel: true });
         } catch (err) {
-            console.error("[SnipFocus] Shield filter error, allowing request:", err);
+            console.error("[ageofscreen] Shield filter error, allowing request:", err);
             callback({});
         }
     });
 
     webRequestInstalled = true;
-    console.log("[SnipFocus] Shield filter installed. Initial mode:", shieldMode);
+    console.log("[ageofscreen] Shield filter installed. Initial mode:", shieldMode);
 };
 
 // Temp recorded video for editing
@@ -763,26 +710,6 @@ const DEFAULT_AGENT_RECORDING_REQUEST: AgentRecordingRequest = {
 
 const shouldAutoSaveToDownloads = () => shieldMode === "agent_local";
 
-const buildDownloadFilePath = (fileName: string) => path.join(app.getPath("downloads"), fileName);
-
-const saveBufferToDownloads = async (buffer: ArrayBuffer, fileName: string, cursorData?: any[]) => {
-    const filePath = buildDownloadFilePath(fileName);
-    await fs.promises.writeFile(filePath, Buffer.from(buffer));
-
-    if (Array.isArray(cursorData) && cursorData.length > 0) {
-        const jsonPath = filePath.replace(/\.(webm|mp4|mov)$/i, ".json");
-        await fs.promises.writeFile(jsonPath, JSON.stringify(cursorData));
-    }
-
-    return filePath;
-};
-
-const saveSourceToDownloads = async (source: string, fileName: string) => {
-    const filePath = buildDownloadFilePath(fileName);
-    await saveMediaSourceToPath(source, filePath);
-    return filePath;
-};
-
 // Recording Widget Dimensions
 const RECORDING_WIDGET_WIDTH = 220;
 const RECORDING_WIDGET_HEIGHT = 42;
@@ -796,12 +723,50 @@ let teleprompterSpeed = 90;
 let isAutoZoomEnabled = false;
 let lastMousePos = { x: 0, y: 0 };
 let mouseTrackInterval: NodeJS.Timeout | null = null;
+const TRIGGER_WINDOW_WIDTH = 44;
+const TRIGGER_WINDOW_HEIGHT = 9;
+const TRIGGER_WINDOW_TOP_OFFSET = 0;
+const TRIGGER_MOUSE_REARM_WINDOW_MS = 52;
+const MENU_REOPEN_GUARD_MS = 260;
+const MENU_TRIGGER_REARM_DELAY_MS = 120;
+const MENU_PREWARM_DELAY_MS = 260;
+const MENU_IDLE_RELEASE_DELAY_MS = 20000;
+const CAPTURE_WINDOW_SETTLE_MS = 160;
 let isWebcamSmall = false; // Toggle for webcam size
 let isWebcamZoomed = false; // Track zoom status for manual toggle
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const hideWindowForCapture = (windowRef: BrowserWindow | null): boolean => {
+    if (!windowRef || windowRef.isDestroyed() || !windowRef.isVisible()) {
+        return false;
+    }
+
+    windowRef.hide();
+    return true;
+};
+const shouldUseTriggerLine = (): boolean => (
+    (RELEASE_PROFILE.name === "dev" && process.platform === "win32")
+    || readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "trigger_line"
+);
+
+const clearTriggerMouseReset = () => {
+    if (triggerMouseResetTimeout) {
+        clearTimeout(triggerMouseResetTimeout);
+        triggerMouseResetTimeout = null;
+    }
+};
+
+const hideTriggerWindow = () => {
+    clearTriggerMouseReset();
+
+    if (!triggerWindow || triggerWindow.isDestroyed()) {
+        return;
+    }
+
+    triggerWindow.hide();
+    triggerWindow.setIgnoreMouseEvents(true, { forward: true });
+};
 let zoomToMouseActive = false; // Current zoom state
-let typingZoomDetector: TypingZoomDetector | null = null;
-let isTypingZoomEnabled = true;
-let lastTypingZoomState: TypingZoomState | null = null;
 
 // Temporary screenshot data
 let tempScreenshotDataUrl: string | null = null;
@@ -834,6 +799,7 @@ const createEditorWindow = (initialDataUrl?: string) => {
         if (initialDataUrl) {
             editorWindow.webContents.send("capture-data", { success: true, dataUrl: initialDataUrl });
         }
+        hideTriggerWindow();
         editorWindow.show();
         editorWindow.focus();
         return;
@@ -859,6 +825,7 @@ const createEditorWindow = (initialDataUrl?: string) => {
 
     editorWindow.once("ready-to-show", () => {
         if (editorWindow) {
+            hideTriggerWindow();
             editorWindow.show();
             if (initialDataUrl) {
                 editorWindow.webContents.send("capture-data", { success: true, dataUrl: initialDataUrl });
@@ -868,35 +835,133 @@ const createEditorWindow = (initialDataUrl?: string) => {
 
     editorWindow.on("closed", () => {
         editorWindow = null;
+        restoreTriggerWindowIfEnabled();
     });
 };
 
 // --- Trigger Window ---
 const rearmTriggerWindow = () => {
     if (!triggerWindow || triggerWindow.isDestroyed()) return;
+    if (!shouldUseTriggerLine() || isCaptureSessionActive) {
+        hideTriggerWindow();
+        return;
+    }
 
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width: screenWidth } = primaryDisplay.size;
-    const triggerWidth = 32;
-    const triggerHeight = 2;
-    const triggerX = Math.round((screenWidth - triggerWidth) / 2);
+    const triggerX = Math.round((screenWidth - TRIGGER_WINDOW_WIDTH) / 2);
 
     triggerWindow.setBounds({
-        width: triggerWidth,
-        height: triggerHeight,
+        width: TRIGGER_WINDOW_WIDTH,
+        height: TRIGGER_WINDOW_HEIGHT,
         x: triggerX,
-        y: 0,
+        y: TRIGGER_WINDOW_TOP_OFFSET,
     }, false);
     triggerWindow.setAlwaysOnTop(true, 'screen-saver');
     triggerWindow.showInactive();
     triggerWindow.setIgnoreMouseEvents(false);
 
-    if (triggerMouseResetTimeout) clearTimeout(triggerMouseResetTimeout);
+    clearTriggerMouseReset();
     triggerMouseResetTimeout = setTimeout(() => {
         if (!triggerWindow || triggerWindow.isDestroyed()) return;
         triggerWindow.setIgnoreMouseEvents(true, { forward: true });
         triggerMouseResetTimeout = null;
-    }, 40);
+    }, TRIGGER_MOUSE_REARM_WINDOW_MS);
+};
+
+const scheduleTriggerRearm = (delayMs = MENU_TRIGGER_REARM_DELAY_MS) => {
+    if (menuTriggerRearmTimeout) {
+        clearTimeout(menuTriggerRearmTimeout);
+    }
+
+    menuTriggerRearmTimeout = setTimeout(() => {
+        menuTriggerRearmTimeout = null;
+        rearmTriggerWindow();
+    }, delayMs);
+};
+
+const restoreTriggerWindowIfEnabled = (delayMs = MENU_TRIGGER_REARM_DELAY_MS) => {
+    if (!shouldUseTriggerLine() || isCaptureSessionActive) {
+        hideTriggerWindow();
+        return;
+    }
+
+    scheduleTriggerRearm(delayMs);
+};
+
+const clearMenuIdleRelease = () => {
+    if (menuIdleReleaseTimeout) {
+        clearTimeout(menuIdleReleaseTimeout);
+        menuIdleReleaseTimeout = null;
+    }
+};
+
+const scheduleMenuIdleRelease = (delayMs = MENU_IDLE_RELEASE_DELAY_MS) => {
+    clearMenuIdleRelease();
+
+    menuIdleReleaseTimeout = setTimeout(() => {
+        menuIdleReleaseTimeout = null;
+
+        if (isRecordingActive) {
+            return;
+        }
+
+        if (!menuWindow || menuWindow.isDestroyed() || menuWindow.isVisible()) {
+            return;
+        }
+
+        menuWindow.close();
+    }, delayMs);
+};
+
+const armMenuBlurGuard = (durationMs = 1200) => {
+    menuWindowBlurGuardUntil = Date.now() + durationMs;
+};
+
+const hideMenuWindow = (
+    options: {
+        rearmTrigger?: boolean;
+        rearmDelayMs?: number;
+        blockReopenMs?: number;
+    } = {},
+) => {
+    const {
+        rearmTrigger = true,
+        rearmDelayMs = MENU_TRIGGER_REARM_DELAY_MS,
+        blockReopenMs = MENU_REOPEN_GUARD_MS,
+    } = options;
+
+    menuReopenBlockedUntil = Date.now() + blockReopenMs;
+
+    if (menuWindow && !menuWindow.isDestroyed()) {
+        menuWindow.hide();
+        scheduleMenuIdleRelease();
+    }
+
+    if (rearmTrigger && !isCaptureSessionActive) {
+        scheduleTriggerRearm(rearmDelayMs);
+    } else if (!shouldUseTriggerLine()) {
+        hideTriggerWindow();
+    }
+};
+
+const notifyMenuOpened = (payload: MenuOpenedPayload) => {
+    if (!menuWindow || menuWindow.isDestroyed()) {
+        return;
+    }
+
+    const sendOpened = () => {
+        if (menuWindow && !menuWindow.isDestroyed()) {
+            menuWindow.webContents.send("menu-opened", payload);
+        }
+    };
+
+    if (menuWindow.webContents.isLoadingMainFrame()) {
+        menuWindow.webContents.once("did-finish-load", sendOpened);
+        return;
+    }
+
+    sendOpened();
 };
 
 const createTriggerWindow = () => {
@@ -907,15 +972,13 @@ const createTriggerWindow = () => {
 
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width: screenWidth } = primaryDisplay.size;
-    const triggerWidth = 32;  // Significantly smaller activation area
-    const triggerHeight = 2;  // Minimized height to avoid blocking underlying clicks
-    const triggerX = Math.round((screenWidth - triggerWidth) / 2);
+    const triggerX = Math.round((screenWidth - TRIGGER_WINDOW_WIDTH) / 2);
 
     triggerWindow = new BrowserWindow({
-        width: triggerWidth,
-        height: triggerHeight,
+        width: TRIGGER_WINDOW_WIDTH,
+        height: TRIGGER_WINDOW_HEIGHT,
         x: triggerX,
-        y: 0,
+        y: TRIGGER_WINDOW_TOP_OFFSET,
         frame: false,
         transparent: true,
         alwaysOnTop: true,
@@ -934,23 +997,65 @@ const createTriggerWindow = () => {
     triggerWindow.loadURL(TRIGGER_WINDOW_WEBPACK_ENTRY);
 
     triggerWindow.once('ready-to-show', () => {
-        rearmTriggerWindow();
+        if (shouldUseTriggerLine()) {
+            rearmTriggerWindow();
+        } else {
+            hideTriggerWindow();
+        }
     });
 
     triggerWindow.on("closed", () => {
-        if (triggerMouseResetTimeout) {
-            clearTimeout(triggerMouseResetTimeout);
-            triggerMouseResetTimeout = null;
-        }
+        clearTriggerMouseReset();
         triggerWindow = null;
     });
 };
 
 // --- Menu Window (Hub Menu) ---
-const createMenuWindow = () => {
+const createMenuWindow = (
+    options: {
+        show?: boolean;
+        bypassReopenGuard?: boolean;
+        openReason?: MenuOpenReason;
+    } = {},
+) => {
+    const {
+        show = true,
+        bypassReopenGuard = false,
+        openReason,
+    } = options;
+
+    if (show && isCaptureSessionActive) {
+        return;
+    }
+
+    if (show && !bypassReopenGuard && Date.now() < menuReopenBlockedUntil) {
+        return;
+    }
+
+    menuWindowShouldShowOnReady = show;
+
+    if (show) {
+        menuReopenBlockedUntil = 0;
+        clearMenuIdleRelease();
+        hideTriggerWindow();
+        armMenuBlurGuard();
+        if (menuTriggerRearmTimeout) {
+            clearTimeout(menuTriggerRearmTimeout);
+            menuTriggerRearmTimeout = null;
+        }
+    }
+
     if (menuWindow && !menuWindow.isDestroyed()) {
-        menuWindow.show();
-        // menuWindow.focus();
+        if (show && !menuWindow.webContents.isLoadingMainFrame()) {
+            menuWindow.show();
+            menuWindow.focus();
+        }
+        if (!show) {
+            scheduleMenuIdleRelease();
+        }
+        if (show && openReason) {
+            notifyMenuOpened({ reason: openReason, openedAt: Date.now() });
+        }
         return;
     }
 
@@ -973,38 +1078,75 @@ const createMenuWindow = () => {
             preload: MENU_WINDOW_PRELOAD_WEBPACK_ENTRY,
             nodeIntegration: false,
             contextIsolation: true,
-            backgroundThrottling: false,
+            // The trigger strip wakes the menu, so hidden menu content can be throttled.
+            backgroundThrottling: true,
         },
     });
 
     menuWindow.loadURL(MENU_WINDOW_WEBPACK_ENTRY);
+    if (!show) {
+        scheduleMenuIdleRelease();
+    }
+
+    if (show && openReason) {
+        notifyMenuOpened({ reason: openReason, openedAt: Date.now() });
+    }
 
     menuWindow.once("ready-to-show", () => {
-        if (menuWindow) {
+        if (menuWindow && menuWindowShouldShowOnReady) {
             menuWindow.show();
+            menuWindow.focus();
         }
     });
 
     menuWindow.on("blur", () => {
-        if (menuWindow && !menuWindow.isDestroyed()) {
-            // Check if hidden by another window take-over
-            menuWindow.hide();
+        if (Date.now() < menuWindowBlurGuardUntil) {
+            return;
         }
-        setTimeout(() => {
-            rearmTriggerWindow();
-        }, 40);
+        hideMenuWindow();
     });
 
     menuWindow.on("closed", () => {
+        clearMenuIdleRelease();
+        if (menuTriggerRearmTimeout) {
+            clearTimeout(menuTriggerRearmTimeout);
+            menuTriggerRearmTimeout = null;
+        }
         menuWindow = null;
     });
 };
 
 // --- Capture Window ---
 const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "region") => {
+    isCaptureSessionActive = true;
+    menuReopenBlockedUntil = Date.now() + CAPTURE_WINDOW_SETTLE_MS + MENU_REOPEN_GUARD_MS;
+    if (menuTriggerRearmTimeout) {
+        clearTimeout(menuTriggerRearmTimeout);
+        menuTriggerRearmTimeout = null;
+    }
+    hideTriggerWindow();
+
+    if (captureWindow && !captureWindow.isDestroyed()) {
+        const previousCaptureWindow = captureWindow;
+        captureWindow = null;
+        previousCaptureWindow.close();
+    }
+
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.size;
     const scaleFactor = primaryDisplay.scaleFactor;
+    const hiddenEditorWindow = hideWindowForCapture(editorWindow);
+    const hiddenAnyWindow = [
+        hiddenEditorWindow,
+        hideWindowForCapture(menuWindow),
+        hideWindowForCapture(triggerWindow),
+    ].some(Boolean);
+
+    shouldRestoreEditorAfterCaptureCancel = hiddenEditorWindow;
+
+    if (hiddenAnyWindow) {
+        await wait(CAPTURE_WINDOW_SETTLE_MS);
+    }
 
     // Take screenshot first - Request exact physical pixels to match cropping logic
     const sources = await desktopCapturer.getSources({
@@ -1021,12 +1163,14 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
     }
 
     if (type === "fullscreen" && tempScreenshotDataUrl) {
-        console.log("[SnipFocus] Fullscreen capture triggered");
+        console.log("[ageofscreen] Fullscreen capture triggered");
+        shouldRestoreEditorAfterCaptureCancel = false;
+        isCaptureSessionActive = false;
         createEditorWindow(tempScreenshotDataUrl);
         return;
     }
 
-    captureWindow = new BrowserWindow({
+    const createdCaptureWindow = new BrowserWindow({
         x: primaryDisplay.bounds.x,
         y: primaryDisplay.bounds.y,
         width,
@@ -1043,28 +1187,31 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
             contextIsolation: true,
         },
     });
+    captureWindow = createdCaptureWindow;
 
-    captureWindow.loadURL(CAPTURE_WINDOW_WEBPACK_ENTRY);
+    createdCaptureWindow.loadURL(CAPTURE_WINDOW_WEBPACK_ENTRY);
 
-    captureWindow.webContents.once("did-finish-load", () => {
-        if (captureWindow && tempScreenshotDataUrl) {
-            captureWindow.show();
-            captureWindow.focus();
-            captureWindow.webContents.send("capture-mode", type === "window" ? "window" : "region");
-            captureWindow.webContents.send("screenshot-data", tempScreenshotDataUrl);
+    createdCaptureWindow.webContents.once("did-finish-load", () => {
+        if (captureWindow === createdCaptureWindow && tempScreenshotDataUrl) {
+            createdCaptureWindow.show();
+            createdCaptureWindow.focus();
+            createdCaptureWindow.webContents.send("capture-mode", type === "window" ? "window" : "region");
+            createdCaptureWindow.webContents.send("screenshot-data", tempScreenshotDataUrl);
         }
     });
 
-    captureWindow.on("closed", () => {
-        captureWindow = null;
-        tempScreenshotDataUrl = null;
+    createdCaptureWindow.on("closed", () => {
+        if (captureWindow === createdCaptureWindow) {
+            captureWindow = null;
+            tempScreenshotDataUrl = null;
+        }
     });
 };
 
 // --- Focus Window (Timer Widget) ---
 const createFocusWindow = (payload: any) => {
     if (!FEATURES.ENABLE_FOCUS_WIDGET) {
-        console.log("[SnipFocus] Focus widget disabled by feature flag");
+        console.log("[ageofscreen] Focus widget disabled by feature flag");
         return;
     }
 
@@ -1158,7 +1305,7 @@ let isRecordingActive = false;
 
 // Helper to stop recording from ESC or widget
 const triggerStopRecording = () => {
-    console.log('[SnipFocus] Triggering stop recording');
+    console.log('[ageofscreen] Triggering stop recording');
     isRecordingActive = false;
 
     // Unregister ESC and zoom shortcuts
@@ -1169,7 +1316,7 @@ const triggerStopRecording = () => {
         if (globalShortcut.isRegistered('Ctrl+Shift+Z')) globalShortcut.unregister('Ctrl+Shift+Z');
         if (globalShortcut.isRegistered('Ctrl+Shift+X')) globalShortcut.unregister('Ctrl+Shift+X');
     } catch (err) {
-        console.warn('[SnipFocus] Failed to unregister shortcuts', err);
+        console.warn('[ageofscreen] Failed to unregister shortcuts', err);
     }
 
     // Hide/close widgets first so they are not captured in the final frames
@@ -1249,20 +1396,23 @@ const showRecordingWidget = (config?: {
         globalShortcut.register('Escape', () => {
             // If drawing overlay is active, close it instead of stopping recording
             if (drawingOverlayWindow && !drawingOverlayWindow.isDestroyed()) {
-                console.log('[SnipFocus] ESC pressed - closing drawing overlay');
+                console.log('[ageofscreen] ESC pressed - closing drawing overlay');
                 restoreAfterDrawingOverlay();
                 return;
             }
 
-            console.log('[SnipFocus] ESC pressed - stopping');
+            console.log('[ageofscreen] ESC pressed - stopping');
             triggerStopRecording();
         });
     } catch (e) {
         console.error('Failed to register Escape', e);
     }
 
-    // Start tracking (for typing zoom and/or cursor data)
-    if (FEATURES.ENABLE_TYPING_ZOOM || smartFeaturesConfig.captureCursorData) {
+    const shouldTrackMouseDuringRecording = smartFeaturesConfig.captureCursorData
+        || FEATURES.ENABLE_AUTO_ZOOM_ADVANCED
+        || (FEATURES.ENABLE_LIVE_MAGNIFIER && smartFeaturesConfig.liveMagnifierEnabled);
+
+    if (shouldTrackMouseDuringRecording) {
         startMouseTracking((smartFeaturesConfig as any).bounds);
     }
 
@@ -1292,7 +1442,7 @@ const showRecordingWidget = (config?: {
         try {
             globalShortcut.unregister('Alt+1');
             const registered1 = globalShortcut.register('Alt+1', async () => {
-                console.log('[SnipFocus] Alt+1 pressed - toggle screen zoom');
+                console.log('[ageofscreen] Alt+1 pressed - toggle screen zoom');
                 zoomToMouseActive = !zoomToMouseActive;
 
                 if (zoomToMouseActive) {
@@ -1334,7 +1484,7 @@ const showRecordingWidget = (config?: {
                             const fileUrl = 'file:///' + htmlPath.replace(/\\/g, '/');
                             zoomWindow.loadURL(`${fileUrl}?sourceId=${source.id}`);
                             zoomWindow.setIgnoreMouseEvents(true);
-                            console.log('[SnipFocus] Zoom overlay created.');
+                            console.log('[ageofscreen] Zoom overlay created.');
                         }
                     } catch (e) {
                         console.error('Failed to init zoom source', e);
@@ -1345,73 +1495,34 @@ const showRecordingWidget = (config?: {
                         zoomWindow.close();
                     }
                     (global as any).zoomOverlayWindow = null;
-                    console.log('[SnipFocus] Zoom overlay closed');
+                    console.log('[ageofscreen] Zoom overlay closed');
                 }
             });
-            console.log(`[SnipFocus] Alt+1 (Live Magnifier) registered: ${registered1 ? 'YES' : 'FAILED'}`);
+            console.log(`[ageofscreen] Alt+1 (Live Magnifier) registered: ${registered1 ? 'YES' : 'FAILED'}`);
         } catch (err) {
-            console.log('[SnipFocus] Error registering Alt+1', err);
+            console.log('[ageofscreen] Error registering Alt+1', err);
         }
     } else {
-        console.log('[SnipFocus] Live Magnifier DISABLED - Alt+1 not registered');
+        console.log('[ageofscreen] Live Magnifier DISABLED - Alt+1 not registered');
     }
 
-    // Register Alt+2 for frame/padding toggle (Auto-Polish style)
-    if (FEATURES.ENABLE_TYPING_ZOOM) {
-        try {
-            globalShortcut.unregister('Alt+2');
-            const registered2 = globalShortcut.register('Alt+2', () => {
-                isTypingZoomEnabled = !isTypingZoomEnabled;
-                console.log(`[SnipFocus] Alt+2 pressed - Frame ${isTypingZoomEnabled ? 'ON' : 'OFF'}`);
-                // Reset detector when toggled to avoid stale state
-                typingZoomDetector = createTypingZoomDetector();
-                lastTypingZoomState = null;
-                if (menuWindow && !menuWindow.isDestroyed()) {
-                    menuWindow.webContents.send('typing-zoom-update', { isZoomed: false, x: 0, y: 0, changed: true });
+    // Keep webcam controls on Alt+2 during recording.
+    try {
+        globalShortcut.unregister('Alt+2');
+        const registered2 = globalShortcut.register('Alt+2', () => {
+            console.log('[ageofscreen] Alt+2 pressed - toggle webcam');
+            if (webcamWindow && !webcamWindow.isDestroyed()) {
+                if (!webcamWindow.isVisible()) {
+                    webcamWindow.show();
+                    console.log('[ageofscreen] Webcam shown');
+                } else {
+                    toggleWebcamSize();
                 }
-            });
-            console.log(`[SnipFocus] Alt+2 (Frame) registered: ${registered2 ? 'YES' : 'FAILED'}`);
-        } catch (err) {
-            console.log('[SnipFocus] Error registering Alt+2 (frame)', err);
-        }
-
-        // Preserve webcam toggle on Alt+Shift+2 to avoid regression
-        try {
-            globalShortcut.unregister('Alt+Shift+2');
-            const registered2b = globalShortcut.register('Alt+Shift+2', () => {
-                console.log('[SnipFocus] Alt+Shift+2 pressed - toggle webcam');
-                if (webcamWindow && !webcamWindow.isDestroyed()) {
-                    if (!webcamWindow.isVisible()) {
-                        webcamWindow.show();
-                        console.log('[SnipFocus] Webcam shown');
-                    } else {
-                        toggleWebcamSize();
-                    }
-                }
-            });
-            console.log(`[SnipFocus] Alt+Shift+2 (Webcam) registered: ${registered2b ? 'YES' : 'FAILED'}`);
-        } catch (err) {
-            console.log('[SnipFocus] Error registering Alt+Shift+2 (webcam)', err);
-        }
-    } else {
-        // Fallback: keep original webcam shortcut when typing zoom is off
-        try {
-            globalShortcut.unregister('Alt+2');
-            const registered2 = globalShortcut.register('Alt+2', () => {
-                console.log('[SnipFocus] Alt+2 pressed - toggle webcam');
-                if (webcamWindow && !webcamWindow.isDestroyed()) {
-                    if (!webcamWindow.isVisible()) {
-                        webcamWindow.show();
-                        console.log('[SnipFocus] Webcam shown');
-                    } else {
-                        toggleWebcamSize();
-                    }
-                }
-            });
-            console.log(`[SnipFocus] Alt+2 (Webcam) registered: ${registered2 ? 'YES' : 'FAILED'}`);
-        } catch (err) {
-            console.log('[SnipFocus] Error registering Alt+2', err);
-        }
+            }
+        });
+        console.log(`[ageofscreen] Alt+2 (Webcam) registered: ${registered2 ? 'YES' : 'FAILED'}`);
+    } catch (err) {
+        console.log('[ageofscreen] Error registering Alt+2', err);
     }
 
     // Register Alt+3 for auto-zoom toggle (only if feature flag allows)
@@ -1420,18 +1531,18 @@ const showRecordingWidget = (config?: {
             globalShortcut.unregister('Alt+3');
             const registered3 = globalShortcut.register('Alt+3', () => {
                 isAutoZoomEnabled = !isAutoZoomEnabled;
-                console.log(`[SnipFocus] Alt+3 pressed - Auto-zoom ${isAutoZoomEnabled ? 'ON' : 'OFF'}`);
+                console.log(`[ageofscreen] Alt+3 pressed - Auto-zoom ${isAutoZoomEnabled ? 'ON' : 'OFF'}`);
 
                 if (recordingWidget && !recordingWidget.isDestroyed()) {
                     recordingWidget.webContents.send('auto-zoom-status', isAutoZoomEnabled);
                 }
             });
-            console.log(`[SnipFocus] Alt+3 (Auto-zoom) registered: ${registered3 ? 'YES' : 'FAILED'}`);
+            console.log(`[ageofscreen] Alt+3 (Auto-zoom) registered: ${registered3 ? 'YES' : 'FAILED'}`);
         } catch (err) {
-            console.log('[SnipFocus] Error registering Alt+3', err);
+            console.log('[ageofscreen] Error registering Alt+3', err);
         }
     } else {
-        console.log('[SnipFocus] Auto-zoom ADVANCED disabled - Alt+3 not registered');
+        console.log('[ageofscreen] Auto-zoom ADVANCED disabled - Alt+3 not registered');
     }
 
     // Register Ctrl+Shift+Z = zoom in, Ctrl+Shift+X = zoom out during recording
@@ -1445,7 +1556,7 @@ const showRecordingWidget = (config?: {
             const cursorPos = screen.getCursorScreenPoint();
             recordZoomToggle(cursorPos.x, cursorPos.y, true);
             recordingWidget?.webContents.send('zoom-marked', { x: cursorPos.x, y: cursorPos.y, zoomIn: true });
-            console.log(`[SnipFocus] Ctrl+Shift+Z - Zoom IN at (${cursorPos.x}, ${cursorPos.y})`);
+            console.log(`[ageofscreen] Ctrl+Shift+Z - Zoom IN at (${cursorPos.x}, ${cursorPos.y})`);
         });
         globalShortcut.register('Ctrl+Shift+X', () => {
             if (!isRecordingActive || !zoomMarkerActive) return;
@@ -1453,11 +1564,11 @@ const showRecordingWidget = (config?: {
             const cursorPos = screen.getCursorScreenPoint();
             recordZoomToggle(cursorPos.x, cursorPos.y, false);
             recordingWidget?.webContents.send('zoom-marked', { x: cursorPos.x, y: cursorPos.y, zoomIn: false });
-            console.log(`[SnipFocus] Ctrl+Shift+X - Zoom OUT at (${cursorPos.x}, ${cursorPos.y})`);
+            console.log(`[ageofscreen] Ctrl+Shift+X - Zoom OUT at (${cursorPos.x}, ${cursorPos.y})`);
         });
-        console.log('[SnipFocus] Ctrl+Shift+Z (Zoom in) / Ctrl+Shift+X (Zoom out) registered');
+        console.log('[ageofscreen] Ctrl+Shift+Z (Zoom in) / Ctrl+Shift+X (Zoom out) registered');
     } catch (err) {
-        console.log('[SnipFocus] Error registering zoom shortcuts', err);
+        console.log('[ageofscreen] Error registering zoom shortcuts', err);
     }
 };
 
@@ -1485,7 +1596,7 @@ const toggleWebcamSize = () => {
             x: width - smallSize - 40 - margin,
             y: height - smallSize - 40 - margin
         }, true);
-        console.log(`[SnipFocus] Webcam: SMALL (${smallSize}px)`);
+        console.log(`[ageofscreen] Webcam: SMALL (${smallSize}px)`);
     } else {
         // Big size: double or normal
         const bigSize = Math.max(200, normalSize * 1.5);
@@ -1495,7 +1606,7 @@ const toggleWebcamSize = () => {
             x: width - bigSize - 40 - margin,
             y: height - bigSize - 40 - margin
         }, true);
-        console.log(`[SnipFocus] Webcam: BIG (${bigSize}px)`);
+        console.log(`[ageofscreen] Webcam: BIG (${bigSize}px)`);
     }
 
     // Notify webcam window about size change
@@ -1504,7 +1615,8 @@ const toggleWebcamSize = () => {
 
 const hideRecordingWidget = () => {
     if (recordingWidget && !recordingWidget.isDestroyed()) {
-        recordingWidget.hide();
+        recordingWidget.close();
+        recordingWidget = null;
     }
 
     // Notify webcam (stop timer)
@@ -1543,15 +1655,6 @@ const hideRecordingWidget = () => {
         recordedCursorData = stopMetadataRecording();
     }
     setClickListener(null);
-    if (clickZoomTimeout) {
-        clearTimeout(clickZoomTimeout);
-        clickZoomTimeout = null;
-    }
-
-    if (FEATURES.ENABLE_TYPING_ZOOM) {
-        typingZoomDetector = null;
-        lastTypingZoomState = null;
-    }
 };
 
 // Mouse tracking logic for Auto-Zoom
@@ -1559,7 +1662,6 @@ let recordedCursorData: any[] = []; // Changed type so metadata can hold click e
 
 import { startMetadataRecording, stopMetadataRecording, recordZoomToggle, setClickListener, setRecordingCaptureMetadata } from './services/metadataRecorder';
 let zoomMarkerActive = false;
-let clickZoomTimeout: NodeJS.Timeout | null = null;
 
 const startMouseTracking = (bounds?: { x: number; y: number; width: number; height: number }) => {
     if (mouseTrackInterval) clearInterval(mouseTrackInterval);
@@ -1567,7 +1669,6 @@ const startMouseTracking = (bounds?: { x: number; y: number; width: number; heig
     // Reset data
     recordedCursorData = [];
     recordingCursorReplacementSafe = false;
-    const startTimeResult = Date.now();
 
     if (smartFeaturesConfig.captureCursorData) {
         startMetadataRecording(bounds);
@@ -1575,26 +1676,6 @@ const startMouseTracking = (bounds?: { x: number; y: number; width: number; heig
             nativeCursorSuppressed: recordingCursorReplacementSafe,
             capturePlatform: process.platform,
         });
-    }
-
-    if (FEATURES.ENABLE_TYPING_ZOOM) {
-        setClickListener((x: number, y: number) => {
-            const clickZoomState = { isZoomed: true, x, y, changed: true };
-            lastTypingZoomState = clickZoomState as any;
-            BrowserWindow.getAllWindows().forEach(win => {
-                if (!win.isDestroyed()) win.webContents.send('typing-zoom-update', clickZoomState);
-            });
-            if (clickZoomTimeout) clearTimeout(clickZoomTimeout);
-            clickZoomTimeout = setTimeout(() => {
-                const zoomOutState = { isZoomed: false, x, y, changed: true };
-                lastTypingZoomState = zoomOutState as any;
-                BrowserWindow.getAllWindows().forEach(win => {
-                    if (!win.isDestroyed()) win.webContents.send('typing-zoom-update', zoomOutState);
-                });
-            }, 650);
-        });
-        typingZoomDetector = createTypingZoomDetector();
-        lastTypingZoomState = null;
     }
 
     let lastScanTime = 0;
@@ -1618,46 +1699,17 @@ const startMouseTracking = (bounds?: { x: number; y: number; width: number; heig
             });
         }
 
-        // Typing zoom heuristic: must run every tick (not only on movement) so stillness is detected
-        if (FEATURES.ENABLE_TYPING_ZOOM && isTypingZoomEnabled) {
-            if (!typingZoomDetector) {
-                typingZoomDetector = createTypingZoomDetector();
-            }
-            const zoomState = typingZoomDetector.update(cursorPoint.x, cursorPoint.y);
-            if (zoomState) {
-                lastTypingZoomState = zoomState;
-                BrowserWindow.getAllWindows().forEach(win => {
-                    if (!win.isDestroyed()) win.webContents.send('typing-zoom-update', zoomState);
-                });
-            }
-        } else if (FEATURES.ENABLE_TYPING_ZOOM && !isTypingZoomEnabled && lastTypingZoomState?.isZoomed) {
-            const fallbackX = lastTypingZoomState?.x ?? cursorPoint.x;
-            const fallbackY = lastTypingZoomState?.y ?? cursorPoint.y;
-            lastTypingZoomState = { isZoomed: false, x: fallbackX, y: fallbackY, changed: true };
-            BrowserWindow.getAllWindows().forEach(win => {
-                if (!win.isDestroyed()) win.webContents.send('typing-zoom-update', lastTypingZoomState);
-            });
-        }
-
         // Throttled UI updates & logic (only when mouse moved)
         if (Math.abs(cursorPoint.x - lastMousePos.x) > 2 || Math.abs(cursorPoint.y - lastMousePos.y) > 2) {
             lastMousePos = cursorPoint;
 
             // Notify windows of mouse move (limited frequency)
             if (menuWindow && !menuWindow.isDestroyed() && menuWindow.isVisible()) {
-                const menuBounds = menuWindow.getBounds();
-                menuWindow.webContents.send('mouse-moved', {
-                    screenX: cursorPoint.x,
-                    screenY: cursorPoint.y,
-                    localX: cursorPoint.x - menuBounds.x,
-                    localY: cursorPoint.y - menuBounds.y,
-                });
+                menuWindow.webContents.send('mouse-moved', cursorPoint);
             }
 
             // Only proceed with heavy auto-zoom/webcam logic if enabled.
-            // Keep the webcam stable while typing zoom is actively zooming so it does not jump.
-            const freezeWebcamDuringZoom = Boolean(lastTypingZoomState?.isZoomed);
-            if (isAutoZoomEnabled && !freezeWebcamDuringZoom) {
+            if (isAutoZoomEnabled) {
                 // Auto-move webcam if cursor is near it
                 if (webcamWindow && !webcamWindow.isDestroyed()) {
                     const bounds = webcamWindow.getBounds();
@@ -1716,7 +1768,7 @@ const startMouseTracking = (bounds?: { x: number; y: number; width: number; heig
                 }
             } catch (err) {
                 // Silently handle - avoid flooding logs during recording
-                console.debug('[SnipFocus] Background OCR skipped/failed');
+                console.debug('[ageofscreen] Background OCR skipped/failed');
             }
         }
     }, 100); // 10fps tracking - much better for overall system performance
@@ -1858,7 +1910,7 @@ const sendPendingMediaToVideoEditor = (reason: string) => {
         return;
     }
 
-    console.log(`[SnipFocus] Sending pending media to video editor (${reason})`, {
+    console.log(`[ageofscreen] Sending pending media to video editor (${reason})`, {
         mediaName: pendingMediaName,
         cursorPoints: recordedCursorData.length,
         mediaUrl: pendingVideoDataUrl,
@@ -1891,8 +1943,8 @@ const getPendingVideoEditorMedia = () => {
 // --- Video Editor Window (Trim/Crop) ---
 const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
     try {
-        console.log("[SnipFocus] createVideoEditorWindow called with:", videoDataUrl ? "data..." : "no data");
-        console.log("[SnipFocus] Entry Points:", {
+        console.log("[ageofscreen] createVideoEditorWindow called with:", videoDataUrl ? "data..." : "no data");
+        console.log("[ageofscreen] Entry Points:", {
             entry: VIDEO_EDITOR_WINDOW_WEBPACK_ENTRY,
             preload: VIDEO_EDITOR_WINDOW_PRELOAD_WEBPACK_ENTRY
         });
@@ -1907,7 +1959,7 @@ const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
         }
 
         if (videoEditorWindow && !videoEditorWindow.isDestroyed()) {
-            console.log("[SnipFocus] Video editor exists, showing/restoring...");
+            console.log("[ageofscreen] Video editor exists, showing/restoring...");
             if (videoEditorWindow.isMinimized()) videoEditorWindow.restore();
             videoEditorWindow.show();
             videoEditorWindow.focus();
@@ -1922,7 +1974,7 @@ const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
             return;
         }
 
-        console.log("[SnipFocus] Creating new video editor window...");
+        console.log("[ageofscreen] Creating new video editor window...");
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width, height } = primaryDisplay.workAreaSize;
 
@@ -1945,10 +1997,10 @@ const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
         videoEditorWindow.focus();
 
         const editorUrl = videoDataUrl ? VIDEO_EDITOR_WINDOW_WEBPACK_ENTRY : `${VIDEO_EDITOR_WINDOW_WEBPACK_ENTRY}?mode=library`;
-        console.log("[SnipFocus] Loading video editor URL:", editorUrl);
+        console.log("[ageofscreen] Loading video editor URL:", editorUrl);
         videoEditorWindow.loadURL(editorUrl);
         videoEditorWindow.webContents.once("did-finish-load", () => {
-            console.log("[SnipFocus] Video editor did-finish-load");
+            console.log("[ageofscreen] Video editor did-finish-load");
         });
 
         videoEditorWindow.on("closed", () => {
@@ -1960,11 +2012,11 @@ const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
 
         // Handle loading errors
         videoEditorWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-            console.error("[SnipFocus] Video editor failed to load:", errorCode, errorDescription);
+            console.error("[ageofscreen] Video editor failed to load:", errorCode, errorDescription);
         });
 
     } catch (err) {
-        console.error("[SnipFocus] Error in createVideoEditorWindow:", err);
+        console.error("[ageofscreen] Error in createVideoEditorWindow:", err);
     }
 };
 
@@ -1979,11 +2031,12 @@ const closeVideoEditorWindow = () => {
 };
 
 // --- Webcam Window ---
-type CameraShape = 'circle' | 'rounded' | 'pill' | 'square';
 let currentCameraShape: CameraShape = 'circle';
 let currentCameraSize = 100; // Default 100%
 let currentPresenterName: string | undefined = undefined;
 let currentCameraBorderColor = '#22c55e'; // Default green
+let currentCameraBorderWidth = 4;
+let currentCameraGlowEnabled = false;
 
 function broadcastWebcamUpdate() {
     const data = {
@@ -1993,6 +2046,8 @@ function broadcastWebcamUpdate() {
         scaleFactor: webcamWindow && !webcamWindow.isDestroyed() ? screen.getDisplayMatching(webcamWindow.getBounds()).scaleFactor : 1,
         name: currentPresenterName,
         borderColor: currentCameraBorderColor,
+        borderWidth: currentCameraBorderWidth,
+        glowEnabled: currentCameraGlowEnabled,
         micEnabled: smartFeaturesConfig.micEnabled
     };
 
@@ -2004,15 +2059,19 @@ function broadcastWebcamUpdate() {
     });
 }
 
-const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, borderColor?: string) => {
-    if (shape) currentCameraShape = shape;
+const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean) => {
+    if (shape) currentCameraShape = normalizeCameraShape(shape);
     if (size !== undefined) currentCameraSize = size;
     if (name !== undefined) currentPresenterName = name;
     if (borderColor !== undefined) currentCameraBorderColor = borderColor;
+    if (borderWidth !== undefined) currentCameraBorderWidth = borderWidth;
+    if (glowEnabled !== undefined) currentCameraGlowEnabled = glowEnabled;
 
     if (webcamWindow && !webcamWindow.isDestroyed()) {
         webcamWindow.webContents.send("update-shape", currentCameraShape);
         webcamWindow.webContents.send("update-border-color", currentCameraBorderColor);
+        webcamWindow.webContents.send("update-border-width", currentCameraBorderWidth);
+        webcamWindow.webContents.send("update-glow-enabled", currentCameraGlowEnabled);
         if (name !== undefined) {
             webcamWindow.webContents.send("update-presenter-name", currentPresenterName);
         }
@@ -2023,16 +2082,15 @@ const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, b
             const baseSize = 140;
             const sf = currentCameraSize / 100;
             const camSize = Math.round(baseSize * sf);
-            const camWidth = camSize;
-            const camHeight = currentCameraShape === 'pill' ? Math.round(camSize / 1.7) : camSize;
+            const cameraBounds = getCameraDimensionsForWidth(currentCameraShape, camSize);
 
             // Update window size to match new shape while keeping it on screen
             const currentBounds = webcamWindow.getBounds();
             webcamWindow.setBounds({
                 x: currentBounds.x,
                 y: currentBounds.y,
-                width: camWidth,
-                height: camHeight
+                width: cameraBounds.width,
+                height: cameraBounds.height
             }, true);
 
             broadcastWebcamUpdate();
@@ -2053,17 +2111,14 @@ const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, b
     const scaleFactor = currentCameraSize / 100;
     const camSize = Math.round(baseSize * scaleFactor);
     const margin = 20;
-
-    // Direct sizing - supporting pill aspect ratio
-    const camWidth = camSize;
-    const camHeight = currentCameraShape === 'pill' ? Math.round(camSize / 1.7) : camSize;
+    const cameraBounds = getCameraDimensionsForWidth(currentCameraShape, camSize);
 
     webcamWindow = new BrowserWindow({
-        width: camWidth,
-        height: camHeight,
+        width: cameraBounds.width,
+        height: cameraBounds.height,
         useContentSize: true,
-        x: width - camWidth - margin,
-        y: height - camHeight - margin,
+        x: width - cameraBounds.width - margin,
+        y: height - cameraBounds.height - margin,
         frame: false,
         transparent: true,
         backgroundColor: '#00000000',
@@ -2074,7 +2129,7 @@ const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, b
         hasShadow: false,
         thickFrame: false,
         minWidth: 80,
-        minHeight: 80,
+        minHeight: getCameraDimensionsForWidth(currentCameraShape, 80).height,
         webPreferences: {
             preload: WEBCAM_WINDOW_PRELOAD_WEBPACK_ENTRY,
             nodeIntegration: false,
@@ -2085,11 +2140,41 @@ const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, b
 
     // Load webcam with shape, size, border color, and optional name
     const borderParam = encodeURIComponent(currentCameraBorderColor);
-    const url = `${WEBCAM_WINDOW_WEBPACK_ENTRY}?shape=${currentCameraShape}&size=${currentCameraSize}&borderColor=${borderParam}${currentPresenterName ? '&name=' + encodeURIComponent(currentPresenterName) : ''}&micEnabled=${smartFeaturesConfig.micEnabled}`;
+    const url = `${WEBCAM_WINDOW_WEBPACK_ENTRY}?shape=${currentCameraShape}&size=${currentCameraSize}&borderColor=${borderParam}${currentPresenterName ? '&name=' + encodeURIComponent(currentPresenterName) : ''}&micEnabled=${smartFeaturesConfig.micEnabled}&borderWidth=${currentCameraBorderWidth}&glowEnabled=${currentCameraGlowEnabled}`;
     webcamWindow.loadURL(url);
+
+    webcamWindow.webContents.once("did-finish-load", () => {
+        if (webcamWindow && !webcamWindow.isDestroyed()) {
+            webcamWindow.webContents.send("window-visibility", webcamWindow.isVisible());
+        }
+    });
 
     webcamWindow.on("closed", () => {
         webcamWindow = null;
+    });
+
+    webcamWindow.on("hide", () => {
+        if (webcamWindow && !webcamWindow.isDestroyed()) {
+            webcamWindow.webContents.send("window-visibility", false);
+        }
+    });
+
+    webcamWindow.on("show", () => {
+        if (webcamWindow && !webcamWindow.isDestroyed()) {
+            webcamWindow.webContents.send("window-visibility", true);
+        }
+    });
+
+    webcamWindow.on("minimize", () => {
+        if (webcamWindow && !webcamWindow.isDestroyed()) {
+            webcamWindow.webContents.send("window-visibility", false);
+        }
+    });
+
+    webcamWindow.on("restore", () => {
+        if (webcamWindow && !webcamWindow.isDestroyed()) {
+            webcamWindow.webContents.send("window-visibility", webcamWindow.isVisible());
+        }
     });
 
     webcamWindow.on("move", () => {
@@ -2112,8 +2197,31 @@ const writeDataUrlToFile = async (dataUrl: string, outputPath: string) => {
     await fs.promises.writeFile(outputPath, dataUrl.slice(dataStart + 1), 'base64');
 };
 
+const approvedMediaPaths = new Set<string>();
+const normalizeApprovedMediaPath = (source: string) => path.resolve(fromMediaFileUrl(source)).replace(/\\/g, '/').toLowerCase();
+const approveMediaPath = (source: string | null | undefined) => {
+    if (!source || source.startsWith('data:')) {
+        return;
+    }
+    const physicalPath = fromMediaFileUrl(source);
+    if (!path.isAbsolute(physicalPath) || !isSupportedMediaFilePath(physicalPath)) {
+        return;
+    }
+    approvedMediaPaths.add(normalizeApprovedMediaPath(physicalPath));
+};
+const isApprovedMediaPath = (source: string): boolean => approvedMediaPaths.has(normalizeApprovedMediaPath(source));
+
 const ensurePhysicalMediaPath = (source: string) => {
     const sourcePath = fromMediaFileUrl(source);
+    if (!path.isAbsolute(sourcePath)) {
+        throw new Error(`Media path must be absolute: ${sourcePath}`);
+    }
+    if (!isSupportedMediaFilePath(sourcePath)) {
+        throw new Error(`Unsupported media file type: ${sourcePath}`);
+    }
+    if (!isApprovedMediaPath(sourcePath)) {
+        throw new Error(`Media path is not approved for renderer access: ${sourcePath}`);
+    }
     if (!fs.existsSync(sourcePath)) {
         throw new Error(`Source file not found: ${sourcePath}`);
     }
@@ -2138,7 +2246,7 @@ const dispatchRecordingStartRequest = (config?: AgentRecordingRequest) => {
     };
 
     if (!menuWindow || menuWindow.isDestroyed()) {
-        createMenuWindow();
+        createMenuWindow({ bypassReopenGuard: true });
         if (menuWindow && !menuWindow.isDestroyed()) {
             menuWindow.webContents.once("did-finish-load", () => {
                 sendStart();
@@ -2162,7 +2270,7 @@ const maybeAutoStartAgentRecording = (reason: string) => {
     }
 
     agentAutoRecordingRequested = true;
-    console.log("[SnipFocus] Auto-starting agent recording:", reason);
+    console.log("[ageofscreen] Auto-starting agent recording:", reason);
     dispatchRecordingStartRequest(DEFAULT_AGENT_RECORDING_REQUEST);
 };
 
@@ -2205,7 +2313,7 @@ const runAutoPolishPreview = async ({
     padding?: number;
     trackingProfile?: SmartTrackingProfile;
 }) => {
-    console.log('[SnipFocus] IPC auto-polish received:', videoSrc);
+    console.log('[ageofscreen] IPC auto-polish received:', videoSrc);
     try {
         const entitlementState = getCurrentEntitlementState();
         if (!entitlementState.canUseAutoPolish) {
@@ -2217,16 +2325,16 @@ const runAutoPolishPreview = async ({
             return { success: false, error: 'FFmpeg is required for Auto-Polish. Please install FFmpeg.' };
         }
 
-        const sourcePath = fromMediaFileUrl(videoSrc);
+        const sourcePath = videoSrc.startsWith('data:')
+            ? videoSrc
+            : ensurePhysicalMediaPath(videoSrc);
 
-        const tempDir = getSnipFocusTempDir();
+        const tempDir = getageofscreenTempDir();
         let processingPath: string;
 
         if (videoSrc.startsWith('data:')) {
             processingPath = path.join(tempDir, `autopolish-${Date.now()}.webm`);
             await writeDataUrlToFile(videoSrc, processingPath);
-        } else if (!fs.existsSync(sourcePath)) {
-            return { success: false, error: 'Video file not found' };
         } else {
             processingPath = path.join(tempDir, `autopolish-input-${Date.now()}${path.extname(sourcePath) || '.mp4'}`);
             await fs.promises.copyFile(sourcePath, processingPath);
@@ -2263,6 +2371,7 @@ const runAutoPolishPreview = async ({
         fs.promises.unlink(processingPath).catch(console.error);
 
         if (result.success && result.outputPath && videoEditorWindow && !videoEditorWindow.isDestroyed()) {
+            approveMediaPath(result.outputPath);
             const fileUrl = toMediaFileUrl(result.outputPath);
             const baseTrackingEffects = buildSmartTrackingEffects(recordedCursorData, {
                 durationHint: result.beforeDuration ?? undefined,
@@ -2285,7 +2394,7 @@ const runAutoPolishPreview = async ({
 
         return result;
     } catch (error) {
-        console.error('[SnipFocus] Auto-polish failed:', error);
+        console.error('[ageofscreen] Auto-polish failed:', error);
         return { success: false, error: (error as Error).message };
     }
 };
@@ -2306,15 +2415,15 @@ const runAutoPolishPlan = async ({
             return { success: false, error: 'FFmpeg is required for Auto-Polish analysis. Please install FFmpeg.' };
         }
 
-        const sourcePath = fromMediaFileUrl(videoSrc);
-        const tempDir = getSnipFocusTempDir();
+        const sourcePath = videoSrc.startsWith('data:')
+            ? videoSrc
+            : ensurePhysicalMediaPath(videoSrc);
+        const tempDir = getageofscreenTempDir();
         let processingPath: string;
 
         if (videoSrc.startsWith('data:')) {
             processingPath = path.join(tempDir, `autopolish-plan-${Date.now()}.webm`);
             await writeDataUrlToFile(videoSrc, processingPath);
-        } else if (!fs.existsSync(sourcePath)) {
-            return { success: false, error: 'Video file not found' };
         } else {
             processingPath = sourcePath;
         }
@@ -2333,7 +2442,7 @@ const runAutoPolishPlan = async ({
 
         return result;
     } catch (error) {
-        console.error('[SnipFocus] Auto-polish plan failed:', error);
+        console.error('[ageofscreen] Auto-polish plan failed:', error);
         return { success: false, error: (error as Error).message };
     }
 };
@@ -2350,12 +2459,6 @@ const registerIpcHandlers = () => {
     });
     ipcMain.handle("settings:get-onboarding-state", () => getOnboardingState());
     ipcMain.handle("settings:complete-onboarding", () => completeOnboarding());
-    ipcMain.handle("settings:set-capture-shortcut", (_event, preference: CaptureShortcutPreference) => {
-        if (preference !== "print_screen" && preference !== "trigger_line") {
-            throw new Error(`Unsupported capture shortcut preference: ${String(preference)}`);
-        }
-        return setCaptureShortcutPreference(preference);
-    });
 
     // Shield mode controls
     ipcMain.handle("shield:get-state", () => toShieldState(shieldMode));
@@ -2508,7 +2611,7 @@ const registerIpcHandlers = () => {
                     };
             }
         } catch (error) {
-            console.error("[SnipFocus] Agent job failed:", error);
+            console.error("[ageofscreen] Agent job failed:", error);
             return {
                 success: false,
                 error: (error as Error).message,
@@ -2518,51 +2621,43 @@ const registerIpcHandlers = () => {
 
     // Trigger events
     ipcMain.on("trigger-mouse-enter", () => {
+        if (!shouldUseTriggerLine() || isCaptureSessionActive) {
+            return;
+        }
         createMenuWindow();
     });
 
     // Menu events
     ipcMain.on("menu-hide", () => {
-        if (menuWindow && !menuWindow.isDestroyed()) {
-            menuWindow.hide();
-        }
-        setTimeout(() => {
-            rearmTriggerWindow();
-        }, 40);
+        hideMenuWindow();
     });
 
     ipcMain.on("menu-snip", () => {
-        console.log("[SnipFocus] Mode: Region Snip");
-        if (menuWindow && !menuWindow.isDestroyed()) {
-            menuWindow.hide();
-        }
+        console.log("[ageofscreen] Mode: Region Snip");
+        hideMenuWindow({ rearmTrigger: false, blockReopenMs: CAPTURE_WINDOW_SETTLE_MS + MENU_REOPEN_GUARD_MS });
         createCaptureWindow("region");
     });
 
     ipcMain.on("menu-fullscreen", () => {
-        console.log("[SnipFocus] Mode: Full Screen");
-        if (menuWindow && !menuWindow.isDestroyed()) {
-            menuWindow.hide();
-        }
+        console.log("[ageofscreen] Mode: Full Screen");
+        hideMenuWindow({ rearmTrigger: false, blockReopenMs: CAPTURE_WINDOW_SETTLE_MS + MENU_REOPEN_GUARD_MS });
         createCaptureWindow("fullscreen");
     });
 
     ipcMain.on("menu-window", () => {
-        console.log("[SnipFocus] Mode: Window Snip");
-        if (menuWindow && !menuWindow.isDestroyed()) {
-            menuWindow.hide();
-        }
+        console.log("[ageofscreen] Mode: Window Snip");
+        hideMenuWindow({ rearmTrigger: false, blockReopenMs: CAPTURE_WINDOW_SETTLE_MS + MENU_REOPEN_GUARD_MS });
         createCaptureWindow("window");
     });
 
     ipcMain.on("menu-focus", () => {
         // Toggled in the menu renderer itself (managed by FocusWidget component)
-        console.log("[SnipFocus] Focus Toggled");
+        console.log("[ageofscreen] Focus Toggled");
     });
 
 
-    ipcMain.on("menu-camera", (event, shape?: CameraShape, size?: number, name?: string, borderColor?: string) => {
-        console.log("[SnipFocus] Toggling Camera with shape:", shape || 'default', "size:", size || 'default', "name:", name || 'none', "borderColor:", borderColor || 'default');
+    ipcMain.on("menu-camera", (event, shape?: CameraShape, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean) => {
+        console.log("[ageofscreen] Toggling Camera with shape:", shape || 'default', "size:", size || 'default', "name:", name || 'none', "borderColor:", borderColor || 'default', "borderWidth:", borderWidth, "glow:", glowEnabled);
 
         // During recording, toggle webcam visibility when no args provided (from widget)
         if (isRecordingActive && webcamWindow && !webcamWindow.isDestroyed() && !shape && size === undefined) {
@@ -2576,7 +2671,7 @@ const registerIpcHandlers = () => {
             return;
         }
 
-        createWebcamWindow(shape, size, name, borderColor);
+        createWebcamWindow(shape, size, name, borderColor, borderWidth, glowEnabled);
         if (webcamWindow && !webcamWindow.isDestroyed()) {
             webcamWindow.webContents.send("update-shape", currentCameraShape);
             if (name !== undefined) {
@@ -2612,18 +2707,17 @@ const registerIpcHandlers = () => {
             const potWidth = Math.max(80, Math.min(1200, resizeSession.anchorX - targetX));
 
             // Apply shape constraint (locked aspect ratio)
-            const newWidth = potWidth;
-            const newHeight = currentCameraShape === 'pill' ? Math.round(newWidth / 1.7) : newWidth;
+            const nextBounds = getCameraDimensionsForWidth(currentCameraShape, potWidth);
 
             // Re-calculate X, Y to maintain the bottom-right anchor
-            const newX = resizeSession.anchorX - newWidth;
-            const newY = resizeSession.anchorY - newHeight;
+            const newX = resizeSession.anchorX - nextBounds.width;
+            const newY = resizeSession.anchorY - nextBounds.height;
 
             webcamWindow.setBounds({
                 x: Math.round(newX),
                 y: Math.round(newY),
-                width: Math.round(newWidth),
-                height: Math.round(newHeight)
+                width: Math.round(nextBounds.width),
+                height: Math.round(nextBounds.height)
             }, false);
 
             if (recordingWidget && !recordingWidget.isDestroyed() && recordingWidget.isVisible()) {
@@ -2697,20 +2791,28 @@ const registerIpcHandlers = () => {
             }));
         }
 
-        console.log("[SnipFocus] Invoke capture requested from renderer:", type);
-        if (editorWindow && !editorWindow.isDestroyed()) {
-            editorWindow.hide();
-        }
+        console.log("[ageofscreen] Invoke capture requested from renderer:", type);
         createCaptureWindow(type as any);
     });
 
     // Capture result
     ipcMain.on("capture-result", async (event, result: { cancelled: boolean; bounds?: any; windowId?: string }) => {
-        console.log("[SnipFocus] Capture result received");
+        console.log("[ageofscreen] Capture result received");
 
         if (result.cancelled) {
             if (captureWindow && !captureWindow.isDestroyed()) {
                 captureWindow.close();
+            }
+            let restoredEditor = false;
+            if (shouldRestoreEditorAfterCaptureCancel && editorWindow && !editorWindow.isDestroyed()) {
+                editorWindow.show();
+                editorWindow.focus();
+                restoredEditor = true;
+            }
+            shouldRestoreEditorAfterCaptureCancel = false;
+            isCaptureSessionActive = false;
+            if (!restoredEditor) {
+                restoreTriggerWindowIfEnabled();
             }
             return;
         }
@@ -2726,6 +2828,8 @@ const registerIpcHandlers = () => {
                 if (captureWindow && !captureWindow.isDestroyed()) {
                     captureWindow.close();
                 }
+                shouldRestoreEditorAfterCaptureCancel = false;
+                isCaptureSessionActive = false;
                 createEditorWindow(source.thumbnail.toDataURL());
             }
             return;
@@ -2734,6 +2838,17 @@ const registerIpcHandlers = () => {
         if (!result.bounds || !tempScreenshotDataUrl) {
             if (captureWindow && !captureWindow.isDestroyed()) {
                 captureWindow.close();
+            }
+            let restoredEditor = false;
+            if (shouldRestoreEditorAfterCaptureCancel && editorWindow && !editorWindow.isDestroyed()) {
+                editorWindow.show();
+                editorWindow.focus();
+                restoredEditor = true;
+            }
+            shouldRestoreEditorAfterCaptureCancel = false;
+            isCaptureSessionActive = false;
+            if (!restoredEditor) {
+                restoreTriggerWindowIfEnabled();
             }
             return;
         }
@@ -2755,10 +2870,23 @@ const registerIpcHandlers = () => {
                 captureWindow.close();
             }
 
-            console.log("[SnipFocus] Captured region:", bounds.width, "x", bounds.height);
+            console.log("[ageofscreen] Captured region:", bounds.width, "x", bounds.height);
+            shouldRestoreEditorAfterCaptureCancel = false;
+            isCaptureSessionActive = false;
             createEditorWindow(croppedDataUrl);
         } catch (error) {
-            console.error("[SnipFocus] Error cropping image:", error);
+            console.error("[ageofscreen] Error cropping image:", error);
+            let restoredEditor = false;
+            if (shouldRestoreEditorAfterCaptureCancel && editorWindow && !editorWindow.isDestroyed()) {
+                editorWindow.show();
+                editorWindow.focus();
+                restoredEditor = true;
+            }
+            shouldRestoreEditorAfterCaptureCancel = false;
+            isCaptureSessionActive = false;
+            if (!restoredEditor) {
+                restoreTriggerWindowIfEnabled();
+            }
         }
     });
 
@@ -2787,16 +2915,28 @@ const registerIpcHandlers = () => {
 
     // Focus Blocking (Stub for now)
     ipcMain.on("focus-blocking-start", (event, blockedItems) => {
-        console.log("[SnipFocus] Focus blocking started for:", blockedItems);
+        console.log("[ageofscreen] Focus blocking started for:", blockedItems);
     });
 
     ipcMain.on("focus-blocking-stop", () => {
-        console.log("[SnipFocus] Focus blocking stopped");
+        console.log("[ageofscreen] Focus blocking stopped");
     });
 
     ipcMain.on("minimize-window", (event) => {
         const win = BrowserWindow.fromWebContents(event.sender);
         if (win) win.minimize();
+    });
+
+    ipcMain.on("maximize-window", (event) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win) return;
+
+        if (win.isMaximized()) {
+            win.unmaximize();
+            return;
+        }
+
+        win.maximize();
     });
 
     // Recording IPCs
@@ -2815,14 +2955,14 @@ const registerIpcHandlers = () => {
     });
 
     ipcMain.on("widget-stop-recording", () => {
-        console.log('[SnipFocus] Widget requested stop recording');
+        console.log('[ageofscreen] Widget requested stop recording');
         triggerStopRecording();
     });
 
     // Drawing overlay toggle
     ipcMain.on("toggle-drawing-overlay", (event, enabled: boolean) => {
         if (!FEATURES.ENABLE_DRAWING) return;
-        console.log('[SnipFocus] Toggle drawing overlay:', enabled);
+        console.log('[ageofscreen] Toggle drawing overlay:', enabled);
         if (enabled) {
             wasWebcamVisibleBeforeDrawing = !!(webcamWindow && !webcamWindow.isDestroyed() && webcamWindow.isVisible());
             createDrawingOverlayWindow();
@@ -2851,7 +2991,7 @@ const registerIpcHandlers = () => {
 
     // Window background color change
     ipcMain.on("set-window-background", (event, color: string) => {
-        console.log('[SnipFocus] Set window background color:', color);
+        console.log('[ageofscreen] Set window background color:', color);
         smartFeaturesConfig.windowBackground = color;
         // Optionally notify editor if it's open
     });
@@ -2882,7 +3022,7 @@ const registerIpcHandlers = () => {
 
 
     ipcMain.on("set-edit-after-recording", (event, enabled: boolean) => {
-        console.log('[SnipFocus] Set edit after recording:', enabled);
+        console.log('[ageofscreen] Set edit after recording:', enabled);
         // Broadcast to all windows
         BrowserWindow.getAllWindows().forEach(win => {
             if (!win.isDestroyed()) {
@@ -2894,7 +3034,7 @@ const registerIpcHandlers = () => {
 
     // Drawing color change
     ipcMain.on("set-drawing-color", (event, color: string) => {
-        console.log('[SnipFocus] Set drawing color:', color);
+        console.log('[ageofscreen] Set drawing color:', color);
         if (drawingOverlayWindow && !drawingOverlayWindow.isDestroyed()) {
             drawingOverlayWindow.webContents.send('set-drawing-color', color);
         }
@@ -2937,13 +3077,13 @@ const registerIpcHandlers = () => {
     // Teleprompter IPC handlers
     ipcMain.on("show-teleprompter", (event, text?: string, speed?: number) => {
         if (!FEATURES.ENABLE_TELEPROMPTER) return;
-        console.log('[SnipFocus] Show teleprompter:', { text: text?.substring(0, 30), speed });
+        console.log('[ageofscreen] Show teleprompter:', { text: text?.substring(0, 30), speed });
         createTeleprompterWindow(text, speed);
     });
 
     ipcMain.on("toggle-teleprompter-request", () => {
         if (!FEATURES.ENABLE_TELEPROMPTER) return;
-        console.log('[SnipFocus] Toggle teleprompter requested');
+        console.log('[ageofscreen] Toggle teleprompter requested');
         if (teleprompterWindow && !teleprompterWindow.isDestroyed()) {
             closeTeleprompterWindow();
         } else {
@@ -2952,7 +3092,7 @@ const registerIpcHandlers = () => {
     });
 
     ipcMain.on("toggle-camera-zoom", () => {
-        console.log('[SnipFocus] Toggle camera zoom requested');
+        console.log('[ageofscreen] Toggle camera zoom requested');
         // If it's already large, normal it. If normal, large it.
         if (webcamWindow && !webcamWindow.isDestroyed()) {
             const bounds = webcamWindow.getBounds();
@@ -2964,7 +3104,7 @@ const registerIpcHandlers = () => {
 
     // Webcam Toolbar Actions
     ipcMain.on("webcam-stop-recording", () => {
-        console.log('[SnipFocus] Webcam stop requested');
+        console.log('[ageofscreen] Webcam stop requested');
         triggerStopRecording();
     });
 
@@ -2984,29 +3124,27 @@ const registerIpcHandlers = () => {
 
             let camSize = zoomed ? Math.max(350, normalSize * 2) : normalSize;
 
-            // Apply shape aspect ratio
-            const camWidth = camSize;
-            const camHeight = currentCameraShape === 'pill' ? Math.round(camWidth / 1.7) : camWidth;
+            const zoomBounds = getCameraDimensionsForWidth(currentCameraShape, camSize);
 
             // Grow/shrink from center to maintain position
             const centerX = bounds.x + (bounds.width / 2);
             const centerY = bounds.y + (bounds.height / 2);
 
-            const newX = Math.round(centerX - (camWidth / 2));
-            const newY = Math.round(centerY - (camHeight / 2));
+            const newX = Math.round(centerX - (zoomBounds.width / 2));
+            const newY = Math.round(centerY - (zoomBounds.height / 2));
 
             // Constrain to primary display work area
             const primaryDisplay = screen.getPrimaryDisplay();
             const { width, height } = primaryDisplay.workAreaSize;
 
-            const finalX = Math.max(0, Math.min(width - camWidth, newX));
-            const finalY = Math.max(0, Math.min(height - camHeight, newY));
+            const finalX = Math.max(0, Math.min(width - zoomBounds.width, newX));
+            const finalY = Math.max(0, Math.min(height - zoomBounds.height, newY));
 
             webcamWindow.setBounds({
                 x: finalX,
                 y: finalY,
-                width: Math.round(camWidth),
-                height: Math.round(camHeight)
+                width: Math.round(zoomBounds.width),
+                height: Math.round(zoomBounds.height)
             }, true);
 
             broadcastWebcamUpdate();
@@ -3019,14 +3157,14 @@ const registerIpcHandlers = () => {
     }
 
     ipcMain.on("webcam-hide-camera", () => {
-        console.log('[SnipFocus] Hide camera requested');
+        console.log('[ageofscreen] Hide camera requested');
         if (webcamWindow && !webcamWindow.isDestroyed()) {
             webcamWindow.hide();
         }
     });
 
     ipcMain.on("webcam-show-camera", () => {
-        console.log('[SnipFocus] Show camera requested');
+        console.log('[ageofscreen] Show camera requested');
         if (webcamWindow && !webcamWindow.isDestroyed()) {
             webcamWindow.show();
         }
@@ -3038,7 +3176,7 @@ const registerIpcHandlers = () => {
 
     // Show recording widget (from webcam toolbar)
     ipcMain.on("show-recording-widget-request", () => {
-        console.log('[SnipFocus] Show recording widget requested from webcam');
+        console.log('[ageofscreen] Show recording widget requested from webcam');
         if (!recordingWidget || recordingWidget.isDestroyed()) {
             createRecordingWidget();
         }
@@ -3046,12 +3184,12 @@ const registerIpcHandlers = () => {
     });
 
     ipcMain.on("teleprompter-close", () => {
-        console.log('[SnipFocus] Close teleprompter');
+        console.log('[ageofscreen] Close teleprompter');
         closeTeleprompterWindow();
     });
 
     ipcMain.on("teleprompter-minimize", () => {
-        console.log('[SnipFocus] Minimize teleprompter');
+        console.log('[ageofscreen] Minimize teleprompter');
         if (teleprompterWindow && !teleprompterWindow.isDestroyed()) {
             teleprompterWindow.minimize();
         }
@@ -3072,27 +3210,28 @@ const registerIpcHandlers = () => {
 
     ipcMain.handle("save-temp-video", async (event, buffer: ArrayBuffer) => {
         try {
-            const tempDir = getSnipFocusTempDir();
+            const tempDir = getageofscreenTempDir();
             const timestamp = Date.now();
-            const initialFilePath = path.join(tempDir, `snipfocus-rec-${timestamp}.webm`);
+            const initialFilePath = path.join(tempDir, `ageofscreen-rec-${timestamp}.webm`);
 
             // Write file and ensure it's flushed to disk
             const nodeBuffer = Buffer.from(buffer);
             await fs.promises.writeFile(initialFilePath, nodeBuffer);
 
             const filePath = await normalizeTempRecordingForEditor(initialFilePath);
+            approveMediaPath(filePath);
 
             // Save full cursor metadata so editor replay, cursor styling, and Auto-Polish
             // can restore the same interaction data when the clip is reopened later.
             if (recordedCursorData.length > 0) {
-                const jsonPath = path.join(tempDir, `snipfocus-rec-${timestamp}.cursor.json`);
+                const jsonPath = path.join(tempDir, `ageofscreen-rec-${timestamp}.cursor.json`);
                 await fs.promises.writeFile(jsonPath, JSON.stringify(recordedCursorData));
-                console.log('[SnipFocus] Saved cursor metadata sidecar:', recordedCursorData.length, 'events');
+                console.log('[ageofscreen] Saved cursor metadata sidecar:', recordedCursorData.length, 'events');
             }
 
             // Verify file was written correctly
             const stats = await fs.promises.stat(filePath);
-            console.log('[SnipFocus] Saved temp recording:', {
+            console.log('[ageofscreen] Saved temp recording:', {
                 path: filePath,
                 size: `${(stats.size / 1024 / 1024).toFixed(2)} MB`,
                 bufferSize: `${(nodeBuffer.length / 1024 / 1024).toFixed(2)} MB`
@@ -3108,10 +3247,10 @@ const registerIpcHandlers = () => {
             const fileUrl = toMediaFileUrl(filePath);
             latestAgentVideoPath = fileUrl;
 
-            console.log('[SnipFocus] File URL:', fileUrl);
+            console.log('[ageofscreen] File URL:', fileUrl);
             return { filePath: fileUrl };
         } catch (error) {
-            console.error("[SnipFocus] Failed to save temp video:", error);
+            console.error("[ageofscreen] Failed to save temp video:", error);
             return { error: (error as Error).message };
         }
     });
@@ -3121,19 +3260,23 @@ const registerIpcHandlers = () => {
             const physicalPath = fromMediaFileUrl(filePath);
 
             // Check if it's in the temp directory to be safe
-            const tempDir = path.resolve(getSnipFocusTempDir());
+            const tempDir = path.resolve(getageofscreenTempDir());
             const resolvedPhysicalPath = path.resolve(physicalPath);
             const isTempFile = isPathInsideDirectory(resolvedPhysicalPath, tempDir);
 
             if (isTempFile && fs.existsSync(resolvedPhysicalPath)) {
                 await fs.promises.unlink(resolvedPhysicalPath);
-                console.log('[SnipFocus] Deleted temp recording:', resolvedPhysicalPath);
+                const sidecarPath = resolvedPhysicalPath.replace(/\.[^.]+$/, '.cursor.json');
+                if (sidecarPath !== resolvedPhysicalPath && fs.existsSync(sidecarPath)) {
+                    await fs.promises.unlink(sidecarPath);
+                }
+                console.log('[ageofscreen] Deleted temp recording:', resolvedPhysicalPath);
                 return { success: true };
             }
-            console.warn('[SnipFocus] Delete rejected - path not in temp dir:', physicalPath);
+            console.warn('[ageofscreen] Delete rejected - path not in temp dir:', physicalPath);
             return { success: false, error: "Path not allowed or not found" };
         } catch (error) {
-            console.error("[SnipFocus] Failed to delete temp video:", error);
+            console.error("[ageofscreen] Failed to delete temp video:", error);
             return { success: false, error: (error as Error).message };
         }
     });
@@ -3141,30 +3284,24 @@ const registerIpcHandlers = () => {
     ipcMain.handle("save-video", async (event, buffer: ArrayBuffer) => {
         try {
             const defaultName = `record-${Date.now()}.webm`;
-            if (shouldAutoSaveToDownloads()) {
-                const filePath = await saveBufferToDownloads(buffer, defaultName, recordedCursorData);
-                console.log('[SnipFocus] Auto-saved recording to Downloads:', filePath);
-                return { success: true, filePath, autoSaved: true };
-            }
-
             const { filePath, canceled } = await dialog.showSaveDialog({
-                defaultPath: defaultName,
+                defaultPath: path.join(app.getPath("videos"), defaultName),
                 filters: [{ name: "Videos", extensions: ["webm"] }],
             });
 
-            if (canceled || !filePath) return { success: false };
+            if (canceled || !filePath) return { success: false, canceled: true };
 
             await fs.promises.writeFile(filePath, Buffer.from(buffer));
 
             if (recordedCursorData.length > 0) {
                 const jsonPath = filePath.replace(/\.webm$/, '.json');
                 await fs.promises.writeFile(jsonPath, JSON.stringify(recordedCursorData));
-                console.log('[SnipFocus] Saved cursor data to:', jsonPath);
+                console.log('[ageofscreen] Saved cursor data to:', jsonPath);
             }
 
             return { success: true, filePath };
         } catch (error) {
-            console.error("[SnipFocus] Failed to save video:", error);
+            console.error("[ageofscreen] Failed to save video:", error);
             return { success: false, error: (error as Error).message };
         }
     });
@@ -3201,18 +3338,69 @@ const registerIpcHandlers = () => {
 
     ipcMain.handle("save-image-as", async (event, dataUrl) => {
         const { filePath, canceled } = await dialog.showSaveDialog({
-            defaultPath: `snip-${Date.now()}.png`,
+            defaultPath: path.join(app.getPath("pictures"), `snip-${Date.now()}.png`),
             filters: [{ name: "Images", extensions: ["png"] }],
         });
 
-        if (canceled || !filePath) return { success: false };
+        if (canceled || !filePath) return { success: false, canceled: true };
 
         try {
             const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
             await fs.promises.writeFile(filePath, base64Data, "base64");
             return { success: true, filePath };
         } catch (error) {
-            console.error("[SnipFocus] Failed to save image:", error);
+            console.error("[ageofscreen] Failed to save image:", error);
+            return { success: false, error: (error as Error).message };
+        }
+    });
+
+    ipcMain.handle("show-item-in-folder", async (_event, filePath: string) => {
+        try {
+            if (typeof filePath !== "string" || filePath.trim().length === 0) {
+                return { success: false, error: "No file path provided." };
+            }
+            shell.showItemInFolder(path.resolve(filePath));
+            return { success: true };
+        } catch (error) {
+            console.error("[ageofscreen] Failed to reveal item in folder:", error);
+            return { success: false, error: (error as Error).message };
+        }
+    });
+
+    ipcMain.handle("save-video-project", async (_event, projectPayload: any) => {
+        try {
+            const rawName = typeof projectPayload?.projectName === "string"
+                ? projectPayload.projectName
+                : "project";
+            const sanitizedName = rawName
+                .trim()
+                .replace(/[<>:\"/\\|?*\u0000-\u001F]/g, "-")
+                .replace(/\s+/g, "-")
+                .replace(/-+/g, "-")
+                .slice(0, 80) || "project";
+            const defaultPath = path.join(
+                app.getPath("documents"),
+                `${sanitizedName}-${Date.now()}.ageofscreen-project.json`,
+            );
+            const { filePath, canceled } = await dialog.showSaveDialog({
+                defaultPath,
+                filters: [{ name: "ageofscreen Projects", extensions: ["json"] }],
+            });
+
+            if (canceled || !filePath) {
+                return { success: false, canceled: true };
+            }
+
+            const document = {
+                app: "ageofscreen",
+                version: 1,
+                savedAt: new Date().toISOString(),
+                ...projectPayload,
+            };
+            await fs.promises.writeFile(filePath, JSON.stringify(document, null, 2), "utf8");
+            return { success: true, filePath };
+        } catch (error) {
+            console.error("[ageofscreen] Failed to save video project:", error);
             return { success: false, error: (error as Error).message };
         }
     });
@@ -3233,7 +3421,7 @@ const registerIpcHandlers = () => {
             const dataUrl = `data:image/${mimeType};base64,${data.toString("base64")}`;
             return { success: true, dataUrl };
         } catch (error) {
-            console.error("[SnipFocus] Failed to import image:", error);
+            console.error("[ageofscreen] Failed to import image:", error);
             return { success: false, error: (error as Error).message };
         }
     });
@@ -3260,7 +3448,7 @@ const registerIpcHandlers = () => {
             const dataUrl = `data:image/${mimeType};base64,${data.toString("base64")}`;
             return { success: true, dataUrl };
         } catch (error) {
-            console.error("[SnipFocus] Failed to import random image:", error);
+            console.error("[ageofscreen] Failed to import random image:", error);
             return { success: false, error: (error as Error).message };
         }
     });
@@ -3287,7 +3475,7 @@ const registerIpcHandlers = () => {
 
     // --- Video Editor IPC Handlers ---
     ipcMain.on("video-editor-ready", (event) => {
-        console.log("[SnipFocus] video-editor-ready received");
+        console.log("[ageofscreen] video-editor-ready received");
         if (pendingVideoDataUrl && videoEditorWindow && !videoEditorWindow.isDestroyed()) {
             sendPendingMediaToVideoEditor("video-editor-ready");
         }
@@ -3306,13 +3494,13 @@ const registerIpcHandlers = () => {
             nativeCursorSuppressed: recordingCursorReplacementSafe,
             capturePlatform: process.platform,
         });
-        console.log('[SnipFocus] Cursor replacement safety updated for active recording:', recordingCursorReplacementSafe);
+        console.log('[ageofscreen] Cursor replacement safety updated for active recording:', recordingCursorReplacementSafe);
     });
 
     ipcMain.on("video-editor-media-consumed", (_event, consumedUrl?: string) => {
         if (!pendingVideoDataUrl) return;
         if (consumedUrl && consumedUrl !== pendingVideoDataUrl) return;
-        console.log("[SnipFocus] Video editor consumed pending media");
+        console.log("[ageofscreen] Video editor consumed pending media");
         pendingVideoDataUrl = null;
         pendingMediaName = null;
         pendingVideoDeliveryInFlight = false;
@@ -3320,7 +3508,7 @@ const registerIpcHandlers = () => {
 
     ipcMain.handle("get-pending-editor-media", () => {
         const payload = getPendingVideoEditorMedia();
-        console.log("[SnipFocus] get-pending-editor-media", payload ? "hit" : "empty");
+        console.log("[ageofscreen] get-pending-editor-media", payload ? "hit" : "empty");
         return payload;
     });
 
@@ -3345,35 +3533,33 @@ const registerIpcHandlers = () => {
     });
 
     ipcMain.on("show-video-editor", (event, videoDataUrl: string, name?: string) => {
-        console.log("[SnipFocus] Opening video editor with video", name ? `named: ${name}` : "");
+        console.log("[ageofscreen] Opening video editor with video", name ? `named: ${name}` : "");
         createVideoEditorWindow(videoDataUrl, name);
     });
 
     ipcMain.on("open-media-editor", () => {
-        console.log("[SnipFocus] Opening media editor (manual trigger)");
+        console.log("[ageofscreen] Opening media editor (manual trigger)");
         createVideoEditorWindow();
     });
 
-    ipcMain.handle("save-video-direct", async (event, videoDataUrl: string) => {
+    ipcMain.handle("save-video-direct", async (_event, videoDataUrl: string) => {
         try {
             const defaultName = `recording-${Date.now()}.webm`;
-            const filePath = shouldAutoSaveToDownloads()
-                ? await saveSourceToDownloads(videoDataUrl, defaultName)
-                : await (async () => {
-                    const { filePath: nextPath, canceled } = await dialog.showSaveDialog({
-                        defaultPath: defaultName,
-                        filters: [{ name: "Videos", extensions: ["webm"] }],
-                    });
-                    if (canceled || !nextPath) return null;
-                    await saveMediaSourceToPath(videoDataUrl, nextPath);
-                    return nextPath;
-                })();
+            const filePath = await (async () => {
+                const { filePath: nextPath, canceled } = await dialog.showSaveDialog({
+                    defaultPath: path.join(app.getPath("videos"), defaultName),
+                    filters: [{ name: "Videos", extensions: ["webm"] }],
+                });
+                if (canceled || !nextPath) return null;
+                await saveMediaSourceToPath(videoDataUrl, nextPath);
+                return nextPath;
+            })();
 
-            if (!filePath) return { success: false };
+            if (!filePath) return { success: false, canceled: true };
             closeVideoEditorWindow();
             return { success: true, filePath };
         } catch (error) {
-            console.error("[SnipFocus] Failed to save video:", error);
+            console.error("[ageofscreen] Failed to save video:", error);
             return { success: false, error: (error as Error).message };
         }
     });
@@ -3388,6 +3574,15 @@ const registerIpcHandlers = () => {
 
     ipcMain.handle("export-video", async (event, { videoSrc, trimData }) => {
         try {
+            let reportedProgress = 0;
+            const sendExportProgress = (percent: number, phase: string = "rendering") => {
+                const normalizedPercent = Math.max(0, Math.min(100, Math.round(percent)));
+                if (normalizedPercent < reportedProgress) {
+                    return;
+                }
+                reportedProgress = normalizedPercent;
+                event.sender.send("export-progress", { percent: normalizedPercent, phase });
+            };
             const entitlementState = getCurrentEntitlementState();
             const vr = await getVideoRenderer();
             const ffmpegAvailable = vr?.isAvailable() ?? false;
@@ -3402,6 +3597,7 @@ const registerIpcHandlers = () => {
             const hasImageClips = (trimData.imageClips || []).length > 0;
             const hasTextOverlays = (trimData.textOverlays || []).length > 0;
             const hasAnnotationOverlays = (trimData.annotationImageOverlays || []).length > 0;
+            const hasCursorOverlay = !!(trimData.cursorOverlay?.track?.length && (trimData.cursorOverlay?.backdropFile || trimData.cursorOverlay?.cursorFile));
             const hasEffects = (trimData.smartEffects || []).length > 0;
             const requestedPremiumVoice = Boolean(trimData.premiumVoice);
             const needsVoice = requestedPremiumVoice && entitlementState.canUseStudioVoice;
@@ -3409,7 +3605,7 @@ const registerIpcHandlers = () => {
             // Check if segments actually trim the video (not just full export)
             const isTrimmed = segments.length > 1 ||
                 (segments.length === 1 && (segments[0].startSeconds > 0.1 || (segments[0].endSeconds < 999990)));
-            const needsProcessing = isTrimmed || hasCrop || hasFrame || hasAudioOverlays || hasImageOverlays || hasImageClips || hasTextOverlays || hasAnnotationOverlays || hasEffects || needsVoice || needsColorGrade;
+            const needsProcessing = isTrimmed || hasCrop || hasFrame || hasAudioOverlays || hasImageOverlays || hasImageClips || hasTextOverlays || hasAnnotationOverlays || hasCursorOverlay || hasEffects || needsVoice || needsColorGrade;
 
             // Determine source path
             const isDataUrl = videoSrc.startsWith('data:');
@@ -3419,7 +3615,7 @@ const registerIpcHandlers = () => {
             if (entitlementState.watermarkEnabled && !ffmpegAvailable) {
                 return {
                     success: false,
-                    error: 'FFmpeg is required for free exports so SnipFocus can apply the watermark.',
+                    error: 'FFmpeg is required for free exports so ageofscreen can apply the watermark.',
                 };
             }
 
@@ -3432,27 +3628,27 @@ const registerIpcHandlers = () => {
 
             // Default to Videos folder for manual exports, Downloads for agent mode.
             const exportFolder = shouldAutoSaveToDownloads() ? app.getPath('downloads') : app.getPath('videos');
-            const defaultFileName = `SnipFocus-${trimData.platform || 'export'}-${Date.now()}.${extension}`;
+            const defaultFileName = `ageofscreen-${trimData.platform || 'export'}-${Date.now()}.${extension}`;
             const defaultPath = path.join(exportFolder, defaultFileName);
-            const savePath = shouldAutoSaveToDownloads()
-                ? defaultPath
-                : await (async () => {
-                    const { filePath: nextPath, canceled } = await dialog.showSaveDialog({
-                        defaultPath: defaultPath,
-                        filters: [{ name: "Videos", extensions: [extension, 'mp4', 'webm', 'mov'] }],
-                    });
+            const savePath = await (async () => {
+                const { filePath: nextPath, canceled } = await dialog.showSaveDialog({
+                    defaultPath: defaultPath,
+                    filters: [{ name: "Videos", extensions: [extension, 'mp4', 'webm', 'mov'] }],
+                });
 
-                    if (canceled || !nextPath) return null;
-                    return nextPath;
-                })();
+                if (canceled || !nextPath) return null;
+                return nextPath;
+            })();
 
-            if (!savePath) return { success: false };
+            if (!savePath) return { success: false, canceled: true };
+
+            sendExportProgress(8, "preparing");
 
             const exportSafeEffectTypes = new Set(['zoom', '3d_tilt', 'card_flip', 'slow_zoom', 'breathing', 'blur_area', 'exposure']);
             const requestedEffectTypes = (trimData.smartEffects || []).map((effect: any) => effect.type);
             const skippedEffectTypes = requestedEffectTypes.filter((type: string) => !exportSafeEffectTypes.has(type));
 
-            console.log('[SnipFocus] Export request:', {
+            console.log('[ageofscreen] Export request:', {
                 sourcePath: sourcePath.substring(0, 80),
                 savePath,
                 ffmpegAvailable,
@@ -3463,6 +3659,7 @@ const registerIpcHandlers = () => {
                 hasImageClips,
                 hasTextOverlays,
                 hasAnnotationOverlays,
+                hasCursorOverlay,
                 segments: segments.length,
                 requestedEffectTypes,
                 skippedEffectTypes
@@ -3470,17 +3667,17 @@ const registerIpcHandlers = () => {
 
             if (needsProcessing && !ffmpegAvailable) {
                 // Warn user but still try to export without processing
-                console.warn('[SnipFocus] FFmpeg not available - crop and trim will not be applied');
+                console.warn('[ageofscreen] FFmpeg not available - crop and trim will not be applied');
             }
 
             let renderInfo: any = null;
             if (canUseFFmpeg && vr) {
                 // Use FFmpeg for trimming/cropping
-                console.log('[SnipFocus] Exporting with FFmpeg...');
+                console.log('[ageofscreen] Exporting with FFmpeg...');
 
                 let processingPath = sourcePath;
                 if (isDataUrl) {
-                    const tempDir = getSnipFocusTempDir();
+                    const tempDir = getageofscreenTempDir();
                     const tempPath = path.join(tempDir, `temp-${Date.now()}.webm`);
                     await writeDataUrlToFile(videoSrc, tempPath);
                     processingPath = tempPath;
@@ -3507,7 +3704,12 @@ const registerIpcHandlers = () => {
                     trimData.clipTransitions || [],
                     trimData.cursorOverlay || null,
                     trimData.colorGrade || 'none',
-                    needsVoice
+                    needsVoice,
+                    {
+                        onProgress: (fraction: number) => {
+                            sendExportProgress(10 + (Math.max(0, Math.min(1, fraction)) * 88), "rendering");
+                        },
+                    }
                 );
                 renderInfo = vr.getLastRenderInfo();
 
@@ -3516,25 +3718,34 @@ const registerIpcHandlers = () => {
                 }
             } else {
                 // Direct copy - no FFmpeg processing
-                console.log('[SnipFocus] Direct file copy (no processing available)');
+                console.log('[ageofscreen] Direct file copy (no processing available)');
 
+                sendExportProgress(45, "copying");
                 await saveMediaSourceToPath(videoSrc, savePath);
+                sendExportProgress(100, "done");
 
                 // Notify user if features were not applied
-                if (hasCrop || hasFrame || hasAudioOverlays || hasImageOverlays || hasImageClips || hasTextOverlays || hasAnnotationOverlays || isTrimmed) {
+                if (hasCrop || hasFrame || hasAudioOverlays || hasImageOverlays || hasImageClips || hasTextOverlays || hasAnnotationOverlays || hasCursorOverlay || isTrimmed) {
                     return {
                         success: true,
                         filePath: savePath,
-                        warning: 'Some features (trim, crop, frame, overlays, audio) were not applied - FFmpeg is required. Install FFmpeg and try again.'
+                        warning: 'Some features (trim, crop, frame, overlays, cursor highlight, audio) were not applied - FFmpeg is required. Install FFmpeg and try again.'
                     };
                 }
             }
+            sendExportProgress(100, "done");
             const warnings: string[] = [];
             if (requestedPremiumVoice && !entitlementState.canUseStudioVoice) {
                 warnings.push(getStudioVoiceUpgradeMessage());
             }
             if (skippedEffectTypes.length > 0) {
                 warnings.push(`Some effects are preview-only and were skipped in export: ${Array.from(new Set(skippedEffectTypes)).join(', ')}`);
+            }
+            if (renderInfo?.transitionFallbackMode === 'cut') {
+                warnings.push('Some clip transitions were simplified to cuts during export fallback for reliability.');
+            }
+            if (renderInfo?.cursorFallbackMode === 'disabled') {
+                warnings.push('Cursor highlight could not be rendered reliably and was omitted during export fallback.');
             }
 
             if (renderInfo?.fallbackMode === 'reliable_subset') {
@@ -3557,7 +3768,7 @@ const registerIpcHandlers = () => {
 
             return { success: true, filePath: savePath };
         } catch (error) {
-            console.error("[SnipFocus] Failed to export video:", error);
+            console.error("[ageofscreen] Failed to export video:", error);
             return { success: false, error: (error as Error).message };
         }
     });
@@ -3586,12 +3797,13 @@ const registerIpcHandlers = () => {
         if (!isSupportedMediaFilePath(filePath)) {
             throw new Error(`Unsupported media file selected: ${filePath}`);
         }
+        approveMediaPath(filePath);
         const fileName = path.basename(filePath);
         const cursorData = type === 'video'
             ? await loadCursorMetadataSidecar(filePath)
             : null;
 
-        console.log(`[SnipFocus] Selected ${type} file:`, fileName);
+        console.log(`[ageofscreen] Selected ${type} file:`, fileName);
         return {
             filePath,
             fileName,
@@ -3599,10 +3811,18 @@ const registerIpcHandlers = () => {
         };
     });
 
-    ipcMain.handle("export-media", async (event, filePath: string, mediaType: string, trimData: any) => {
+    ipcMain.handle("export-media", async (event, filePath: string, mediaType: string, _trimData: any) => {
         try {
-            // Convert file URL to physical path if necessary
-            const sourcePath = fromMediaFileUrl(filePath);
+            let reportedProgress = 0;
+            const sendExportProgress = (percent: number, phase: string = "copying") => {
+                const normalizedPercent = Math.max(0, Math.min(100, Math.round(percent)));
+                if (normalizedPercent < reportedProgress) {
+                    return;
+                }
+                reportedProgress = normalizedPercent;
+                event.sender.send("export-progress", { percent: normalizedPercent, phase });
+            };
+            const sourcePath = ensurePhysicalMediaPath(filePath);
 
             const ext = path.extname(sourcePath).toLowerCase();
             const defaultName = `export-${Date.now()}${ext}`;
@@ -3613,30 +3833,35 @@ const registerIpcHandlers = () => {
                 audio: [{ name: "Audio", extensions: [ext.slice(1) || 'mp3'] }]
             };
 
-            const savePath = shouldAutoSaveToDownloads()
-                ? buildDownloadFilePath(defaultName)
-                : await (async () => {
-                    const { filePath: nextPath, canceled } = await dialog.showSaveDialog({
-                        defaultPath: defaultName,
-                        filters: filterMap[mediaType] || []
-                    });
+            const defaultFolder = mediaType === "image"
+                ? app.getPath("pictures")
+                : mediaType === "audio"
+                    ? app.getPath("music")
+                    : app.getPath("videos");
+            const savePath = await (async () => {
+                const { filePath: nextPath, canceled } = await dialog.showSaveDialog({
+                    defaultPath: path.join(defaultFolder, defaultName),
+                    filters: filterMap[mediaType] || []
+                });
 
-                    if (canceled || !nextPath) {
-                        return null;
-                    }
-                    return nextPath;
-                })();
+                if (canceled || !nextPath) {
+                    return null;
+                }
+                return nextPath;
+            })();
 
             if (!savePath) {
-                return { success: false };
+                return { success: false, canceled: true };
             }
 
             // For now, copy the file directly (full trim/crop would need ffmpeg)
+            sendExportProgress(35, "copying");
             await saveMediaSourceToPath(filePath, savePath);
-            console.log(`[SnipFocus] Exported ${mediaType} to:`, savePath);
+            sendExportProgress(100, "done");
+            console.log(`[ageofscreen] Exported ${mediaType} to:`, savePath);
             return { success: true, filePath: savePath };
         } catch (error) {
-            console.error("[SnipFocus] Failed to export media:", error);
+            console.error("[ageofscreen] Failed to export media:", error);
             return { success: false, error: (error as Error).message };
         }
     });
@@ -3653,14 +3878,18 @@ app.on('web-contents-created', (_event, contents) => {
 app.whenReady().then(async () => {
     // Install privacy filter before any windows are created
     installShieldRequestFilter();
-    protocol.handle('snipfocus-media', async (request) => {
+    protocol.handle('ageofscreen-media', async (request) => {
         try {
             const url = request.url;
             const filePath = fromMediaFileUrl(url);
             
             if (!isSupportedMediaFilePath(filePath)) {
-                console.warn('[SnipFocus] Blocked unsupported media protocol request:', filePath);
+                console.warn('[ageofscreen] Blocked unsupported media protocol request:', filePath);
                 return new Response('Unsupported media file type', { status: 415 });
+            }
+            if (!isApprovedMediaPath(filePath)) {
+                console.warn('[ageofscreen] Blocked unapproved media protocol request:', filePath);
+                return new Response('Media file not approved', { status: 403 });
             }
 
             // Verify file exists
@@ -3670,13 +3899,13 @@ app.whenReady().then(async () => {
                     return new Response('Media file not found', { status: 404 });
                 }
             } catch (fsErr) {
-                console.warn('[SnipFocus] Media file not found on disk:', filePath);
+                console.warn('[ageofscreen] Media file not found on disk:', filePath);
                 return new Response('Media file not found', { status: 404 });
             }
 
             return createMediaFileResponse(request, filePath);
         } catch (error) {
-            console.error('[SnipFocus] Failed to resolve snipfocus-media request:', request.url, error);
+            console.error('[ageofscreen] Failed to resolve ageofscreen-media request:', request.url, error);
             return new Response('Internal error', { status: 500 });
         }
     });
@@ -3686,11 +3915,17 @@ app.whenReady().then(async () => {
     cachedEntitlementState = await getEntitlementProvider().restoreIfNeeded();
     broadcastLicenseState(cachedEntitlementState);
     createTriggerWindow();
-    syncPrintScreenShortcutRegistration();
-    if (!getOnboardingState().hasCompletedOnboarding) {
+
+    const onboardingState = getOnboardingState();
+    const shouldStartInBackground = RELEASE_PROFILE.name === "dev" || onboardingState.hasCompletedOnboarding;
+    if (!shouldStartInBackground) {
         setTimeout(() => {
-            createMenuWindow();
+            createMenuWindow({ bypassReopenGuard: true });
         }, 280);
+    } else {
+        setTimeout(() => {
+            createMenuWindow({ show: false, bypassReopenGuard: true });
+        }, MENU_PREWARM_DELAY_MS);
     }
 
     if (shieldMode === "agent_local") {
@@ -3701,7 +3936,7 @@ app.whenReady().then(async () => {
     if (FEATURES.ENABLE_AUTO_ZOOM_ADVANCED) {
         globalShortcut.register('Alt+Z', () => {
             isAutoZoomEnabled = !isAutoZoomEnabled;
-            console.log('[SnipFocus] Auto-Zoom toggled:', isAutoZoomEnabled);
+            console.log('[ageofscreen] Auto-Zoom toggled:', isAutoZoomEnabled);
 
             if (recordingWidget && !recordingWidget.isDestroyed()) {
                 recordingWidget.webContents.send('auto-zoom-status', isAutoZoomEnabled);
@@ -3711,13 +3946,16 @@ app.whenReady().then(async () => {
 
     // Register Alt+M for Media Editor
     globalShortcut.register('Alt+M', () => {
-        console.log('[SnipFocus] Alt+M pressed: Opening media editor');
+        console.log('[ageofscreen] Alt+M pressed: Opening media editor');
         createVideoEditorWindow();
     });
 
     app.on("activate", () => {
+
         if (BrowserWindow.getAllWindows().length === 0) {
             createTriggerWindow();
+        } else if (!menuWindow || menuWindow.isDestroyed()) {
+            createMenuWindow({ show: false, bypassReopenGuard: true });
         }
     });
 });
@@ -3732,11 +3970,11 @@ app.on("window-all-closed", () => {
 
 (app as any).on('child-process-gone', (event: any, details: any) => {
     if (details.type === 'GPU') {
-        console.warn('[SnipFocus] GPU Process Exit:', details);
+        console.warn('[ageofscreen] GPU Process Exit:', details);
     }
 });
 
-console.log("[SnipFocus] Main process initialized");
+console.log("[ageofscreen] Main process initialized");
 
 
 

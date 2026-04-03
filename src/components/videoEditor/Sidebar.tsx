@@ -11,7 +11,7 @@ interface SidebarProps {
     onClearLibrary?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({
+export const Sidebar: React.FC<SidebarProps> = React.memo(({
     isCollapsed,
     mediaLibrary,
     onImport,
@@ -85,4 +85,4 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         </div>
     );
-};
+});

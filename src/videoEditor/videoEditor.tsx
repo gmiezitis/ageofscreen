@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Monitor, RectangleHorizontal, Smartphone } from 'lucide-react';
 import { Header } from '../components/videoEditor/Header';
+import { UnsavedChangesDialog } from '../components/UnsavedChangesDialog';
 import { PreviewStage } from '../components/videoEditor/PreviewStage';
 import { Sidebar } from '../components/videoEditor/Sidebar';
 import { Timeline } from '../components/videoEditor/Timeline';
@@ -14,7 +15,8 @@ import { usePlaybackLoop } from './usePlaybackLoop';
 import { useVideoEditorHandlers } from './useVideoEditorHandlers';
 import { useVideoEditorState } from './useVideoEditorState';
 import { DEFAULT_ZOOM_INTENSITY, getDefaultEffectIntensity } from './effectIntensity';
-import { PlatformPreset, SmartEffect } from './types';
+import { normalizeCursorHighlightSettings, PlatformPreset, SmartEffect } from './types';
+import { normalizeAppliedCrop } from './useCrop';
 import './videoEditor.css';
 
 const PLATFORM_PRESETS: PlatformPreset[] = [
@@ -24,15 +26,69 @@ const PLATFORM_PRESETS: PlatformPreset[] = [
     { id: 'vertical', name: 'Vertical', icon: Smartphone, ratio: 9 / 16, dimensions: '1080x1920' },
 ];
 
+const buildProjectSnapshot = (state: any) => ({
+    projectName: state.mediaName || 'ageofscreen project',
+    media: {
+        mediaType: state.mediaType,
+        mediaPath: state.mediaPath,
+        mediaName: state.mediaName,
+        selectedPlatform: state.selectedPlatform,
+        exportQuality: state.exportQuality,
+    },
+    timeline: {
+        segments: state.segments,
+        audioSegments: state.audioSegments,
+        smartEffects: state.smartEffects,
+        overlayImages: state.overlayImages,
+        imageClips: state.imageClips,
+        textOverlays: state.textOverlays,
+        annotationOverlays: state.annotationOverlays,
+        annotationCanvasSize: state.annotationCanvasSize,
+        transitionType: state.transitionType,
+        clipTransitions: state.clipTransitions,
+        appliedCrop: state.crop?.appliedCrop ?? null,
+    },
+    styling: {
+        backgroundColor: state.backgroundColor,
+        videoPadding: state.videoPadding,
+        colorGrade: state.colorGrade,
+        cursorHighlight: state.cursorHighlight,
+        premiumVoice: state.premiumVoice,
+        playbackSpeed: state.playbackSpeed,
+        autoPolishTrackingProfile: state.autoPolishTrackingProfile,
+    },
+    recording: {
+        recordedCursorData: state.recordedCursorData,
+    },
+});
+
+const hasProjectContent = (state: any) => Boolean(
+    state.mediaPath
+    || state.segments.length
+    || state.audioSegments.length
+    || state.smartEffects.length
+    || state.overlayImages.length
+    || state.imageClips.length
+    || state.textOverlays.length
+    || state.annotationOverlays.length
+);
+
 const VideoEditorApp: React.FC = () => {
     const state = useVideoEditorState();
     const handlers = useVideoEditorHandlers(state);
     const isFromMenu = window.location.search.includes('mode=library');
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(!isFromMenu);
     const [annotationToolsVisible, setAnnotationToolsVisible] = useState(false);
+    const [showClosePrompt, setShowClosePrompt] = useState(false);
+    const [isSavingProject, setIsSavingProject] = useState(false);
     const acknowledgedMediaPathRef = React.useRef<string | null>(null);
+    const historySessionRef = React.useRef<Record<string, boolean>>({});
+    const historyTimerRef = React.useRef<Record<string, number | null>>({});
+    const allowWindowCloseRef = React.useRef(false);
+    const hasUnsavedChangesRef = React.useRef(false);
+    const lastSavedProjectSignatureRef = React.useRef(JSON.stringify(buildProjectSnapshot(state)));
 
-    useEditorIPC(state, handlers.showNotification, () => setIsSidebarCollapsed(true));
+    useEditorIPC(state, handlers.showNotification, handlers.saveHistory, () => setIsSidebarCollapsed(true));
     usePlaybackLoop(state, handlers);
     useEditorKeyboard(state, handlers);
     useDragResize(state, handlers);
@@ -47,6 +103,14 @@ const VideoEditorApp: React.FC = () => {
 
     useEffect(() => {
         acknowledgedMediaPathRef.current = null;
+        Object.keys(historyTimerRef.current).forEach((key) => {
+            const timerId = historyTimerRef.current[key];
+            if (typeof timerId === 'number') {
+                window.clearTimeout(timerId);
+            }
+            historyTimerRef.current[key] = null;
+            historySessionRef.current[key] = false;
+        });
     }, [state.mediaPath]);
 
     useEffect(() => {
@@ -64,12 +128,24 @@ const VideoEditorApp: React.FC = () => {
         // Only listen for 'ended' — the playback loop and togglePlay
         // already handle pause transitions. A raw 'pause' listener here
         // fires during seeks and segment hops, causing position jumps.
-        const handleEnded = () => state.setIsPlaying(false);
+        const handleEnded = () => {
+            handlers.clearPendingPlaybackTarget();
+            state.setDisplayTime(handlers.getTimelineDuration());
+            state.setIsPlaying(false);
+        };
         video.addEventListener('ended', handleEnded);
         return () => {
             video.removeEventListener('ended', handleEnded);
         };
-    }, [state.mediaPath, state.mediaType, state.videoRef, state.setIsPlaying]);
+    }, [
+        handlers.clearPendingPlaybackTarget,
+        handlers.getTimelineDuration,
+        state.mediaPath,
+        state.mediaType,
+        state.setDisplayTime,
+        state.setIsPlaying,
+        state.videoRef,
+    ]);
 
     useEffect(() => {
         if (annotationToolsVisible && state.selectedTextOverlayId) {
@@ -77,10 +153,92 @@ const VideoEditorApp: React.FC = () => {
         }
     }, [annotationToolsVisible, state.selectedTextOverlayId]);
 
+    useEffect(() => () => {
+        Object.values(historyTimerRef.current).forEach((timerId) => {
+            if (typeof timerId === 'number') {
+                window.clearTimeout(timerId);
+            }
+        });
+    }, []);
+
+    useEffect(() => {
+        const api = (window as any).videoEditorAPI;
+        if (!api?.on) return;
+
+        return api.on('export-progress', (payload?: { percent?: number }) => {
+            if (typeof payload?.percent === 'number') {
+                state.setExportProgress(Math.max(0, Math.min(100, Math.round(payload.percent))));
+            }
+        });
+    }, [state.setExportProgress]);
+
+    const beginHistorySession = React.useCallback((key: string) => {
+        if (!historySessionRef.current[key]) {
+            handlers.saveHistory();
+            historySessionRef.current[key] = true;
+        }
+        const timerId = historyTimerRef.current[key];
+        if (typeof timerId === 'number') {
+            window.clearTimeout(timerId);
+            historyTimerRef.current[key] = null;
+        }
+    }, [handlers]);
+
+    const queueHistoryCommit = React.useCallback((key: string, snapshot: any, delayMs = 220) => {
+        const existingTimer = historyTimerRef.current[key];
+        if (typeof existingTimer === 'number') {
+            window.clearTimeout(existingTimer);
+        }
+        historyTimerRef.current[key] = window.setTimeout(() => {
+            handlers.saveHistory(snapshot);
+            historySessionRef.current[key] = false;
+            historyTimerRef.current[key] = null;
+        }, delayMs);
+    }, [handlers]);
+
     const selectedPlatformPreset = useMemo(
         () => PLATFORM_PRESETS.find((preset) => preset.id === state.selectedPlatform) ?? PLATFORM_PRESETS[0],
         [state.selectedPlatform]
     );
+    const currentProjectSignature = useMemo(() => JSON.stringify(buildProjectSnapshot(state)), [
+        state.mediaType,
+        state.mediaPath,
+        state.mediaName,
+        state.selectedPlatform,
+        state.exportQuality,
+        state.transitionType,
+        state.clipTransitions,
+        state.segments,
+        state.audioSegments,
+        state.smartEffects,
+        state.overlayImages,
+        state.imageClips,
+        state.textOverlays,
+        state.annotationOverlays,
+        state.annotationCanvasSize,
+        state.crop.appliedCrop,
+        state.backgroundColor,
+        state.videoPadding,
+        state.colorGrade,
+        state.cursorHighlight,
+        state.premiumVoice,
+        state.playbackSpeed,
+        state.autoPolishTrackingProfile,
+        state.recordedCursorData,
+    ]);
+    const currentHasProjectContent = useMemo(() => hasProjectContent(state), [
+        state.mediaPath,
+        state.segments,
+        state.audioSegments,
+        state.smartEffects,
+        state.overlayImages,
+        state.imageClips,
+        state.textOverlays,
+        state.annotationOverlays,
+    ]);
+    const hasUnsavedChanges = currentHasProjectContent && currentProjectSignature !== lastSavedProjectSignatureRef.current;
+    const hasRecordingMetadata = state.mediaType === 'video' && state.recordedCursorData.length > 0;
+    const canRenderCursorHighlight = hasRecordingMetadata;
 
     const totalKeptDuration = handlers.getTimelineDuration();
     const activeEffects = useMemo(
@@ -94,8 +252,73 @@ const VideoEditorApp: React.FC = () => {
     const selectedZoomEffect = selectedEffect?.type === 'zoom' ? selectedEffect : null;
     const selectedBlurEffect = selectedEffect?.type === 'blur_area' ? selectedEffect : null;
 
+    useEffect(() => {
+        hasUnsavedChangesRef.current = hasUnsavedChanges;
+    }, [hasUnsavedChanges]);
+
+    useEffect(() => {
+        const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+            if (allowWindowCloseRef.current || isSavingProject || !hasUnsavedChangesRef.current) {
+                return;
+            }
+            event.preventDefault();
+            event.returnValue = false;
+            setShowClosePrompt(true);
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, [isSavingProject]);
+
+    const performWindowClose = React.useCallback(() => {
+        allowWindowCloseRef.current = true;
+        (window as any).videoEditorAPI?.send?.('video-editor-close');
+        window.setTimeout(() => {
+            allowWindowCloseRef.current = false;
+        }, 1500);
+    }, []);
+
+    const requestClose = React.useCallback(() => {
+        if (hasUnsavedChangesRef.current) {
+            setShowClosePrompt(true);
+            return;
+        }
+        performWindowClose();
+    }, [performWindowClose]);
+
+    const handleDiscardAndClose = React.useCallback(() => {
+        setShowClosePrompt(false);
+        performWindowClose();
+    }, [performWindowClose]);
+
+    const handleSaveProjectAndClose = React.useCallback(async () => {
+        const api = (window as any).videoEditorAPI;
+        setIsSavingProject(true);
+        try {
+            const result = await api?.invoke?.('save-video-project', buildProjectSnapshot(state));
+            if (result?.success) {
+                lastSavedProjectSignatureRef.current = currentProjectSignature;
+                setShowClosePrompt(false);
+                performWindowClose();
+                return;
+            }
+            if (!result?.canceled) {
+                handlers.showNotification('error', 'Save Project Failed', result?.error || 'Could not save this project.');
+            }
+        } catch (error) {
+            handlers.showNotification('error', 'Save Project Failed', (error as Error).message);
+        } finally {
+            setIsSavingProject(false);
+        }
+    }, [currentProjectSignature, handlers, performWindowClose, state]);
+
     const updateEffect = (id: string, updates: Partial<SmartEffect>) => {
-        state.setSmartEffects((prev: SmartEffect[]) => prev.map((effect) => effect.id === id ? { ...effect, ...updates } : effect));
+        beginHistorySession('smartEffects');
+        state.setSmartEffects((prev: SmartEffect[]) => {
+            const nextEffects = prev.map((effect) => effect.id === id ? { ...effect, ...updates } : effect);
+            queueHistoryCommit('smartEffects', { smartEffects: nextEffects });
+            return nextEffects;
+        });
     };
 
     const addEffect = (type: SmartEffect['type']) => {
@@ -140,11 +363,21 @@ const VideoEditorApp: React.FC = () => {
     };
 
     const editOverlayImage = (id: string, updates: any) => {
-        state.setOverlayImages((prev: any[]) => prev.map((item) => item.id === id ? { ...item, ...updates } : item));
+        beginHistorySession('overlayImages');
+        state.setOverlayImages((prev: any[]) => {
+            const nextOverlayImages = prev.map((item) => item.id === id ? { ...item, ...updates } : item);
+            queueHistoryCommit('overlayImages', { overlayImages: nextOverlayImages });
+            return nextOverlayImages;
+        });
     };
 
     const editTextOverlay = (id: string, updates: any) => {
-        state.setTextOverlays((prev: any[]) => prev.map((item) => item.id === id ? { ...item, ...updates } : item));
+        beginHistorySession('textOverlays');
+        state.setTextOverlays((prev: any[]) => {
+            const nextTextOverlays = prev.map((item) => item.id === id ? { ...item, ...updates } : item);
+            queueHistoryCommit('textOverlays', { textOverlays: nextTextOverlays }, 260);
+            return nextTextOverlays;
+        });
     };
 
     const deleteTextOverlay = (id: string) => {
@@ -162,9 +395,74 @@ const VideoEditorApp: React.FC = () => {
         handlers.seekToDisplayTime(total, { resume: state.isPlaying });
     };
 
+    const handleApplyCrop = React.useCallback(() => {
+        const nextCrop = normalizeAppliedCrop(state.crop.cropRect);
+        handlers.saveHistory();
+        state.crop.replaceAppliedCrop(nextCrop);
+        handlers.saveHistory({ appliedCrop: nextCrop });
+    }, [handlers, state.crop]);
+
+    const setBackgroundColorWithHistory = React.useCallback((color: string) => {
+        beginHistorySession('projectStyle');
+        state.setBackgroundColor(color);
+        queueHistoryCommit('projectStyle', {
+            backgroundColor: color,
+            videoPadding: state.videoPadding,
+            colorGrade: state.colorGrade,
+            premiumVoice: state.premiumVoice,
+        }, 260);
+    }, [beginHistorySession, queueHistoryCommit, state]);
+
+    const setVideoPaddingWithHistory = React.useCallback((padding: number) => {
+        beginHistorySession('projectStyle');
+        state.setVideoPadding(padding);
+        queueHistoryCommit('projectStyle', {
+            backgroundColor: state.backgroundColor,
+            videoPadding: padding,
+            colorGrade: state.colorGrade,
+            premiumVoice: state.premiumVoice,
+        }, 260);
+    }, [beginHistorySession, queueHistoryCommit, state]);
+
+    const setColorGradeWithHistory = React.useCallback((grade: typeof state.colorGrade) => {
+        beginHistorySession('projectStyle');
+        state.setColorGrade(grade);
+        queueHistoryCommit('projectStyle', {
+            backgroundColor: state.backgroundColor,
+            videoPadding: state.videoPadding,
+            colorGrade: grade,
+            premiumVoice: state.premiumVoice,
+        });
+    }, [beginHistorySession, queueHistoryCommit, state]);
+
+    const setPremiumVoiceWithHistory = React.useCallback((active: boolean) => {
+        beginHistorySession('projectStyle');
+        state.setPremiumVoice(active);
+        queueHistoryCommit('projectStyle', {
+            backgroundColor: state.backgroundColor,
+            videoPadding: state.videoPadding,
+            colorGrade: state.colorGrade,
+            premiumVoice: active,
+        });
+    }, [beginHistorySession, queueHistoryCommit, state]);
+
+    const setCursorHighlightWithHistory = React.useCallback((settings: typeof state.cursorHighlight) => {
+        const normalizedSettings = normalizeCursorHighlightSettings(settings);
+        beginHistorySession('cursorHighlight');
+        state.setCursorHighlight(normalizedSettings);
+        queueHistoryCommit('cursorHighlight', { cursorHighlight: normalizedSettings }, 260);
+    }, [beginHistorySession, queueHistoryCommit, state]);
+
+    const setAnnotationOverlaysWithHistory = React.useCallback((annotations: typeof state.annotationOverlays) => {
+        beginHistorySession('annotationOverlays');
+        state.setAnnotationOverlays(annotations);
+        queueHistoryCommit('annotationOverlays', { annotationOverlays: annotations }, 80);
+    }, [beginHistorySession, queueHistoryCommit, state]);
+
     return (
         <div className="video-editor">
             <Header
+                mediaType={state.mediaType}
                 mediaName={state.mediaName}
                 isSidebarCollapsed={isSidebarCollapsed}
                 setIsSidebarCollapsed={setIsSidebarCollapsed}
@@ -176,17 +474,22 @@ const VideoEditorApp: React.FC = () => {
                 onMinimize={handlers.handleMinimize}
                 onExport={handlers.handleExport}
                 onAutoPolish={handlers.handleAutoPolish}
-                onClose={handlers.handleClose}
+                onClose={requestClose}
                 isExporting={state.isExporting}
+                exportProgress={state.exportProgress}
                 isAutoPolishing={state.isAutoPolishing}
                 isCropping={state.crop.isActive}
                 onStartCropping={state.crop.startCropping}
-                onApplyCrop={state.crop.applyCrop}
+                onApplyCrop={handleApplyCrop}
                 onCancelCrop={state.crop.cancelCrop}
                 backgroundColor={state.backgroundColor}
-                setBackgroundColor={state.setBackgroundColor}
+                setBackgroundColor={setBackgroundColorWithHistory}
                 videoPadding={state.videoPadding}
-                setVideoPadding={state.setVideoPadding}
+                setVideoPadding={setVideoPaddingWithHistory}
+                cursorHighlight={state.cursorHighlight}
+                setCursorHighlight={setCursorHighlightWithHistory}
+                hasRecordingMetadata={hasRecordingMetadata}
+                canRenderCursorHighlight={canRenderCursorHighlight}
                 onUndo={handlers.undo}
                 onRedo={handlers.redo}
                 canUndo={handlers.canUndo}
@@ -194,14 +497,59 @@ const VideoEditorApp: React.FC = () => {
                 exportQuality={state.exportQuality}
                 setExportQuality={state.setExportQuality}
                 colorGrade={state.colorGrade}
-                setColorGrade={state.setColorGrade}
+                setColorGrade={setColorGradeWithHistory}
                 premiumVoice={state.premiumVoice}
-                setPremiumVoice={state.setPremiumVoice}
+                setPremiumVoice={setPremiumVoiceWithHistory}
                 playbackSpeed={state.playbackSpeed}
                 setPlaybackSpeed={state.setPlaybackSpeed}
                 autoPolishTrackingProfile={state.autoPolishTrackingProfile}
                 setAutoPolishTrackingProfile={state.setAutoPolishTrackingProfile}
             />
+
+            {state.isExporting && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 72,
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        zIndex: 10950,
+                        width: 'min(420px, calc(100vw - 40px))',
+                        padding: '14px 16px',
+                        borderRadius: 18,
+                        background: 'rgba(15, 23, 42, 0.94)',
+                        border: '1px solid rgba(96, 165, 250, 0.24)',
+                        boxShadow: '0 22px 60px rgba(2, 6, 23, 0.42)',
+                        backdropFilter: 'blur(18px)',
+                    }}
+                >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                        <div>
+                            <div style={{ color: '#f8fafc', fontSize: 13, fontWeight: 700, letterSpacing: '0.01em' }}>
+                                Exporting {state.mediaType === 'video' ? 'video' : 'media'}
+                            </div>
+                            <div style={{ color: '#cbd5e1', fontSize: 11.5, marginTop: 2 }}>
+                                Rendering and packaging your file.
+                            </div>
+                        </div>
+                        <div style={{ color: '#93c5fd', fontSize: 18, fontWeight: 800 }}>
+                            {Math.max(0, Math.min(100, Math.round(state.exportProgress)))}%
+                        </div>
+                    </div>
+                    <div style={{ height: 10, borderRadius: 999, background: 'rgba(30, 41, 59, 0.9)', overflow: 'hidden' }}>
+                        <div
+                            style={{
+                                width: `${Math.max(6, Math.min(100, state.exportProgress || 0))}%`,
+                                height: '100%',
+                                borderRadius: 999,
+                                background: 'linear-gradient(90deg, #3b82f6 0%, #60a5fa 55%, #93c5fd 100%)',
+                                transition: 'width 0.18s ease',
+                                boxShadow: '0 0 20px rgba(96, 165, 250, 0.4)',
+                            }}
+                        />
+                    </div>
+                </div>
+            )}
 
             <div style={{ flex: 1, display: 'flex', minHeight: 0, minWidth: 0 }}>
                 <Sidebar
@@ -252,14 +600,15 @@ const VideoEditorApp: React.FC = () => {
                         videoPadding={state.videoPadding}
                         mediaName={state.mediaName}
                         colorGrade={state.colorGrade}
-                        onUpdateZoomArea={selectedZoomEffect ? (area) => updateEffect(selectedZoomEffect.id, { zoomArea: area }) : undefined}
+                        cursorHighlight={state.cursorHighlight}
+                        onUpdateZoomArea={selectedZoomEffect ? (area) => updateEffect(selectedZoomEffect.id, { zoomArea: area, followCursor: false }) : undefined}
                         onUpdateBlurArea={selectedBlurEffect ? (area) => updateEffect(selectedBlurEffect.id, { zoomArea: area }) : undefined}
                         recordedCursorData={state.recordedCursorData}
                         isEditingText={state.isEditingText}
                         setIsEditingText={state.setIsEditingText}
                         annotationToolsVisible={annotationToolsVisible}
                         annotationOverlays={state.annotationOverlays}
-                        onAnnotationOverlaysChange={state.setAnnotationOverlays}
+                        onAnnotationOverlaysChange={setAnnotationOverlaysWithHistory}
                         onAnnotationCanvasSizeChange={state.setAnnotationCanvasSize}
                         onCloseAnnotationTools={() => setAnnotationToolsVisible(false)}
                     />
@@ -296,8 +645,6 @@ const VideoEditorApp: React.FC = () => {
                         onSplit={handlers.splitAtPlayhead}
                         onAddImageClip={handlers.importImageClipAtPlayhead}
                         onDelete={handlers.deleteSelectedSegment}
-                        onMoveSelectedMainTrackLeft={() => handlers.moveSelectedMainTrackItem(-1)}
-                        onMoveSelectedMainTrackRight={() => handlers.moveSelectedMainTrackItem(1)}
                         onDeleteOverlayImage={handlers.deleteOverlayById}
                         onToggleOverlayRenderMode={handlers.toggleOverlayRenderMode}
                         onCloseGaps={handlers.closeAllGaps}
@@ -333,12 +680,22 @@ const VideoEditorApp: React.FC = () => {
                         mediaLibrary={state.libraryAssets}
                         draggingEffectId={state.draggingEffectId}
                         timelineRef={state.timelineRef}
-                        hasCursorData={state.recordedCursorData.length > 0}
+                        hasCursorData={hasRecordingMetadata}
                     />
                 </div>
             </div>
 
             <Toast notification={state.notification} onClose={() => state.setNotification(null)} />
+            <UnsavedChangesDialog
+                open={showClosePrompt}
+                title="Save your project before closing?"
+                message="Your current timeline changes have not been saved as a project yet. Save the project first, or leave without saving."
+                saveLabel="Save Project"
+                onSave={() => { void handleSaveProjectAndClose(); }}
+                onDiscard={handleDiscardAndClose}
+                onCancel={() => setShowClosePrompt(false)}
+                isSaving={isSavingProject}
+            />
         </div>
     );
 };

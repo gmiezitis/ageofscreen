@@ -1,13 +1,13 @@
 /**
  * Lightweight perf markers.
- * Enable by setting localStorage key "snipfocus_perf" = "1" in the renderer devtools.
+ * Enable by setting localStorage key "ageofscreen_perf" = "1" in the renderer devtools.
  * In main process, it falls back to process.env.SF_PERF === "1".
  */
 
 const isPerfEnabled = (): boolean => {
   try {
     if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem('snipfocus_perf') === '1';
+      return localStorage.getItem('ageofscreen_perf') === '1';
     }
   } catch {
     // ignore

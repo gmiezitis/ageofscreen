@@ -3,9 +3,11 @@
 // Define tool types
 export type Tool =
   | "pen"
+  | "line"
   | "arrow"
   | "text"
   | "blur"
+  | "crop"
   | "highlighter"
   | "rectangle"
   | "ellipse"
@@ -57,6 +59,18 @@ export interface PenAnnotation extends BaseAnnotation {
 // Arrow annotation interface
 export interface ArrowAnnotation extends BaseAnnotation {
   type: "arrow";
+  startX: number; // Scaled coordinate
+  startY: number; // Scaled coordinate
+  endX: number; // Scaled coordinate
+  endY: number; // Scaled coordinate
+  color: string;
+  width: number;
+  size: PenSize; // Store abstract size
+}
+
+// Straight line annotation interface
+export interface LineAnnotation extends BaseAnnotation {
+  type: "line";
   startX: number; // Scaled coordinate
   startY: number; // Scaled coordinate
   endX: number; // Scaled coordinate
@@ -141,10 +155,23 @@ export interface FocusRectangleAnnotation extends BaseAnnotation {
   // No color or line width, as these are invisible areas
 }
 
+export interface ImageAnnotation extends BaseAnnotation {
+  type: "image";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  src: string;
+  naturalWidth: number;
+  naturalHeight: number;
+  aspectRatio: number;
+}
+
 // Union type for all annotations
 export type AnnotationObject =
   | TextAnnotation
   | PenAnnotation
+  | LineAnnotation
   | ArrowAnnotation
   | BlurAnnotation
   | HighlighterAnnotation
@@ -152,7 +179,8 @@ export type AnnotationObject =
   | EllipseAnnotation
   | StepAnnotation
   | SymbolAnnotation
-  | FocusRectangleAnnotation;
+  | FocusRectangleAnnotation
+  | ImageAnnotation;
 
 // Custom CSS properties interface
 import type { CSSProperties } from "react";

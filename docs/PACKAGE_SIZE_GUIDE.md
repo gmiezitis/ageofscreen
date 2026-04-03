@@ -1,6 +1,6 @@
 # Package Size Guide
 
-SnipFocus now ships with aggressive packaging excludes so the production app stays focused on the core `Record -> Trim -> Style -> Export` flow.
+ageofscreen now ships with aggressive packaging excludes so the production app stays focused on the core `Record -> Trim -> Style -> Export` flow.
 
 ## Audit the packaged app
 

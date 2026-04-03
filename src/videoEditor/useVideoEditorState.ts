@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import * as THREE from 'three';
-import { Segment, AudioSegment, SmartEffect, OverlayImage, TextOverlay, ImageClip, MediaType, KeyframeData, ExportQuality, TransitionType, ColorGradePreset, SmartTrackingProfile, ClipTransition } from './types';
+import { Segment, AudioSegment, SmartEffect, OverlayImage, TextOverlay, ImageClip, MediaType, KeyframeData, ExportQuality, TransitionType, ColorGradePreset, SmartTrackingProfile, ClipTransition, CursorHighlightSettings, DEFAULT_CURSOR_HIGHLIGHT_SETTINGS, EditorNotification } from './types';
 import type { AnnotationObject } from '../types';
 import { useCrop } from './useCrop';
 
@@ -31,6 +31,7 @@ export const useVideoEditorState = () => {
     const [displayTime, setDisplayTime] = useState(0);
     const [selectedPlatform, setSelectedPlatform] = useState('original');
     const [isExporting, setIsExporting] = useState(false);
+    const [exportProgress, setExportProgress] = useState(0);
     const [exportQuality, setExportQuality] = useState<ExportQuality>('high');
     const [transitionType, setTransitionType] = useState<TransitionType>('crossfade');
     const [clipTransitions, setClipTransitions] = useState<ClipTransition[]>([]);
@@ -90,7 +91,7 @@ export const useVideoEditorState = () => {
     } | null>(null);
 
     // Toast
-    const [notification, setNotification] = useState<{ type: 'success' | 'warning' | 'error' | 'info', title: string, message: string } | null>(null);
+    const [notification, setNotification] = useState<EditorNotification | null>(null);
 
     const [libraryAssets, setLibraryAssets] = useState<{ id: string; type: 'video' | 'image' | 'audio'; path: string; name: string; thumbnail?: string }[]>([]);
 
@@ -103,6 +104,7 @@ export const useVideoEditorState = () => {
     const [backgroundColor, setBackgroundColor] = useState('#000000');
     const [videoPadding, setVideoPadding] = useState(4);
     const [colorGrade, setColorGrade] = useState<ColorGradePreset>('none');
+    const [cursorHighlight, setCursorHighlight] = useState<CursorHighlightSettings>({ ...DEFAULT_CURSOR_HIGHLIGHT_SETTINGS });
     const [premiumVoice, setPremiumVoice] = useState(false);
     const [playbackSpeed, setPlaybackSpeed] = useState(1);
     const [isEditingText, setIsEditingText] = useState(false);
@@ -118,7 +120,7 @@ export const useVideoEditorState = () => {
         mediaType, setMediaType, mediaPath, setMediaPath, mediaName, setMediaName,
         recordedCursorData, setRecordedCursorData,
         isPlaying, setIsPlaying, duration, setDuration, displayTime, setDisplayTime,
-        selectedPlatform, setSelectedPlatform, isExporting, setIsExporting, exportQuality, setExportQuality,
+        selectedPlatform, setSelectedPlatform, isExporting, setIsExporting, exportProgress, setExportProgress, exportQuality, setExportQuality,
         transitionType, setTransitionType, clipTransitions, setClipTransitions, isAutoPolishing, setIsAutoPolishing,
         isMaximized, setIsMaximized, mediaLoaded, setMediaLoaded,
         isLoading, setIsLoading, loadError, setLoadError,
@@ -151,6 +153,7 @@ export const useVideoEditorState = () => {
         backgroundColor, setBackgroundColor,
         videoPadding, setVideoPadding,
         colorGrade, setColorGrade,
+        cursorHighlight, setCursorHighlight,
         premiumVoice, setPremiumVoice,
         playbackSpeed, setPlaybackSpeed,
         isEditingText, setIsEditingText,

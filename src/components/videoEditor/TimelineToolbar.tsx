@@ -3,7 +3,7 @@ import {
     Scissors, Trash2, Maximize2,
     SkipBack, Pause, Play, SkipForward,
     Minimize2, Zap, Scan, Type, PenLine,
-    ArrowLeft, ArrowRight, Image as ImageIcon, Wind, Focus
+    Image as ImageIcon, Wind, Focus
 } from 'lucide-react';
 import { DEFAULT_ZOOM_INTENSITY, getEffectIntensity } from '../../videoEditor/effectIntensity';
 import { OverlayImage, SmartEffect, TiltDirection, ZoomArea } from '../../videoEditor/types';
@@ -32,16 +32,12 @@ interface TimelineToolbarProps {
     onSplit: () => void;
     onAddImageClip: () => void;
     onDelete: () => void;
-    onMoveSelectedMainTrackLeft: () => void;
-    onMoveSelectedMainTrackRight: () => void;
     onAddTextOverlay: () => void;
     onAddEffect: (type: SmartEffect['type']) => void;
     annotationToolsVisible: boolean;
     onToggleAnnotationTools: () => void;
     selectedSegmentId: string | null;
     selectedImageClipId?: string | null;
-    canMoveSelectedMainTrackLeft?: boolean;
-    canMoveSelectedMainTrackRight?: boolean;
     selectedAudioId: string | null;
     selectedEffectId: string | null;
     selectedOverlayId?: string | null;
@@ -56,15 +52,14 @@ interface TimelineToolbarProps {
 
 export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
     totalKeptDuration, displayTime, zoom, setZoom, isPlaying, togglePlay,
-    seekToStart, seekToEnd, onSplit, onAddImageClip, onDelete, onMoveSelectedMainTrackLeft, onMoveSelectedMainTrackRight,
-    onAddTextOverlay, onAddEffect, annotationToolsVisible, onToggleAnnotationTools, selectedSegmentId, selectedImageClipId, canMoveSelectedMainTrackLeft = false, canMoveSelectedMainTrackRight = false, selectedAudioId, selectedEffectId, selectedOverlayId,
+    seekToStart, seekToEnd, onSplit, onAddImageClip, onDelete,
+    onAddTextOverlay, onAddEffect, annotationToolsVisible, onToggleAnnotationTools, selectedSegmentId, selectedImageClipId, selectedAudioId, selectedEffectId, selectedOverlayId,
     overlayImages = [], onToggleOverlayRenderMode,
     smartEffects, onUpdateEffect, segments, mediaLoaded, hasCursorData = false,
 }) => {
     const selectedOverlay = selectedOverlayId
         ? overlayImages.find((overlay) => overlay.id === selectedOverlayId) ?? null
         : null;
-    const hasSelectedMainTrackItem = Boolean(selectedSegmentId || selectedImageClipId);
 
     return (
     <div className="playback-bar">
@@ -74,12 +69,6 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
             </button>
             <button className={`tool-btn ${mediaLoaded && segments.length > 0 ? '' : 'disabled'}`} onClick={onAddImageClip} title="Add picture at playhead">
                 <ImageIcon size={14} />
-            </button>
-            <button className={`tool-btn ${hasSelectedMainTrackItem && canMoveSelectedMainTrackLeft ? '' : 'disabled'}`} onClick={onMoveSelectedMainTrackLeft} title="Move selected clip left">
-                <ArrowLeft size={14} />
-            </button>
-            <button className={`tool-btn ${hasSelectedMainTrackItem && canMoveSelectedMainTrackRight ? '' : 'disabled'}`} onClick={onMoveSelectedMainTrackRight} title="Move selected clip right">
-                <ArrowRight size={14} />
             </button>
             <button className={`tool-btn ${selectedSegmentId || selectedImageClipId || selectedAudioId || selectedOverlayId ? '' : 'disabled'}`} onClick={onDelete} title="Delete (Del)">
                 <Trash2 size={14} />
@@ -161,7 +150,7 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
                                         })}
                                         style={selectStyle}
                                         disabled={!hasCursorData && !(effect.followCursor ?? false)}
-                                        title={hasCursorData ? 'Choose whether the zoom stays fixed or follows the cursor' : 'Cursor data is required for follow mode'}
+                                        title={hasCursorData ? 'Choose whether the zoom stays fixed or follows the cursor' : 'Follow cursor is available only for ageofscreen recordings with cursor metadata'}
                                     >
                                         <option value="fixed">Fixed</option>
                                         <option value="follow" disabled={!hasCursorData}>Follow cursor</option>

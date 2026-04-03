@@ -1,5 +1,5 @@
 /**
- * SnipFocus Design System
+ * ageofscreen Design System
  * Central export for all design tokens
  */
 

@@ -1,4 +1,4 @@
-# SnipFocus Age Rating Notes
+# ageofscreen Age Rating Notes
 
 Use this as the working checklist when answering the Store questionnaire.
 

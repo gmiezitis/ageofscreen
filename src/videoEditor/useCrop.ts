@@ -18,6 +18,24 @@ export interface VideoBounds {
     height: number; // Actual video display height in pixels
 }
 
+export const isNoOpCrop = (crop: CropRect | null | undefined): boolean => (
+    !crop
+    || (crop.x <= 0.5 && crop.y <= 0.5 && crop.width >= 99 && crop.height >= 99)
+);
+
+export const getPreviewCropForDisplay = (
+    isActive: boolean,
+    appliedCrop: CropRect | null,
+): CropRect | null => (
+    // Keep crop editing anchored to the uncropped source frame so reopening the
+    // crop tool does not make the video drift away from the handles.
+    isActive ? null : appliedCrop
+);
+
+export const normalizeAppliedCrop = (crop: CropRect | null | undefined): CropRect | null => (
+    isNoOpCrop(crop) ? null : { ...crop }
+);
+
 interface UseCropOptions {
     videoRef: React.RefObject<HTMLVideoElement>;
     containerRef: React.RefObject<HTMLDivElement>;
@@ -133,21 +151,20 @@ export const useCrop = ({ videoRef, containerRef, previewMode = 'fit' }: UseCrop
         setIsActive(true);
     }, [updateVideoBounds, appliedCrop]);
 
+    const replaceAppliedCrop = useCallback((nextCrop: CropRect | null | undefined) => {
+        setAppliedCrop(normalizeAppliedCrop(nextCrop));
+        setIsActive(false);
+        setCropRect(null);
+    }, []);
+
     const applyCrop = useCallback(() => {
         if (cropRect) {
-            // Check if this is effectively a full-frame crop (with 0.5% tolerance)
-            const isFullCrop = cropRect.x <= 0.5 && cropRect.y <= 0.5 &&
-                cropRect.width >= 99 && cropRect.height >= 99;
-
-            if (isFullCrop) {
-                setAppliedCrop(null);
-            } else {
-                setAppliedCrop({ ...cropRect });
-            }
+            replaceAppliedCrop(cropRect);
+            return;
         }
         setIsActive(false);
         setCropRect(null);
-    }, [cropRect]);
+    }, [cropRect, replaceAppliedCrop]);
 
     const cancelCrop = useCallback(() => {
         setIsActive(false);
@@ -155,8 +172,8 @@ export const useCrop = ({ videoRef, containerRef, previewMode = 'fit' }: UseCrop
     }, []);
 
     const clearCrop = useCallback(() => {
-        setAppliedCrop(null);
-    }, []);
+        replaceAppliedCrop(null);
+    }, [replaceAppliedCrop]);
 
     const handleMouseDown = useCallback((e: React.MouseEvent, handle: string) => {
         e.preventDefault();
@@ -244,10 +261,9 @@ export const useCrop = ({ videoRef, containerRef, previewMode = 'fit' }: UseCrop
             willChange: 'transform'
         };
 
-        // Use current dragging rect if active, otherwise use applied crop
-        const cropData = isActive ? cropRect : appliedCrop;
+        const cropData = getPreviewCropForDisplay(isActive, appliedCrop);
 
-        if (!cropData || (cropData.x <= 0.5 && cropData.y <= 0.5 && cropData.width >= 99 && cropData.height >= 99)) {
+        if (isNoOpCrop(cropData)) {
             return {
                 ...baseStyle,
                 transform: 'none',
@@ -309,6 +325,7 @@ export const useCrop = ({ videoRef, containerRef, previewMode = 'fit' }: UseCrop
         applyCrop,
         cancelCrop,
         clearCrop,
+        replaceAppliedCrop,
         handleMouseDown,
         getVideoStyle,
         getWrapperStyle,

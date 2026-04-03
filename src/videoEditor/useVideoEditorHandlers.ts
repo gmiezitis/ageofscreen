@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { OverlayImage, Segment, TextOverlay, TransitionType } from './types';
+import { DEFAULT_TEXT_OVERLAY_FONT_STACK } from './textOverlayRendering';
 import { useEditorHistory } from './useEditorHistory';
 import { useEditorExport } from './useEditorExport';
 import { useEditorLibrary } from './useEditorLibrary';
@@ -1089,6 +1090,7 @@ export const useVideoEditorHandlers = (state: any) => {
             y: 86,
             fontSize: 40,
             color: '#ffffff',
+            fontFamily: DEFAULT_TEXT_OVERLAY_FONT_STACK,
             fontWeight: 'normal',
             shadowColor: '#020617',
             shadowOffsetX: 0,

@@ -1,6 +1,6 @@
 {
-    "name": "snip-focus",
-    "productName": "SnipFocus",
+    "name": "ageofscreen",
+    "productName": "ageofscreen",
     "version": "1.0.0",
     "description": "Screen capture and focus productivity tool",
     "main": ".webpack/main",
@@ -9,7 +9,7 @@
         "npm": ">=11"
     },
     "scripts": {
-        "start": "cross-env SNIPFOCUS_RELEASE_PROFILE=dev electron-forge start",
+        "start": "cross-env AGEOFSCREEN_RELEASE_PROFILE=dev electron-forge start",
         "test": "node tests/run-core-helpers.js",
         "clean:generated": "node scripts/clean-generated.js",
         "postinstall": "patch-package",

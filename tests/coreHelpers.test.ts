@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { normalizeCameraShape } from '../src/shared/cameraShapes';
 import { isPathInsideDirectory, isSupportedCaptureInvokeType, isSupportedMediaDialogType, isSupportedMediaFilePath } from '../src/shared/pathSecurity';
 import { fromMediaFileUrl, toMediaFileUrl } from '../src/shared/mediaPaths';
 import { parseWindowHandleFromSourceId } from '../src/shared/windowBounds';
+import { PRINT_SCREEN_SLEEP_GRACE_MS, getMenuSleepSuppressedUntil, isMenuSleepSuppressed } from '../src/menu/menuLifecycle';
 import { applyKeepRangesToSegments, getBaseTimelineSegments, sourceTimeToTimelineTime, stripAutoPolishEffects } from '../src/videoEditor/autoPolishPlan';
 import { DEFAULT_ZOOM_INTENSITY, getDefaultEffectIntensity, getEffectIntensity } from '../src/videoEditor/effectIntensity';
+import { getPreviewOverlayFrameSize, getRenderedVideoFrameSize, resolveExportFrameStyle, scaleTextOverlayForExport } from '../src/videoEditor/exportOverlayMath';
 import { buildVisualTimelineSceneItems, closeVisualGapsInTimelineScene, getActivePreviewTransition, insertImageClipIntoTimelineScene, mapDisplayTimeAfterClosingVisualGaps, reorderVisualTimelineSceneItems, resolveClipTransitionType, upsertClipTransition } from '../src/videoEditor/timelineScene';
+import { getCursorHighlightAnchor } from '../src/videoEditor/cursorStyling';
 import { findImageClipAtDisplayTime, getDisplayTimeForVideoTime, getSeekTargetForDisplayTime, getSegmentThumbnailSampleTimes, resolvePlaybackStartTarget } from '../src/videoEditor/timelineClips';
-import { prepareCursorPreviewData, getPreviewCursorPoint, getInterpolatedValue } from '../src/videoEditor/utils';
+import { normalizeCursorHighlightSettings } from '../src/videoEditor/types';
+import { getPreviewCropForDisplay, isNoOpCrop, normalizeAppliedCrop } from '../src/videoEditor/useCrop';
+import { hasPendingEditorWork } from '../src/videoEditor/useEditorLibrary';
+import { buildCursorMotionActiveRanges, invertTimeRanges, isTimeWithinRanges, prepareCursorPreviewData, getPreviewCursorPoint, getInterpolatedValue, isCursorReplacementSafe } from '../src/videoEditor/utils';
 
 const run = (name: string, fn: () => void) => {
     fn();
@@ -27,7 +34,7 @@ run('parseWindowHandleFromSourceId rejects malformed or unsafe ids', () => {
 });
 
 run('path and IPC validation helpers accept only supported values', () => {
-    const tempDir = path.join('C:', 'Temp', 'snipfocus');
+    const tempDir = path.join('C:', 'Temp', 'ageofscreen');
     assert.equal(isPathInsideDirectory(path.join(tempDir, 'clip.webm'), tempDir), true);
     assert.equal(isPathInsideDirectory(path.join(tempDir, '..', 'elsewhere', 'clip.webm'), tempDir), false);
     assert.equal(isSupportedMediaDialogType('video'), true);
@@ -38,12 +45,117 @@ run('path and IPC validation helpers accept only supported values', () => {
     assert.equal(isSupportedMediaFilePath(path.join(tempDir, 'script.ps1')), false);
 });
 
+run('legacy camera shapes normalize to the supported webcam set', () => {
+    assert.equal(normalizeCameraShape('arrow'), 'hexagon');
+    assert.equal(normalizeCameraShape('wand'), 'hexagon');
+    assert.equal(normalizeCameraShape('rounded'), 'square');
+    assert.equal(normalizeCameraShape('hexagon'), 'hexagon');
+});
+
 run('media paths round-trip through the app media protocol', () => {
-    const physicalPath = path.join('C:', 'Temp', 'snipfocus', 'clip.webm');
+    const physicalPath = path.join('C:', 'Temp', 'ageofscreen', 'clip.webm');
     const mediaUrl = toMediaFileUrl(physicalPath);
 
-    assert.ok(mediaUrl.startsWith('snipfocus-media://local/'));
+    assert.ok(mediaUrl.startsWith('ageofscreen-media://local/'));
     assert.equal(fromMediaFileUrl(mediaUrl).replace(/\\/g, '/'), physicalPath.replace(/\\/g, '/'));
+});
+
+run('print-screen menu open suppresses sleep only for a short grace window', () => {
+    const openedAt = 1_000;
+    const suppressedUntil = getMenuSleepSuppressedUntil({ reason: 'print-screen', openedAt });
+
+    assert.equal(suppressedUntil, openedAt + PRINT_SCREEN_SLEEP_GRACE_MS);
+    assert.equal(isMenuSleepSuppressed(suppressedUntil, openedAt + 120), true);
+    assert.equal(isMenuSleepSuppressed(suppressedUntil, suppressedUntil), false);
+});
+
+run('cursor replacement safety respects recorded suppression metadata', () => {
+    assert.equal(isCursorReplacementSafe([]), false);
+    assert.equal(isCursorReplacementSafe([{ type: 'meta', nativeCursorSuppressed: true }, { type: 'move', x: 10, y: 10, t: 0 }]), true);
+    assert.equal(isCursorReplacementSafe([{ type: 'meta', nativeCursorSuppressed: false }, { type: 'move', x: 10, y: 10, t: 0 }]), false);
+    assert.equal(isCursorReplacementSafe([{ type: 'meta' }, { type: 'move', x: 10, y: 10, t: 0 }]), true);
+    assert.equal(isCursorReplacementSafe([{ type: 'meta' }]), false);
+});
+
+run('cursor highlight anchor biases the halo around the visible pointer body', () => {
+    const anchor = getCursorHighlightAnchor(64);
+
+    assert.ok(anchor.centerOffsetX > 0);
+    assert.ok(anchor.centerOffsetY > 0);
+    assert.ok(anchor.hotspotX < 32);
+    assert.ok(anchor.hotspotY < 32);
+});
+
+run('cursor highlight settings keep new shapes and migrate legacy rounded shape', () => {
+    assert.equal(normalizeCursorHighlightSettings({ shape: 'heart' as any }).shape, 'heart');
+    assert.equal(normalizeCursorHighlightSettings({ shape: 'arrow' as any }).shape, 'arrow');
+    assert.equal(normalizeCursorHighlightSettings({ shape: 'text_cursor' as any }).shape, 'text_cursor');
+    assert.equal(normalizeCursorHighlightSettings({ shape: 'rounded_square' as any }).shape, 'circle');
+});
+
+run('export overlay helpers scale text styling into the real render frame', () => {
+    assert.deepEqual(
+        getRenderedVideoFrameSize({ width: 1920, height: 1080 }, { x: 10, y: 5, width: 50, height: 50 }),
+        { width: 960, height: 540 },
+    );
+    assert.deepEqual(
+        getPreviewOverlayFrameSize(
+            { width: 1440, height: 810 },
+            { width: 1600, height: 900 },
+            { x: 10, y: 5, width: 50, height: 50 },
+        ),
+        { width: 1600, height: 900 },
+    );
+
+    const scaled = scaleTextOverlayForExport({
+        id: 'text-1',
+        text: 'Hello',
+        startTime: 0,
+        duration: 3,
+        x: 50,
+        y: 50,
+        fontSize: 24,
+        color: '#ffffff',
+        padding: 10,
+        borderWidth: 2,
+        shadowOffsetX: 3,
+        shadowOffsetY: 4,
+    }, { width: 960, height: 540 }, { width: 1920, height: 1080 });
+
+    assert.equal(scaled.fontSize, 48);
+    assert.equal(scaled.padding, 20);
+    assert.equal(scaled.borderWidth, 4);
+    assert.equal(scaled.shadowOffsetX, 6);
+    assert.equal(scaled.shadowOffsetY, 8);
+});
+
+run('original export drops the default neutral frame for edge-to-edge output', () => {
+    assert.deepEqual(
+        resolveExportFrameStyle({
+            selectedPlatform: 'original',
+            backgroundColor: '#000000',
+            videoPadding: 18,
+        }),
+        { backgroundColor: 'transparent', videoPadding: 0 },
+    );
+
+    assert.deepEqual(
+        resolveExportFrameStyle({
+            selectedPlatform: 'original',
+            backgroundColor: '#0f172a',
+            videoPadding: 18,
+        }),
+        { backgroundColor: 'transparent', videoPadding: 0 },
+    );
+
+    assert.deepEqual(
+        resolveExportFrameStyle({
+            selectedPlatform: 'vertical',
+            backgroundColor: '#000000',
+            videoPadding: 4,
+        }),
+        { backgroundColor: '#000000', videoPadding: 4 },
+    );
 });
 
 run('prepareCursorPreviewData caches prepared cursor metadata for stable arrays', () => {
@@ -82,6 +194,25 @@ run('getPreviewCursorPoint returns normalized direct and smooth preview points',
     assert.ok(smooth.y >= 0 && smooth.y <= 100);
 });
 
+run('cursor motion ranges ignore the synthetic start sample and stay active after movement', () => {
+    const cursorData = [
+        { type: 'meta', bounds: { x: 0, y: 0, width: 1920, height: 1080 } },
+        { type: 'move', x: 100, y: 200, t: 0 },
+        { type: 'click', x: 100, y: 200, t: 400 },
+        { type: 'move', x: 132, y: 220, t: 1000 },
+        { type: 'move', x: 172, y: 260, t: 1200 },
+    ];
+
+    const activeRanges = buildCursorMotionActiveRanges(cursorData, 1, 3);
+    const inactiveRanges = invertTimeRanges(activeRanges, 3);
+
+    assert.deepEqual(activeRanges, [{ startTime: 1, endTime: 2.2 }]);
+    assert.deepEqual(inactiveRanges, [{ startTime: 0, endTime: 1 }, { startTime: 2.2, endTime: 3 }]);
+    assert.equal(isTimeWithinRanges(0.5, activeRanges), false);
+    assert.equal(isTimeWithinRanges(1.6, activeRanges), true);
+    assert.equal(isTimeWithinRanges(2.25, activeRanges), false);
+});
+
 run('getInterpolatedValue interpolates correctly when keyframes are unsorted', () => {
     const keyframes = [
         { time: 2, value: 20 },
@@ -101,6 +232,62 @@ run('zoom effects use the shared lighter default intensity', () => {
     assert.equal(getEffectIntensity({ type: 'zoom', intensity: undefined } as any), 15);
     assert.equal(getEffectIntensity({ type: 'slow_zoom', intensity: undefined } as any), 15);
     assert.equal(getEffectIntensity({ type: 'zoom', intensity: 48 } as any), 48);
+});
+
+run('crop preview reopens on the uncropped source frame', () => {
+    const appliedCrop = { x: 58, y: 4, width: 34, height: 76 };
+
+    assert.equal(getPreviewCropForDisplay(true, appliedCrop), null);
+    assert.deepEqual(getPreviewCropForDisplay(false, appliedCrop), appliedCrop);
+});
+
+run('no-op crop helper clears near-full selections', () => {
+    assert.equal(isNoOpCrop(null), true);
+    assert.equal(isNoOpCrop({ x: 0.2, y: 0.4, width: 99.4, height: 99.1 }), true);
+    assert.equal(isNoOpCrop({ x: 0.8, y: 0.4, width: 99.4, height: 99.1 }), false);
+    assert.equal(normalizeAppliedCrop({ x: 0.2, y: 0.4, width: 99.4, height: 99.1 }), null);
+    assert.deepEqual(normalizeAppliedCrop({ x: 12, y: 8, width: 60, height: 72 }), { x: 12, y: 8, width: 60, height: 72 });
+});
+
+run('media replacement guard only prompts when real editor work exists', () => {
+    assert.equal(hasPendingEditorWork({
+        mediaPath: null,
+        historyLength: 4,
+        smartEffectCount: 1,
+        audioSegmentCount: 0,
+        overlayImageCount: 0,
+        imageClipCount: 0,
+        textOverlayCount: 0,
+        annotationOverlayCount: 0,
+        clipTransitionCount: 0,
+        hasCrop: false,
+    }), false);
+
+    assert.equal(hasPendingEditorWork({
+        mediaPath: 'C:/Temp/clip.webm',
+        historyLength: 0,
+        smartEffectCount: 0,
+        audioSegmentCount: 0,
+        overlayImageCount: 0,
+        imageClipCount: 0,
+        textOverlayCount: 0,
+        annotationOverlayCount: 0,
+        clipTransitionCount: 0,
+        hasCrop: false,
+    }), false);
+
+    assert.equal(hasPendingEditorWork({
+        mediaPath: 'C:/Temp/clip.webm',
+        historyLength: 0,
+        smartEffectCount: 0,
+        audioSegmentCount: 0,
+        overlayImageCount: 0,
+        imageClipCount: 0,
+        textOverlayCount: 0,
+        annotationOverlayCount: 0,
+        clipTransitionCount: 1,
+        hasCrop: false,
+    }), true);
 });
 
 run('clip transition helpers resolve overrides and drop default duplicates', () => {

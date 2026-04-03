@@ -2,6 +2,31 @@ import { useCallback, useEffect } from 'react';
 import { createMediaThumbnail } from './mediaThumbnails';
 import { buildSmartTrackingEffects, DEFAULT_SMART_TRACKING_PROFILE } from './smartTracking';
 
+export const hasPendingEditorWork = (snapshot: {
+    mediaPath: string | null;
+    historyLength: number;
+    smartEffectCount: number;
+    audioSegmentCount: number;
+    overlayImageCount: number;
+    imageClipCount: number;
+    textOverlayCount: number;
+    annotationOverlayCount: number;
+    clipTransitionCount: number;
+    hasCrop: boolean;
+}): boolean => (
+    Boolean(snapshot.mediaPath) && (
+        snapshot.historyLength > 0
+        || snapshot.smartEffectCount > 0
+        || snapshot.audioSegmentCount > 0
+        || snapshot.overlayImageCount > 0
+        || snapshot.imageClipCount > 0
+        || snapshot.textOverlayCount > 0
+        || snapshot.annotationOverlayCount > 0
+        || snapshot.clipTransitionCount > 0
+        || snapshot.hasCrop
+    )
+);
+
 /**
  * Manages the media library: import, load, delete, and clear items.
  * Extracted from useVideoEditorHandlers to keep each module focused.
@@ -13,7 +38,7 @@ export function useEditorLibrary(state: any, showNotification: (type: string, ti
         setTextOverlays,
         setAnnotationOverlays,
         setAnnotationCanvasSize,
-        history, setHistory, historyIndex, setHistoryIndex,
+        history, setHistory, setHistoryIndex,
     } = state;
 
     const resetSelections = useCallback(() => {
@@ -39,8 +64,32 @@ export function useEditorLibrary(state: any, showNotification: (type: string, ti
         state.setOverlayImages([]);
         state.setImageClips([]);
         state.setClipTransitions?.([]);
+        state.crop?.clearCrop?.();
         resetSelections();
     }, [resetSelections, state]);
+
+    const confirmMediaReplacement = useCallback((nextName?: string) => {
+        const needsConfirmation = hasPendingEditorWork({
+            mediaPath,
+            historyLength: history.length,
+            smartEffectCount: state.smartEffects.length,
+            audioSegmentCount: state.audioSegments.length,
+            overlayImageCount: state.overlayImages.length,
+            imageClipCount: state.imageClips.length,
+            textOverlayCount: state.textOverlays.length,
+            annotationOverlayCount: state.annotationOverlays.length,
+            clipTransitionCount: state.clipTransitions.length,
+            hasCrop: Boolean(state.crop?.appliedCrop),
+        });
+
+        if (!needsConfirmation) {
+            return true;
+        }
+
+        return window.confirm(
+            `Replace the current edit${nextName ? ` with "${nextName}"` : ''}? Your current timeline changes will be cleared.`
+        );
+    }, [history.length, mediaPath, state.annotationOverlays.length, state.audioSegments.length, state.clipTransitions.length, state.crop, state.imageClips.length, state.overlayImages.length, state.smartEffects.length, state.textOverlays.length]);
 
     useEffect(() => {
         let cancelled = false;
@@ -88,6 +137,10 @@ export function useEditorLibrary(state: any, showNotification: (type: string, ti
                 state.setLibraryAssets((prev: any) => [newAsset, ...prev]);
 
                 if (type === 'video' || !mediaPath) {
+                    if (type === 'video' && !confirmMediaReplacement(result.fileName)) {
+                        showNotification('info', 'Media Hub', `Added ${result.fileName} to the library`);
+                        return;
+                    }
                     setMediaPath(result.filePath);
                     setMediaType(type);
                     setMediaName(result.fileName);
@@ -127,7 +180,10 @@ export function useEditorLibrary(state: any, showNotification: (type: string, ti
 
     const loadLibraryItem = useCallback((id: string) => {
         const item = state.libraryAssets.find((a: any) => a.id === id);
-        if (!item) return;
+        if (!item) return false;
+        if (!confirmMediaReplacement(item.name)) {
+            return false;
+        }
 
         setMediaPath(item.path);
         setMediaType(item.type);
@@ -142,13 +198,14 @@ export function useEditorLibrary(state: any, showNotification: (type: string, ti
         setAnnotationOverlays([]);
         setAnnotationCanvasSize(null);
         applyMediaContextState(item.type === 'video' ? item.cursorData : []);
-    }, [applyMediaContextState, state.libraryAssets, setDisplayTime, setIsPlaying, setMediaPath, setMediaType, setMediaName, setMediaLoaded, setSegments, setHistory, setHistoryIndex, setTextOverlays, setAnnotationOverlays, setAnnotationCanvasSize]);
+        return true;
+    }, [applyMediaContextState, confirmMediaReplacement, state.libraryAssets, setDisplayTime, setIsPlaying, setMediaPath, setMediaType, setMediaName, setMediaLoaded, setSegments, setHistory, setHistoryIndex, setTextOverlays, setAnnotationOverlays, setAnnotationCanvasSize]);
 
     const deleteLibraryItem = useCallback(async (id: string) => {
         const item = state.libraryAssets.find((a: any) => a.id === id);
         if (!item) return;
 
-        if (item.path.includes('snipfocus-rec-') || item.id.startsWith('recording-')) {
+        if (item.path.includes('ageofscreen-rec-') || item.id.startsWith('recording-')) {
             try {
                 const api = (window as any).videoEditorAPI;
                 await api.invoke('delete-temp-video', item.path);
@@ -176,7 +233,7 @@ export function useEditorLibrary(state: any, showNotification: (type: string, ti
     }, [applyMediaContextState, state, mediaPath, setMediaPath, setMediaType, setSegments, setMediaLoaded, setIsPlaying, setDisplayTime, setHistory, setHistoryIndex, setTextOverlays, setAnnotationOverlays, setAnnotationCanvasSize]);
 
     const clearLibrary = useCallback(async () => {
-        const recordings = state.libraryAssets.filter((a: any) => a.id.startsWith('recording-') || a.path.includes('snipfocus-rec-'));
+        const recordings = state.libraryAssets.filter((a: any) => a.id.startsWith('recording-') || a.path.includes('ageofscreen-rec-'));
         const api = (window as any).videoEditorAPI;
 
         for (const item of recordings) {

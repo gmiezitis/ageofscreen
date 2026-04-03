@@ -1,5 +1,5 @@
 /**
- * SnipFocus Design System - Typography
+ * ageofscreen Design System - Typography
  * Clean, modern typography scale
  */
 

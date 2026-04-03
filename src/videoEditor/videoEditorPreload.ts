@@ -13,6 +13,7 @@ const ON_CHANNELS = new Set([
     "load-video",
     "update-background-color",
     "apply-agent-summary",
+    "export-progress",
 ]);
 
 const INVOKE_CHANNELS = new Set([
@@ -20,6 +21,8 @@ const INVOKE_CHANNELS = new Set([
     "delete-temp-video",
     "export-video",
     "export-media",
+    "save-video-project",
+    "show-item-in-folder",
     "auto-polish",
     "auto-polish-plan",
     "get-pending-editor-media",

@@ -4,6 +4,7 @@ import {
     buildTimelinePlaybackItems,
     findImageClipAtDisplayTime,
     findNextVideoSegment,
+    getSeekTargetForDisplayTime,
     findTimelineItemAtDisplayTime,
     getImageClipEnd,
 } from './timelineClips';
@@ -23,6 +24,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
     const isSeekInFlightRef = useRef(handlers.isSeekInFlight);
     const startPlaybackFromTargetRef = useRef(handlers.startPlaybackFromTarget);
     const imageClipPlaybackRef = useRef<{ clipId: string; startedAt: number; clipStart: number } | null>(null);
+    const pausedPlaybackRetryKeyRef = useRef<string | null>(null);
 
     useEffect(() => {
         getDisplayTimeRef.current = handlers.getDisplayTimeFromVideoTime;
@@ -64,6 +66,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
     useEffect(() => {
         if (!isPlaying) {
             imageClipPlaybackRef.current = null;
+            pausedPlaybackRetryKeyRef.current = null;
         }
     }, [isPlaying]);
 
@@ -73,11 +76,79 @@ export function usePlaybackLoop(state: any, handlers: any) {
 
         let frameId: number;
         const SEGMENT_TOLERANCE = 0.15; // Increased for better seek settlement tolerance
+        const TRANSFORM_EPSILON = 0.0005;
 
         const updateDisplayTime = (nextDisplayTime: number) => {
             if (!Number.isFinite(nextDisplayTime)) return;
             displayTimeRef.current = nextDisplayTime;
             state.setDisplayTime(nextDisplayTime);
+        };
+
+        const updateInterpolatedTransform = (nextDisplayTime: number) => {
+            const frames = keyframesRef.current;
+            const currentTransform = transformRef.current;
+            const hasAnimatedTransform = Boolean(
+                (Array.isArray(frames?.x) && frames.x.length > 0)
+                || (Array.isArray(frames?.y) && frames.y.length > 0)
+                || (Array.isArray(frames?.scale) && frames.scale.length > 0)
+                || (Array.isArray(frames?.rotate) && frames.rotate.length > 0),
+            );
+
+            if (!hasAnimatedTransform) {
+                const needsReset = (
+                    Math.abs(currentTransform.x) > TRANSFORM_EPSILON
+                    || Math.abs(currentTransform.y) > TRANSFORM_EPSILON
+                    || Math.abs(currentTransform.scale - 1) > TRANSFORM_EPSILON
+                    || Math.abs(currentTransform.rotation) > TRANSFORM_EPSILON
+                );
+                if (!needsReset) {
+                    return;
+                }
+
+                const resetTransform = { x: 0, y: 0, scale: 1, rotation: 0 };
+                transformRef.current = resetTransform;
+                state.setTransform(resetTransform);
+                return;
+            }
+
+            const nextTransform = {
+                x: getInterpolatedValue(frames.x, nextDisplayTime, currentTransform.x),
+                y: getInterpolatedValue(frames.y, nextDisplayTime, currentTransform.y),
+                scale: getInterpolatedValue(frames.scale, nextDisplayTime, currentTransform.scale),
+                rotation: getInterpolatedValue(frames.rotate, nextDisplayTime, currentTransform.rotation),
+            };
+
+            const isUnchanged = (
+                Math.abs(nextTransform.x - currentTransform.x) <= TRANSFORM_EPSILON
+                && Math.abs(nextTransform.y - currentTransform.y) <= TRANSFORM_EPSILON
+                && Math.abs(nextTransform.scale - currentTransform.scale) <= TRANSFORM_EPSILON
+                && Math.abs(nextTransform.rotation - currentTransform.rotation) <= TRANSFORM_EPSILON
+            );
+
+            if (isUnchanged) {
+                return;
+            }
+
+            transformRef.current = nextTransform;
+            state.setTransform(nextTransform);
+        };
+
+        const snapPlaybackToEnd = () => {
+            pausedPlaybackRetryKeyRef.current = null;
+            imageClipPlaybackRef.current = null;
+            clearPendingPlaybackTargetRef.current?.();
+
+            const finalDisplayTime = Math.max(0, lastSegmentEndRef.current);
+            if (
+                Math.abs(finalDisplayTime - lastRenderedTime.current) > 0.008
+                || Math.abs(displayTimeRef.current - finalDisplayTime) > 0.008
+            ) {
+                lastRenderedTime.current = finalDisplayTime;
+                updateInterpolatedTransform(finalDisplayTime);
+                updateDisplayTime(finalDisplayTime);
+            }
+
+            state.setIsPlaying(false);
         };
 
         const findSegmentIndexForDisplayTime = (items: any[], time: number) => items.findIndex((seg) => {
@@ -88,6 +159,21 @@ export function usePlaybackLoop(state: any, handlers: any) {
         const findSegmentIndexForVideoTime = (items: any[], time: number) => items.findIndex((seg) => (
             time >= seg.startTime - SEGMENT_TOLERANCE && time <= seg.endTime + SEGMENT_TOLERANCE
         ));
+        const getPlaybackTargetKey = (target: { segmentId?: string; displayTime: number; videoTime: number } | null) => (
+            target
+                ? `${target.segmentId ?? 'video'}:${target.displayTime.toFixed(3)}:${target.videoTime.toFixed(3)}`
+                : null
+        );
+        const requestVideoResume = (target: { kind: 'video'; segmentId: string; displayTime: number; videoTime: number }) => {
+            const nextKey = getPlaybackTargetKey(target);
+            if (!nextKey || pausedPlaybackRetryKeyRef.current === nextKey) {
+                return false;
+            }
+
+            pausedPlaybackRetryKeyRef.current = nextKey;
+            void startPlaybackFromTargetRef.current?.(target);
+            return true;
+        };
 
         // Initialize active segment index carefully based on current pin position
         const initialIndex = findSegmentIndexForDisplayTime(segmentsRef.current, displayTimeRef.current);
@@ -98,8 +184,13 @@ export function usePlaybackLoop(state: any, handlers: any) {
         }
 
         const loop = () => {
+            if (!video.paused) {
+                pausedPlaybackRetryKeyRef.current = null;
+            }
+
             const currentImageClip = findImageClipAtDisplayTime(imageClipsRef.current, displayTimeRef.current);
             if (currentImageClip) {
+                pausedPlaybackRetryKeyRef.current = null;
                 const clipEnd = getImageClipEnd(currentImageClip);
                 const playbackAnchor = imageClipPlaybackRef.current;
                 
@@ -122,14 +213,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
 
                 if (Math.abs(nextDisplayTime - lastRenderedTime.current) > 0.008) {
                     lastRenderedTime.current = nextDisplayTime;
-                    const kfs = keyframesRef.current;
-                    const curTransform = transformRef.current;
-                    const x = getInterpolatedValue(kfs.x, nextDisplayTime, curTransform.x);
-                    const y = getInterpolatedValue(kfs.y, nextDisplayTime, curTransform.y);
-                    const scale = getInterpolatedValue(kfs.scale, nextDisplayTime, curTransform.scale);
-                    const rotation = getInterpolatedValue(kfs.rotate, nextDisplayTime, curTransform.rotation);
-
-                    state.setTransform({ x, y, scale, rotation });
+                    updateInterpolatedTransform(nextDisplayTime);
                     updateDisplayTime(nextDisplayTime);
                 }
 
@@ -164,7 +248,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
                             videoTime: nextSegment.startTime,
                         };
                         updateDisplayTime(nextSegment.timelineStart);
-                        void startPlaybackFromTargetRef.current?.(nextTarget);
+                        requestVideoResume(nextTarget);
                     } else {
                         updateDisplayTime(Math.max(lastSegmentEndRef.current, clipEnd));
                         state.setIsPlaying(false);
@@ -178,6 +262,35 @@ export function usePlaybackLoop(state: any, handlers: any) {
             }
 
             imageClipPlaybackRef.current = null;
+            if (video?.ended) {
+                snapPlaybackToEnd();
+                return;
+            }
+
+            if (video) {
+                const currentSegments = segmentsRef.current;
+                const pendingPlaybackTarget = getPendingPlaybackTargetRef.current?.() ?? null;
+                const seekInFlight = isSeekInFlightRef.current?.() ?? false;
+
+                if (video.paused && !video.ended && !video.seeking && !seekInFlight) {
+                    const visibleTarget = getSeekTargetForDisplayTime(
+                        currentSegments,
+                        imageClipsRef.current,
+                        displayTimeRef.current,
+                    );
+                    const pausedVideoTarget = pendingPlaybackTarget?.kind === 'video'
+                        ? pendingPlaybackTarget
+                        : visibleTarget?.kind === 'video'
+                            ? visibleTarget
+                            : null;
+
+                    if (pausedVideoTarget) {
+                        requestVideoResume(pausedVideoTarget);
+                        frameId = requestAnimationFrame(loop);
+                        return;
+                    }
+                }
+            }
             if (video && !video.paused) {
                 const currentTime = video.currentTime;
                 const currentSegments = segmentsRef.current;
@@ -260,16 +373,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
                     
                     if (Math.abs(newDisplayTime - lastRenderedTime.current) > 0.008) {
                         lastRenderedTime.current = newDisplayTime;
-
-                        const kfs = keyframesRef.current;
-                        const curTransform = transformRef.current;
-
-                        const x = getInterpolatedValue(kfs.x, newDisplayTime, curTransform.x);
-                        const y = getInterpolatedValue(kfs.y, newDisplayTime, curTransform.y);
-                        const scale = getInterpolatedValue(kfs.scale, newDisplayTime, curTransform.scale);
-                        const rotation = getInterpolatedValue(kfs.rotate, newDisplayTime, curTransform.rotation);
-
-                        state.setTransform({ x, y, scale, rotation });
+                        updateInterpolatedTransform(newDisplayTime);
                         updateDisplayTime(newDisplayTime);
                     }
                 } else {
@@ -325,12 +429,10 @@ export function usePlaybackLoop(state: any, handlers: any) {
                             videoTime: nextItem.segment.startTime,
                         };
                         updateDisplayTime(nextItem.segment.timelineStart);
-                        void startPlaybackFromTargetRef.current?.(nextTarget);
+                        requestVideoResume(nextTarget);
                     } else {
-                        const totalDuration = lastSegmentEndRef.current;
-                        updateDisplayTime(totalDuration);
                         video.pause();
-                        state.setIsPlaying(false);
+                        snapPlaybackToEnd();
                     }
                 }
             }

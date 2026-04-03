@@ -1,11 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { CameraShape, normalizeCameraShape, traceCameraShapePath } from '../shared/cameraShapes';
 
 interface WebcamBorderProps {
     isRecording: boolean;
     progress: number; // 0 to 1
     volume?: number; // 0 to 1
-    shape: 'circle' | 'rounded' | 'pill' | 'square';
+    shape: CameraShape;
     borderColor?: string; // Hex, default #000000 (black)
+    borderWidth?: number;
+    glowEnabled?: boolean;
     micEnabled?: boolean;
 }
 
@@ -23,6 +26,8 @@ export const WebcamBorder: React.FC<WebcamBorderProps> = ({
     volume,
     shape,
     borderColor = '#000000',
+    borderWidth = 4,
+    glowEnabled = false,
     micEnabled = false
 }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -54,16 +59,14 @@ export const WebcamBorder: React.FC<WebcamBorderProps> = ({
         if (!ctx) return;
 
         const { width, height } = dimensions;
+        const normalizedShape = normalizeCameraShape(shape);
 
         ctx.clearRect(0, 0, width, height);
 
         // Always show the full border path
-        ctx.lineWidth = 4;
+        ctx.lineWidth = borderWidth;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-
-        // Static border color with subtle alpha
-        const strokeColor = hexToRgba(borderColor, 0.85);
 
         const padding = 6;
         const drawDimensions = {
@@ -75,19 +78,14 @@ export const WebcamBorder: React.FC<WebcamBorderProps> = ({
 
         const drawPath = (ctx: CanvasRenderingContext2D) => {
             ctx.beginPath();
-            if (shape === 'circle') {
-                const centerX = width / 2;
-                const centerY = height / 2;
-                const radiusX = drawDimensions.width / 2;
-                const radiusY = drawDimensions.height / 2;
-                ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
-            } else if (shape === 'pill') {
-                const r = drawDimensions.height / 2;
-                ctx.roundRect(drawDimensions.x, drawDimensions.y, drawDimensions.width, drawDimensions.height, r);
-            } else {
-                const r = shape === 'rounded' ? 48 : 24;
-                ctx.roundRect(drawDimensions.x, drawDimensions.y, drawDimensions.width, drawDimensions.height, r);
-            }
+            traceCameraShapePath(
+                ctx,
+                normalizedShape,
+                drawDimensions.x,
+                drawDimensions.y,
+                drawDimensions.width,
+                drawDimensions.height,
+            );
         };
 
         // Draw the full colored border
@@ -100,10 +98,15 @@ export const WebcamBorder: React.FC<WebcamBorderProps> = ({
         
         ctx.strokeStyle = hexToRgba(borderColor, dynamicAlpha);
 
-        // Dynamic Glow based on volume
+        // Dynamic Glow based on volume and explicit glow setting
         // When quiet, subtle blur. When loud, intense pulse.
-        ctx.shadowBlur = 0;
-        ctx.shadowColor = 'transparent';
+        if (glowEnabled) {
+            ctx.shadowBlur = 15 + (volMod * 15);
+            ctx.shadowColor = borderColor;
+        } else {
+            ctx.shadowBlur = 0;
+            ctx.shadowColor = 'transparent';
+        }
 
         ctx.stroke();
 

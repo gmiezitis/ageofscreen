@@ -1,15 +1,31 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Play, Music } from 'lucide-react';
-import { SmartEffect, OverlayImage, TextOverlay, ZoomArea, ColorGradePreset, ImageClip, Segment } from '../../videoEditor/types';
+import { SmartEffect, OverlayImage, TextOverlay, ZoomArea, ColorGradePreset, ImageClip, Segment, CursorHighlightSettings, DEFAULT_CURSOR_HIGHLIGHT_SETTINGS } from '../../videoEditor/types';
 import type { AnnotationObject } from '../../types';
 import { computeEffectFadeRatio, effectEnvelope, resolveBackgroundCSS } from '../../videoEditor/effectMath';
 import { getEffectIntensity } from '../../videoEditor/effectIntensity';
 import CropOverlay from '../../videoEditor/CropOverlay';
 import { TextOverlayDraggable, AreaOverlay, TextOverlayEditor, EffectBadges } from './overlays';
+import { CursorHighlightOverlay } from './CursorHighlightOverlay';
 import { VideoAnnotationLayer } from './VideoAnnotationLayer';
-import { EffectStyleSet, getEffectStyle, getFollowCursorPoint, getPreviewCursorPoint } from '../../videoEditor/utils';
+import { EffectStyleSet, getEffectStyle, getFollowCursorPoint, getPreviewCursorPoint, isCursorReplacementSafe } from '../../videoEditor/utils';
 import { buildVisualTimelineSceneItems, getActivePreviewTransition } from '../../videoEditor/timelineScene';
 import { toMediaFileUrl } from '../../shared/mediaPaths';
+import { getPreviewCropForDisplay, isNoOpCrop } from '../../videoEditor/useCrop';
+
+const NO_EFFECT_STYLE_SET: EffectStyleSet = {
+    windowStyle: {
+        transform: 'none',
+        willChange: 'auto',
+    },
+    contentStyle: {
+        transform: 'none',
+        transformOrigin: 'center center',
+        willChange: 'auto',
+    },
+    filter: '',
+    boxShadow: '',
+};
 
 /* ─── Props ─── */
 interface PreviewStageProps {
@@ -35,10 +51,13 @@ interface PreviewStageProps {
     selectedOverlayId: string | null;
     setSelectedOverlayId: (id: string | null) => void;
     onEditOverlayImage?: (id: string, updates: Partial<OverlayImage>) => void;
+    onOverlayImageInteractionStart?: () => void;
+    onOverlayImageInteractionEnd?: () => void;
     textOverlays: TextOverlay[];
     selectedTextOverlayId: string | null;
     setSelectedTextOverlayId: (id: string | null) => void;
     onEditTextOverlay?: (id: string, updates: Partial<TextOverlay>) => void;
+    onTextOverlayMoveEnd?: () => void;
     handleCropDragStart: (e: React.MouseEvent) => void;
     effectStyleSet: EffectStyleSet;
     selectedPlatform: string;
@@ -49,6 +68,7 @@ interface PreviewStageProps {
     videoPadding?: number;
     mediaName?: string;
     colorGrade?: ColorGradePreset;
+    cursorHighlight?: CursorHighlightSettings;
     onUpdateZoomArea?: (area: ZoomArea) => void;
     onUpdateBlurArea?: (area: ZoomArea) => void;
     recordedCursorData?: any[];
@@ -69,11 +89,12 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
     activeEffects, selectedZoomEffect, selectedBlurEffect,
     segments, imageClips, selectedImageClipId, setSelectedImageClipId,
     overlayImages, selectedOverlayId, setSelectedOverlayId, onEditOverlayImage,
-    textOverlays, selectedTextOverlayId, setSelectedTextOverlayId, onEditTextOverlay,
+    onOverlayImageInteractionStart, onOverlayImageInteractionEnd,
+    textOverlays, selectedTextOverlayId, setSelectedTextOverlayId, onEditTextOverlay, onTextOverlayMoveEnd,
     handleCropDragStart, effectStyleSet,
     selectedPlatform, selectedPlatformRatio,
     onLoadedMetadata, videoMuted,
-    backgroundColor, videoPadding = 0, mediaName, colorGrade,
+    backgroundColor, videoPadding = 0, mediaName, colorGrade, cursorHighlight = DEFAULT_CURSOR_HIGHLIGHT_SETTINGS,
     onUpdateZoomArea, onUpdateBlurArea,
     recordedCursorData = [],
     isEditingText, setIsEditingText,
@@ -83,7 +104,7 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
     onAnnotationCanvasSizeChange,
     onCloseAnnotationTools,
 }) => {
-    const LEFT_DOCK_PANEL_WIDTH = 320;
+    const LEFT_DOCK_PANEL_WIDTH = 288;
     const LEFT_DOCK_PANEL_GAP = 18;
     const [leftDockHostElement, setLeftDockHostElement] = useState<HTMLDivElement | null>(null);
     const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -97,14 +118,14 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
     }, [crop.videoBounds]);
 
     const previewCropData = useMemo(
-        () => (crop?.isActive ? crop?.cropRect : crop?.appliedCrop) ?? null,
-        [crop?.appliedCrop, crop?.cropRect, crop?.isActive]
+        () => getPreviewCropForDisplay(Boolean(crop?.isActive), crop?.appliedCrop ?? null),
+        [crop?.appliedCrop, crop?.isActive]
     );
 
     const overlayBounds = useMemo(() => {
         if (!contentBounds) return null;
         const cropData = previewCropData;
-        if (!cropData || (cropData.x <= 0.5 && cropData.y <= 0.5 && cropData.width >= 99 && cropData.height >= 99)) {
+        if (isNoOpCrop(cropData)) {
             return contentBounds;
         }
         const container = threeContainerRef.current;
@@ -141,14 +162,24 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
             containerHeight: container.clientHeight,
         };
     }, [contentBounds, overlayBounds, threeContainerRef]);
+    const overlayFrameSize = useMemo(() => {
+        const frame = overlayBounds ?? contentBounds;
+        if (!frame) return null;
+        return { width: frame.width, height: frame.height };
+    }, [contentBounds, overlayBounds]);
 
     const resolvedEffectStyleSet = useMemo(
         () => getEffectStyle(activeEffects, displayTime, followPreviewCursorPoint ?? smoothPreviewCursorPoint, previewEffectFrame),
         [activeEffects, displayTime, followPreviewCursorPoint, previewEffectFrame, smoothPreviewCursorPoint]
     );
+    const previewEffectStyleSet = crop?.isActive ? NO_EFFECT_STYLE_SET : resolvedEffectStyleSet;
 
     const activeZoomEffect = useMemo(
         () => [...activeEffects].reverse().find((effect) => effect.type === 'zoom') ?? null,
+        [activeEffects]
+    );
+    const shouldSuppressCursorHighlight = useMemo(
+        () => activeEffects.some((effect) => effect.type === 'zoom'),
         [activeEffects]
     );
 
@@ -182,7 +213,7 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
         : 0;
 
     const mediaContentStyle = crop.getVideoStyle();
-    const hideNativePreviewPointer = false;
+    const hideNativePreviewPointer = cursorHighlight.enabled && isCursorReplacementSafe(recordedCursorData);
     const bgStyle = resolveBackgroundCSS(backgroundColor);
     const hasStyledBackground = !!backgroundColor && backgroundColor !== 'transparent';
     const effectivePadding = hasStyledBackground && videoPadding > 0 ? Math.max(videoPadding, 4) : videoPadding;
@@ -275,6 +306,7 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
         e.preventDefault(); e.stopPropagation();
         const container = wrapperRef.current ?? imageOverlayLayerRef.current;
         if (!container) return;
+        onOverlayImageInteractionStart?.();
         const rect = container.getBoundingClientRect();
         const interaction = {
             startX: e.clientX, startY: e.clientY,
@@ -298,7 +330,11 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
                 });
             }
         };
-        const handleUp = () => { window.removeEventListener('mousemove', handleMove); window.removeEventListener('mouseup', handleUp); };
+        const handleUp = () => {
+            window.removeEventListener('mousemove', handleMove);
+            window.removeEventListener('mouseup', handleUp);
+            onOverlayImageInteractionEnd?.();
+        };
         window.addEventListener('mousemove', handleMove);
         window.addEventListener('mouseup', handleUp);
     };
@@ -313,13 +349,14 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
             default: return '';
         }
     };
+    const colorGradeFilter = getColorGradeFilter(colorGrade) || undefined;
 
     const VideoStack = (
         <div style={{ width: '100%', height: '100%', position: 'relative', overflow: crop.isActive ? 'visible' : 'hidden' }}>
             {mediaType === 'video' && (
                 <div ref={threeContainerRef} className="three-preview-container" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div style={{ ...crop.getWrapperStyle(), width: '100%', height: '100%', position: 'relative', overflow: crop.isActive ? 'visible' : 'hidden' }}>
-                        <div style={{ width: '100%', height: '100%', ...resolvedEffectStyleSet.contentStyle, filter: getColorGradeFilter(colorGrade) || undefined }}>
+                        <div style={{ width: '100%', height: '100%', ...previewEffectStyleSet.contentStyle, filter: getColorGradeFilter(colorGrade) || undefined }}>
                             <video key={mediaPath} ref={videoRef} src={getMediaSrc()} className="video-preview" onClick={togglePlay} onLoadedMetadata={onLoadedMetadata} preload="auto" playsInline controls={false} muted={videoMuted}
                                 style={{ ...mediaContentStyle, display: 'block', zIndex: 1, cursor: hideNativePreviewPointer ? 'none' : undefined }} />
                         </div>
@@ -378,7 +415,9 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
             {textOverlays.map(tov => (displayTime >= tov.startTime && displayTime < tov.startTime + tov.duration) ? (
                 <TextOverlayDraggable key={tov.id} tov={tov} isSelected={selectedTextOverlayId === tov.id} disabled={annotationToolsVisible || isPlaying || selectedTextOverlayId !== tov.id}
                     onSelect={() => { setSelectedTextOverlayId(selectedTextOverlayId === tov.id ? null : tov.id); setSelectedImageClipId(null); setSelectedOverlayId(null); }}
-                    onMove={(x, y) => onEditTextOverlay?.(tov.id, { x, y })} />
+                    onMove={(x, y) => onEditTextOverlay?.(tov.id, { x, y })}
+                    onMoveEnd={onTextOverlayMoveEnd}
+                    visualFilter={colorGradeFilter} />
             ) : null)}
         </div>
     );
@@ -386,15 +425,15 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
     return (
         <div className="video-container" style={{ ...containerStyle, padding: 16, boxSizing: 'border-box' }}>
             <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'stretch', gap: showLeftDockTools ? LEFT_DOCK_PANEL_GAP : 0 }}>
-                <div ref={setLeftDockHostElement} style={{ position: 'relative', flex: showLeftDockTools ? `0 0 ${LEFT_DOCK_PANEL_WIDTH}px` : '0 0 0px', width: showLeftDockTools ? LEFT_DOCK_PANEL_WIDTH : 0, opacity: showLeftDockTools ? 1 : 0, transition: 'all 0.3s ease', pointerEvents: showLeftDockTools ? 'auto' : 'none' }} />
+                <div ref={setLeftDockHostElement} style={{ position: 'relative', flex: showLeftDockTools ? `0 0 ${LEFT_DOCK_PANEL_WIDTH}px` : '0 0 0px', width: showLeftDockTools ? LEFT_DOCK_PANEL_WIDTH : 0, minHeight: 0, overflow: 'hidden', opacity: showLeftDockTools ? 1 : 0, transition: 'all 0.3s ease', pointerEvents: showLeftDockTools ? 'auto' : 'none' }} />
                 
                 <div ref={wrapperRef} className="video-wrapper" style={{
                     position: 'relative', flex: 1, minWidth: 0, minHeight: 0,
                     aspectRatio: selectedPlatformRatio ? `${selectedPlatformRatio}` : undefined,
                     cursor: hideNativePreviewPointer ? 'none' : undefined,
-                    ...resolvedEffectStyleSet.windowStyle,
-                    boxShadow: resolvedEffectStyleSet.boxShadow || undefined,
-                    filter: resolvedEffectStyleSet.filter || undefined,
+                    ...previewEffectStyleSet.windowStyle,
+                    boxShadow: previewEffectStyleSet.boxShadow || undefined,
+                    filter: previewEffectStyleSet.filter || undefined,
                     zIndex: 10,
                 }}>
                     <div style={{ width: '100%', height: '100%', position: 'absolute', inset: 0, zIndex: 2, transform: `scale(${1 - (effectivePadding || 0) / 100})`, transformOrigin: 'center center', transition: 'all 0.5s cubic-bezier(0.16, 1, 0.3, 1)' }}>
@@ -412,6 +451,28 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
                     <EffectBadges effects={activeEffects} />
 
                     <div ref={overlayLayerRef} style={{ position: 'absolute', left: overlayBounds?.left ?? 0, top: overlayBounds?.top ?? 0, width: overlayBounds?.width ?? '100%', height: overlayBounds?.height ?? '100%', pointerEvents: 'none', zIndex: 50 }}>
+                        {!shouldSuppressCursorHighlight && overlayFrameSize && (
+                            <div
+                                style={{
+                                    position: 'absolute',
+                                    inset: 0,
+                                    transform: previewEffectStyleSet.contentStyle.transform || 'none',
+                                    transformOrigin: previewEffectStyleSet.contentStyle.transformOrigin || 'center center',
+                                    willChange: previewEffectStyleSet.contentStyle.willChange || 'transform',
+                                    pointerEvents: 'none',
+                                }}
+                            >
+                                <CursorHighlightOverlay
+                                    cursorData={recordedCursorData}
+                                    displayTime={displayTime}
+                                    cropRect={previewCropData}
+                                    settings={cursorHighlight}
+                                    frameWidth={overlayFrameSize.width}
+                                    frameHeight={overlayFrameSize.height}
+                                    visualFilter={colorGradeFilter}
+                                />
+                            </div>
+                        )}
                         {overlayImages.map(img => (img.renderMode === 'fullscreen' && displayTime >= img.startTime && displayTime < img.startTime + img.duration) ? (
                             <div key={img.id} onClick={e => { e.stopPropagation(); setSelectedOverlayId(img.id); }}
                                 style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#020617', border: selectedOverlayId === img.id ? '2px solid var(--accent)' : 'none', pointerEvents: !isPlaying && selectedOverlayId === img.id ? 'auto' : 'none', zIndex: selectedOverlayId === img.id ? 32 : 24 }}>

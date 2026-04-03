@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' file: blob: data: snipfocus-media:; media-src 'self' file: blob: data: snipfocus-media:; font-src 'self' data:; connect-src 'self';" />
+        content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' file: blob: data: ageofscreen-media:; media-src 'self' file: blob: data: ageofscreen-media:; font-src 'self' data:; connect-src 'self';" />
     <title>Recording Controls</title>
     <style>
         * {
@@ -28,11 +28,11 @@
         .controls {
             display: flex;
             align-items: center;
-            gap: 4px;
-            padding: 3px 6px;
-            background: rgba(18, 18, 23, 0.75);
-            backdrop-filter: blur(24px);
-            border-radius: 12px;
+            gap: 3px;
+            padding: 2px 5px;
+            background: rgba(18, 18, 23, 0.82);
+            backdrop-filter: blur(18px);
+            border-radius: 10px;
             /* Dynamic border */
             border: 1px solid var(--widget-border-color, rgba(255, 255, 255, 0.1));
             box-shadow: inset 0 0 0 1px var(--widget-glow-color, transparent);
@@ -45,8 +45,8 @@
         .timer-section {
             display: flex;
             align-items: center;
-            gap: 6px;
-            padding: 0 6px 0 2px;
+            gap: 5px;
+            padding: 0 5px 0 1px;
             border-right: 1px solid rgba(255, 255, 255, 0.08);
         }
 
@@ -78,7 +78,7 @@
         }
 
         .timer {
-            font-size: 10px;
+            font-size: 9px;
             font-weight: 400;
             color: rgba(255, 255, 255, 0.85);
             font-variant-numeric: tabular-nums;
@@ -86,9 +86,9 @@
         }
 
         .btn {
-            width: 26px;
-            height: 26px;
-            border-radius: 6px;
+            width: 24px;
+            height: 24px;
+            border-radius: 5px;
             border: none;
             display: flex;
             align-items: center;
@@ -111,8 +111,8 @@
         }
 
         .btn svg {
-            width: 14px;
-            height: 14px;
+            width: 13px;
+            height: 13px;
             stroke-width: 1.5;
         }
 

@@ -1,4 +1,4 @@
-# SnipFocus Microsoft Store Listing Draft
+# ageofscreen Microsoft Store Listing Draft
 
 ## Short description
 
@@ -6,7 +6,7 @@ Capture your screen, trim the result, style it, and export polished demo videos 
 
 ## Full description
 
-SnipFocus is a local-first Windows screen recording and editing app built for fast demo creation. Capture fullscreen or window recordings, trim the clip, add clean styling, and export without moving your media to the cloud.
+ageofscreen is a local-first Windows screen recording and editing app built for fast demo creation. Capture fullscreen or window recordings, trim the clip, add clean styling, and export without moving your media to the cloud.
 
 Core flow:
 

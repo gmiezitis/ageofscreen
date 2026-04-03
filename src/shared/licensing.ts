@@ -1,26 +1,6 @@
 import type { PlanTier } from "../config/plan";
 
-export type CaptureShortcutPreference = "trigger_line" | "print_screen";
-
-export type PrintScreenRegistrationStatus =
-    | "unknown"
-    | "registered"
-    | "blocked"
-    | "disabled"
-    | "unsupported";
-
-export type EntitlementProviderName =
-    | "manual"
-    | "dev_override"
-    | "store_stub"
-    | "store_native";
-
-export type UpgradeSource =
-    | "generic"
-    | "recording_limit"
-    | "auto_polish"
-    | "studio_voice"
-    | "export_watermark";
+export type CaptureShortcutPreference = "trigger_line";
 
 export interface EntitlementState {
     tier: PlanTier;
@@ -29,8 +9,22 @@ export interface EntitlementState {
     canUseAutoPolish: boolean;
     canUseStudioVoice: boolean;
     purchaseAvailable: boolean;
-    provider: EntitlementProviderName;
+    provider: "manual" | "dev_override" | "store_stub" | "store_native";
     lastSyncAt: string | null;
+}
+
+export type UpgradeSource =
+    | "generic"
+    | "recording_limit"
+    | "auto_polish"
+    | "studio_voice"
+    | "export_watermark";
+
+export interface PurchaseProResult {
+    success: boolean;
+    state: EntitlementState;
+    message: string;
+    source: UpgradeSource;
 }
 
 export interface EntitlementProvider {
@@ -41,18 +35,9 @@ export interface EntitlementProvider {
     restoreIfNeeded(): Promise<EntitlementState>;
 }
 
-export interface PurchaseProResult {
-    success: boolean;
-    state: EntitlementState;
-    message: string;
-    source: UpgradeSource;
-}
-
 export interface OnboardingState {
     hasCompletedOnboarding: boolean;
     preferredCaptureShortcut: CaptureShortcutPreference;
-    printScreenOptIn: boolean;
-    printScreenRegistrationStatus: PrintScreenRegistrationStatus;
-    printScreenSupported: boolean;
-    fallbackInstructions: string[];
 }
+
+

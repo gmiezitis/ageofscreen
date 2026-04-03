@@ -1,7 +1,7 @@
-# SnipFocus Pivot Plan (Local AI Demo Video Maker)
+# ageofscreen Pivot Plan (Local AI Demo Video Maker)
 
 ## Vision
-SnipFocus becomes the fastest way to create polished AI demo clips locally:
+ageofscreen becomes the fastest way to create polished AI demo clips locally:
 `Record -> Trim -> Style -> Export`.
 
 ## Core Problem To Solve
@@ -59,7 +59,7 @@ Users need to quickly turn raw AI tool walkthroughs into presentation-ready vide
 
 ## Watermark Implementation Notes
 - Placement: bottom-right, low opacity, safe margins.
-- Text: "Made with SnipFocus" (short and tasteful).
+- Text: "Made with ageofscreen" (short and tasteful).
 - Applied at export stage only.
 - Ensure resolution-aware scaling for all export formats.
 

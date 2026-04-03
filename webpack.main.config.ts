@@ -23,7 +23,7 @@ export const mainConfig: Configuration = {
     plugins: [
         ...plugins,
         new webpack.DefinePlugin({
-            "process.env.SNIPFOCUS_RELEASE_PROFILE": JSON.stringify(process.env.SNIPFOCUS_RELEASE_PROFILE ?? "dev"),
+            "process.env.AGEOFSCREEN_RELEASE_PROFILE": JSON.stringify(process.env.AGEOFSCREEN_RELEASE_PROFILE ?? "dev"),
         }),
     ],
     resolve: {

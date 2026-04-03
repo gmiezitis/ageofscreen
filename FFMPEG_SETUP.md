@@ -1,4 +1,4 @@
-# FFmpeg Setup for SnipFocus
+# FFmpeg Setup for ageofscreen
 
 ## For Windows ARM64 Users
 
@@ -13,11 +13,11 @@ Since you're on Windows ARM64, you need to manually download FFmpeg:
    - `C:\ffmpeg\bin\ffmpeg.exe` (recommended)
    - Or add the folder containing `ffmpeg.exe` to your system PATH
 
-3. **Restart SnipFocus** - it will automatically detect FFmpeg
+3. **Restart ageofscreen** - it will automatically detect FFmpeg
 
 ### Verification
 
-After installing FFmpeg, you should see this message in the console when starting SnipFocus:
+After installing FFmpeg, you should see this message in the console when starting ageofscreen:
 ```
 [VideoRenderer] FFmpeg available at: C:\ffmpeg\bin\ffmpeg.exe
 ```

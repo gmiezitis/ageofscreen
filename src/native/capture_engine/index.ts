@@ -47,7 +47,7 @@ const loadNativeCaptureEngine = (): NativeCaptureEngine | null => {
             loadedAddon = runtimeRequire(candidate) as NativeCaptureEngine;
             return loadedAddon;
         } catch (error) {
-            console.warn("[SnipFocus] Failed to load native capture engine candidate:", candidate, error);
+            console.warn("[ageofscreen] Failed to load native capture engine candidate:", candidate, error);
         }
     }
 

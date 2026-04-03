@@ -7,10 +7,19 @@ interface Simple3DHeadProps {
 
 export const Simple3DHead: React.FC<Simple3DHeadProps> = ({ size }) => {
     const mountRef = useRef<HTMLDivElement>(null);
+    const headCenterRef = useRef({ x: 0, y: 0 });
 
     useEffect(() => {
         const currentMount = mountRef.current;
         if (!currentMount) return;
+
+        const updateHeadCenter = () => {
+            const rect = currentMount.getBoundingClientRect();
+            headCenterRef.current = {
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+            };
+        };
 
         // Scene setup
         const scene = new THREE.Scene();
@@ -20,17 +29,18 @@ export const Simple3DHead: React.FC<Simple3DHeadProps> = ({ size }) => {
         camera.position.z = 4;
 
         // Renderer setup (transparent background, high quality)
-        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance' });
         renderer.setSize(size, size);
-        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
         currentMount.appendChild(renderer.domElement);
+        updateHeadCenter();
 
         // Group to hold the head elements for synchronized rotation
         const headGroup = new THREE.Group();
         scene.add(headGroup);
 
         // 1. Base Head (Modern Liquid Glass Style)
-        const headGeometry = new THREE.SphereGeometry(1.2, 64, 64);
+        const headGeometry = new THREE.SphereGeometry(1.2, 28, 28);
         const headMaterial = new THREE.MeshPhysicalMaterial({
             color: 0xffffff,          // Pristine white base
             emissive: 0x08101a,       // Very deep subtle slate internal shadow for depth
@@ -47,7 +57,7 @@ export const Simple3DHead: React.FC<Simple3DHeadProps> = ({ size }) => {
         headGroup.add(headMesh);
 
         // 2. Visor (Dark, sleek visor like Eve from Wall-E)
-        const visorGeometry = new THREE.CapsuleGeometry(0.3, 0.6, 16, 32);
+        const visorGeometry = new THREE.CapsuleGeometry(0.3, 0.6, 8, 18);
         visorGeometry.rotateZ(Math.PI / 2);
         const visorMaterial = new THREE.MeshPhysicalMaterial({
             color: 0x000000,
@@ -61,7 +71,7 @@ export const Simple3DHead: React.FC<Simple3DHeadProps> = ({ size }) => {
         headGroup.add(visorMesh);
 
         // 3. Glowing LED Eye
-        const glowGeometry = new THREE.SphereGeometry(0.12, 16, 16);
+        const glowGeometry = new THREE.SphereGeometry(0.12, 12, 12);
         const glowMaterial = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
         const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
         glowMesh.position.set(0.15, 0.1, 1.32); // Slightly offset to the side for character
@@ -93,12 +103,7 @@ export const Simple3DHead: React.FC<Simple3DHeadProps> = ({ size }) => {
 
         // Mouse tracking logic focused strictly on menu interaction
         const handleMouseMove = (event: MouseEvent) => {
-            if (!currentMount) return;
-            
-            const rect = currentMount.getBoundingClientRect();
-            // Get mathematically true center of our 3D head's container
-            const headX = rect.left + rect.width / 2;
-            const headY = rect.top + rect.height / 2;
+            const { x: headX, y: headY } = headCenterRef.current;
             
             const dx = event.clientX - headX;
             const dy = event.clientY - headY;
@@ -122,7 +127,13 @@ export const Simple3DHead: React.FC<Simple3DHeadProps> = ({ size }) => {
             targetX = Math.max(-1, Math.min(1, rawX));
             targetY = Math.max(-1, Math.min(1, -rawY)); // Invert Y for 3D coordinate mapping
         };
-        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mousemove', handleMouseMove, { passive: true });
+        window.addEventListener('resize', updateHeadCenter);
+
+        const resizeObserver = typeof ResizeObserver !== 'undefined'
+            ? new ResizeObserver(() => updateHeadCenter())
+            : null;
+        resizeObserver?.observe(currentMount);
 
         const animate = () => {
             animationFrameId = requestAnimationFrame(animate);
@@ -147,6 +158,8 @@ export const Simple3DHead: React.FC<Simple3DHeadProps> = ({ size }) => {
 
         return () => {
             window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('resize', updateHeadCenter);
+            resizeObserver?.disconnect();
             cancelAnimationFrame(animationFrameId);
             if (currentMount && renderer.domElement) {
                 currentMount.removeChild(renderer.domElement);

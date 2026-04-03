@@ -1,4 +1,4 @@
-# SnipFocus Store Release Runbook
+# ageofscreen Store Release Runbook
 
 ## Toolchain
 
@@ -18,6 +18,15 @@
 - `resources/ffmpeg/win32-arm64/{ffmpeg.exe,ffprobe.exe}`
 
 If the certificate variables are omitted for a local private-flight dry run, `npm run make:store-win-x64` and `npm run make:store-win-arm64` now generate a temporary development `.pfx` automatically. Release-candidate artifacts should still use the Partner Center identity/publisher values and your real signing material.
+
+## Default Store upload artifact
+
+- This repo uses Electron Forge `MakerMSIX` as the Store packaging owner.
+- The default upload candidates are:
+  - `out/make/msix/x64/ageofscreen.msix`
+  - `out/make/msix/arm64/ageofscreen.msix`
+- Do not create a Visual Studio Publish project by default just because Partner Center shows generic app-package guidance.
+- Only add a `.msixupload` or Visual Studio conversion path if Partner Center explicitly rejects the Forge-generated `MSIX`.
 
 ## Automated gate
 

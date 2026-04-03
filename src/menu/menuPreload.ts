@@ -8,15 +8,23 @@ import type {
     PurchaseProResult,
     UpgradeSource,
 } from "../shared/licensing";
+import type { MenuOpenedPayload } from "./menuLifecycle";
+
+let pendingMenuOpenedPayload: MenuOpenedPayload | null = null;
+
+ipcRenderer.on("menu-opened", (_event: IpcRendererEvent, payload: MenuOpenedPayload) => {
+    pendingMenuOpenedPayload = payload;
+});
 
 export interface IMenuElectronAPI {
     hideMenu: () => void;
+    consumeMenuOpened: () => MenuOpenedPayload | null;
     triggerSnip: () => void;
     triggerFullscreen: () => void;
     triggerWindow: () => void;
     triggerFocus: () => void;
     triggerRecord: () => void;
-    toggleCamera: (shape?: string, size?: number, name?: string, borderColor?: string) => void;
+    toggleCamera: (shape?: string, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean) => void;
     showTeleprompter: (text: string, speed: number) => void;
     timerWidget: {
         show: (payload: TimerWidgetPayload) => void;
@@ -40,9 +48,9 @@ export interface IMenuElectronAPI {
     openMediaFile: (type: 'video' | 'image' | 'audio') => Promise<{ filePath: string, fileName: string } | null>;
     exportMedia: (filePath: string, mediaType: string, trimData: any) => Promise<any>;
 
+    onMenuOpened: (callback: (payload: MenuOpenedPayload) => void) => () => void;
     onStartRecordingRequested: (callback: (config?: AgentRecordingRequest) => void) => () => void;
     onStopRecordingRequested: (callback: () => void) => () => void;
-    onMouseMoved: (callback: (point: { screenX: number; screenY: number; localX: number; localY: number }) => void) => () => void;
     onWidgetStopRecording: (callback: () => void) => () => void;
     sendRecordingStatus: (status: boolean) => void;
     sendRecordingProgress: (progress: number) => void;
@@ -67,7 +75,6 @@ export interface IMenuElectronAPI {
     settings: {
         getOnboardingState: () => Promise<OnboardingState>;
         completeOnboarding: () => Promise<OnboardingState>;
-        setCaptureShortcut: (preference: CaptureShortcutPreference) => Promise<OnboardingState>;
         onChanged: (callback: (state: OnboardingState) => void) => () => void;
     };
     agent: {
@@ -77,12 +84,17 @@ export interface IMenuElectronAPI {
 
 const menuAPI: IMenuElectronAPI = {
     hideMenu: () => ipcRenderer.send("menu-hide"),
+    consumeMenuOpened: () => {
+        const payload = pendingMenuOpenedPayload;
+        pendingMenuOpenedPayload = null;
+        return payload;
+    },
     triggerSnip: () => ipcRenderer.send("menu-snip"),
     triggerFullscreen: () => ipcRenderer.send("menu-fullscreen"),
     triggerWindow: () => ipcRenderer.send("menu-window"),
     triggerFocus: () => ipcRenderer.send("menu-focus"),
     triggerRecord: () => ipcRenderer.send("menu-record"),
-    toggleCamera: (shape?: string, size?: number, name?: string, borderColor?: string) => ipcRenderer.send("menu-camera", shape, size, name, borderColor),
+    toggleCamera: (shape?: string, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean) => ipcRenderer.send("menu-camera", shape, size, name, borderColor, borderWidth, glowEnabled),
     showTeleprompter: (text: string, speed: number) => ipcRenderer.send("show-teleprompter", text, speed),
     timerWidget: {
         show: (payload: TimerWidgetPayload) => ipcRenderer.send("timer-widget-show", payload),
@@ -113,6 +125,14 @@ const menuAPI: IMenuElectronAPI = {
     openMediaFile: (type: 'video' | 'image' | 'audio') => ipcRenderer.invoke("open-media-file", type),
     exportMedia: (filePath: string, mediaType: string, trimData: any) => ipcRenderer.invoke("export-media", filePath, mediaType, trimData),
 
+    onMenuOpened: (callback: (payload: MenuOpenedPayload) => void) => {
+        const listener = (_event: IpcRendererEvent, payload: MenuOpenedPayload) => {
+            pendingMenuOpenedPayload = null;
+            callback(payload);
+        };
+        ipcRenderer.on("menu-opened", listener);
+        return () => ipcRenderer.removeListener("menu-opened", listener);
+    },
     onStartRecordingRequested: (callback: (config?: AgentRecordingRequest) => void) => {
         const listener = (_event: IpcRendererEvent, config?: AgentRecordingRequest) => callback(config);
         ipcRenderer.on("start-recording-requested", listener);
@@ -122,11 +142,6 @@ const menuAPI: IMenuElectronAPI = {
         const listener = () => callback();
         ipcRenderer.on("stop-recording-requested", listener);
         return () => ipcRenderer.removeListener("stop-recording-requested", listener);
-    },
-    onMouseMoved: (callback: (point: { screenX: number; screenY: number; localX: number; localY: number }) => void) => {
-        const listener = (_event: IpcRendererEvent, point: { screenX: number; screenY: number; localX: number; localY: number }) => callback(point);
-        ipcRenderer.on("mouse-moved", listener);
-        return () => ipcRenderer.removeListener("mouse-moved", listener);
     },
     onWidgetStopRecording: (callback: () => void) => {
         const listener = () => callback();
@@ -187,7 +202,6 @@ const menuAPI: IMenuElectronAPI = {
     settings: {
         getOnboardingState: () => ipcRenderer.invoke("settings:get-onboarding-state"),
         completeOnboarding: () => ipcRenderer.invoke("settings:complete-onboarding"),
-        setCaptureShortcut: (preference: CaptureShortcutPreference) => ipcRenderer.invoke("settings:set-capture-shortcut", preference),
         onChanged: (callback: (state: OnboardingState) => void) => {
             const listener = (_event: IpcRendererEvent, state: OnboardingState) => callback(state);
             ipcRenderer.on("settings:onboarding-state-changed", listener);
@@ -202,4 +216,4 @@ const menuAPI: IMenuElectronAPI = {
 contextBridge.exposeInMainWorld("menuAPI", menuAPI);
 contextBridge.exposeInMainWorld("electronAPI", menuAPI);
 
-console.log("SnipFocus Menu Preload Script Loaded");
+console.log("ageofscreen Menu Preload Script Loaded");

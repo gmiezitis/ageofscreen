@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { WebcamBorder } from './WebcamBorder';
+import { CameraShape, getCameraShapeStyle, normalizeCameraShape } from '../shared/cameraShapes';
 
 /**
  * Main Webcam Window component.
@@ -19,16 +20,16 @@ declare global {
     }
 }
 
-type CameraShape = 'circle' | 'rounded' | 'pill' | 'square';
-
 const getParamsFromURL = () => {
     const params = new URLSearchParams(window.location.search);
     return {
-        shape: (params.get('shape') as CameraShape) || 'circle',
+        shape: normalizeCameraShape(params.get('shape')),
         size: parseInt(params.get('size') || '120', 10),
         name: params.get('name') || '',
         borderColor: params.get('borderColor') || '#22c55e',
         micEnabled: params.get('micEnabled') === 'true',
+        borderWidth: parseInt(params.get('borderWidth') || '4', 10),
+        glowEnabled: params.get('glowEnabled') === 'true',
     };
 };
 
@@ -37,14 +38,16 @@ const WebcamWindow: React.FC = () => {
     const [shape, setShape] = useState<CameraShape>(params.shape);
     const [presenterName, setPresenterName] = useState(params.name);
     const [borderColor, setBorderColor] = useState(params.borderColor);
+    const [borderWidth, setBorderWidth] = useState(params.borderWidth);
+    const [glowEnabled, setGlowEnabled] = useState(params.glowEnabled);
     const [micEnabled, setMicEnabled] = useState(params.micEnabled);
     const videoRef = useRef<HTMLVideoElement>(null);
 
     const [isRecording, setIsRecording] = useState(false);
     const [recordingProgress, setRecordingProgress] = useState(0);
-    const [isResizing, setIsResizing] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
     const [hasStream, setHasStream] = useState(false);
+    const [isWindowVisible, setIsWindowVisible] = useState(!document.hidden);
     const [volume, setVolume] = useState(0);
     const webcamStreamRef = useRef<MediaStream | null>(null);
     const streamRequestIdRef = useRef(0);
@@ -58,6 +61,7 @@ const WebcamWindow: React.FC = () => {
         stopStreamTracks(webcamStreamRef.current);
         webcamStreamRef.current = null;
         setHasStream(false);
+        setVolume(0);
 
         const video = videoRef.current;
         if (!video) return;
@@ -67,8 +71,24 @@ const WebcamWindow: React.FC = () => {
         video.onloadeddata = null;
     }, [stopStreamTracks]);
 
+    useEffect(() => {
+        const syncVisibility = () => {
+            setIsWindowVisible(!document.hidden);
+        };
+
+        document.addEventListener('visibilitychange', syncVisibility);
+        return () => {
+            document.removeEventListener('visibilitychange', syncVisibility);
+        };
+    }, []);
+
     // Initialize webcam stream with retry — camera may still be releasing from preview.
     useEffect(() => {
+        if (!isWindowVisible) {
+            stopWebcamStream();
+            return;
+        }
+
         let stream: MediaStream | null = null;
         let cancelled = false;
         const requestId = ++streamRequestIdRef.current;
@@ -120,12 +140,12 @@ const WebcamWindow: React.FC = () => {
             }
             stopStreamTracks(stream);
         };
-    }, [micEnabled, stopStreamTracks, stopWebcamStream]);
+    }, [isWindowVisible, micEnabled, stopStreamTracks, stopWebcamStream]);
 
     // Audio Analysis for Smart Border
     useEffect(() => {
         const video = videoRef.current;
-        if (!video || !hasStream) return;
+        if (!video || !hasStream || !isWindowVisible) return;
 
         let audioContext: AudioContext | null = null;
         let analyser: AnalyserNode | null = null;
@@ -182,7 +202,7 @@ const WebcamWindow: React.FC = () => {
             if (animFrame) cancelAnimationFrame(animFrame);
             if (audioContext) audioContext.close();
         };
-    }, [hasStream]);
+    }, [hasStream, isWindowVisible]);
 
     // IPC listeners
     useEffect(() => {
@@ -191,10 +211,13 @@ const WebcamWindow: React.FC = () => {
         const cleanups = [
             api.on('recording-status', (r: boolean) => { setIsRecording(r); if (!r) setRecordingProgress(0); }),
             api.on('recording-progress', (p: number) => setRecordingProgress(p)),
-            api.on('update-shape', (s: CameraShape) => setShape(s)),
+            api.on('update-shape', (s: CameraShape) => setShape(normalizeCameraShape(s))),
             api.on('update-border-color', (c: string) => setBorderColor(c)),
+            api.on('update-border-width', (w: number) => setBorderWidth(w)),
+            api.on('update-glow-enabled', (g: boolean) => setGlowEnabled(g)),
             api.on('update-presenter-name', (n: string) => setPresenterName(n)),
             api.on('update-mic-status', (m: boolean) => setMicEnabled(m)),
+            api.on('window-visibility', (visible: boolean) => setIsWindowVisible(visible)),
             api.on('drawing-status', (isDrawing: boolean) => setIsDrawingMode(isDrawing)),
             api.on('stop-stream', () => stopWebcamStream()),
         ];
@@ -212,7 +235,6 @@ const WebcamWindow: React.FC = () => {
 
     const handleResizeEnd = useCallback(() => {
         resizingRef.current = false;
-        setIsResizing(false);
         window.removeEventListener('mousemove', handleResize);
         window.removeEventListener('mouseup', handleResizeEnd);
     }, [handleResize]);
@@ -221,17 +243,12 @@ const WebcamWindow: React.FC = () => {
         e.preventDefault();
         e.stopPropagation();
         resizingRef.current = true;
-        setIsResizing(true);
         window.webcamAPI?.resizeStart(e.screenX, e.screenY);
         window.addEventListener('mousemove', handleResize);
         window.addEventListener('mouseup', handleResizeEnd);
     }, [handleResize, handleResizeEnd]);
 
-    // Unified radii to match Preview Widget exactly
-    const borderRadius = shape === 'circle' ? '50%'
-        : shape === 'pill' ? '9999px'
-            : shape === 'rounded' ? '24px'
-                : '12px';
+    const cameraShapeStyle = getCameraShapeStyle(shape);
 
     return (
         <div
@@ -255,7 +272,6 @@ const WebcamWindow: React.FC = () => {
                     left: 0,
                     width: '100%',
                     height: '100%',
-                    borderRadius: borderRadius,
                     background: '#000',
                     boxSizing: 'border-box',
                     WebkitAppRegion: 'drag',
@@ -263,6 +279,7 @@ const WebcamWindow: React.FC = () => {
                     overflow: 'hidden',
                     WebkitMaskImage: '-webkit-radial-gradient(white, black)',
                     transition: 'border-radius 0.4s ease',
+                    ...cameraShapeStyle,
                 } as any}
             >
                 <video
@@ -315,7 +332,11 @@ const WebcamWindow: React.FC = () => {
                     </div>
                 )}
 
-                <WebcamBorder isRecording={isRecording} progress={recordingProgress} volume={volume} shape={shape} borderColor={borderColor} micEnabled={micEnabled} />
+                <WebcamBorder
+                    isRecording={isRecording} progress={recordingProgress} volume={volume}
+                    shape={shape} borderColor={borderColor} borderWidth={borderWidth}
+                    glowEnabled={glowEnabled} micEnabled={micEnabled}
+                />
 
                 {/* Bottom Center - Controls Trigger Area (Option Widget Invoker) */}
                 <div

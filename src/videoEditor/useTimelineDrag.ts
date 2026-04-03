@@ -19,7 +19,7 @@ export function useTimelineDrag(
     saveHistory: (stateOverride?: any) => void,
     getTimelineDuration: () => number,
     showNotification: (type: string, title: string, message: string) => void,
-    loadLibraryItem: (id: string) => void,
+    loadLibraryItem: (id: string) => boolean,
 ) {
     const {
         segments, setSegments,
@@ -233,9 +233,11 @@ export function useTimelineDrag(
 
         if (libraryAsset.type === 'video') {
             clearSelection();
-            loadLibraryItem(libraryAsset.id);
-            showNotification('success', 'Timeline', `Loaded video: ${libraryAsset.name}`);
-            return true;
+            const didLoad = loadLibraryItem(libraryAsset.id);
+            if (didLoad) {
+                showNotification('success', 'Timeline', `Loaded video: ${libraryAsset.name}`);
+            }
+            return didLoad;
         }
 
         return false;

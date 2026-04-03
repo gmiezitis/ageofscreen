@@ -2,9 +2,9 @@ import os from "os";
 
 export const WINDOWS_MIN_OS_VERSION = "10.0.19041.0";
 export const WINDOWS_MAX_TESTED_VERSION = "10.0.26100.0";
-export const WINDOWS_STORE_IDENTITY_DEFAULT = "SnipFocus.Desktop";
-export const WINDOWS_PUBLISHER_DEFAULT = "CN=SnipFocus Dev";
-export const WINDOWS_PUBLISHER_DISPLAY_NAME = "SnipFocus";
+export const WINDOWS_STORE_IDENTITY_DEFAULT = "ageofscreen.Desktop";
+export const WINDOWS_PUBLISHER_DEFAULT = "CN=ageofscreen Dev";
+export const WINDOWS_PUBLISHER_DISPLAY_NAME = "ageofscreen";
 
 export type WindowsDistributionChannel = "direct-download" | "microsoft-store";
 

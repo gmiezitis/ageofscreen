@@ -1,15 +1,24 @@
 .overlay {
+    --recording-surface: rgba(9, 14, 24, 0.94);
+    --recording-surface-soft: rgba(15, 21, 34, 0.74);
+    --recording-border: rgba(255, 255, 255, 0.08);
+    --recording-border-strong: rgba(191, 219, 254, 0.16);
+    --recording-text: #f8fafc;
+    --recording-muted: #94a3b8;
+    --recording-ease: cubic-bezier(0.22, 1, 0.36, 1);
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background: transparent;
+    background:
+        radial-gradient(circle at top, rgba(147, 197, 253, 0.08), transparent 42%),
+        transparent;
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 10000;
-    animation: fadeIn 0.2s ease;
+    animation: fadeIn 240ms var(--recording-ease);
 }
 
 @keyframes fadeIn {
@@ -23,18 +32,21 @@
 }
 
 .modal {
-    background: rgba(15, 17, 21, 0.92);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 18%),
+        linear-gradient(135deg, rgba(16, 22, 34, 0.96), rgba(8, 12, 22, 0.98));
     backdrop-filter: blur(24px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 20px;
-    width: 290px;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    border: 1px solid var(--recording-border);
+    border-radius: 18px;
+    width: 284px;
+    font-family: "Segoe UI Variable", "Inter", system-ui, -apple-system, sans-serif;
     display: flex;
     flex-direction: column;
-    animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: slideUp 380ms var(--recording-ease);
     box-shadow:
-        0 30px 60px -12px rgba(0, 0, 0, 0.6),
-        0 0 0 1px rgba(255, 255, 255, 0.03);
+        0 30px 60px -12px rgba(2, 6, 23, 0.66),
+        0 0 0 1px rgba(255, 255, 255, 0.03),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 @keyframes slideUp {
@@ -65,24 +77,33 @@
 }
 
 .closeBtn {
-    width: 24px;
-    height: 24px;
-    border: none;
+    width: 22px;
+    height: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.05);
-    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--recording-muted);
     font-size: 14px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition:
+        transform 160ms var(--recording-ease),
+        background 160ms var(--recording-ease),
+        color 160ms var(--recording-ease),
+        border-color 160ms var(--recording-ease);
 }
 
 .closeBtn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #f8fafc;
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: var(--recording-text);
     transform: rotate(90deg);
+}
+
+.closeBtn:active {
+    transform: rotate(90deg) scale(0.94);
 }
 
 .content {
@@ -97,12 +118,15 @@
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
-    background: rgba(59, 130, 246, 0.12);
-    border: 1px solid rgba(59, 130, 246, 0.25);
-    border-radius: 10px;
-    font-size: 12px;
-    color: #93c5fd;
+    background:
+        linear-gradient(180deg, rgba(96, 165, 250, 0.16), rgba(59, 130, 246, 0.1));
+    border: 1px solid rgba(96, 165, 250, 0.22);
+    border-radius: 12px;
+    font-size: 11px;
+    line-height: 1.55;
+    color: #bfdbfe;
     flex-shrink: 0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .onboardingTip span {
@@ -113,40 +137,60 @@
     flex-shrink: 0;
     width: 20px;
     height: 20px;
-    border: none;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.08);
-    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--recording-muted);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition:
+        transform 160ms var(--recording-ease),
+        background 160ms var(--recording-ease),
+        color 160ms var(--recording-ease),
+        border-color 160ms var(--recording-ease);
 }
 
 .onboardingTip .tipDismiss:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: #f8fafc;
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: var(--recording-text);
+}
+
+.onboardingTip .tipDismiss:active {
+    transform: scale(0.94);
 }
 
 .cameraPreview {
     width: 100%;
-    height: 120px;
-    background: #0f1115;
+    height: 108px;
+    background:
+        radial-gradient(circle at top, rgba(125, 211, 252, 0.08), transparent 40%),
+        linear-gradient(180deg, rgba(10, 15, 24, 0.96), rgba(7, 10, 18, 0.98));
     border-radius: 12px;
     overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.06);
     position: relative;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .previewShape {
     overflow: hidden;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: rgba(6, 10, 18, 0.85);
+    transition:
+        width 260ms var(--recording-ease),
+        height 260ms var(--recording-ease),
+        transform 260ms var(--recording-ease),
+        border-color 220ms var(--recording-ease),
+        box-shadow 220ms var(--recording-ease);
     border: 2px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    box-shadow:
+        0 12px 28px rgba(2, 6, 23, 0.36),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
     pointer-events: auto;
 }
 
@@ -194,7 +238,45 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    color: #475569;
+    color: rgba(148, 163, 184, 0.72);
+}
+
+.previewLoading {
+    width: 124px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.previewSkeletonShape,
+.previewSkeletonLine {
+    position: relative;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.previewSkeletonShape::after,
+.previewSkeletonLine::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.18), transparent);
+    animation: shimmer 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.previewSkeletonShape {
+    width: 88px;
+    height: 88px;
+    border-radius: 26px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.previewSkeletonLine {
+    width: 70px;
+    height: 10px;
+    border-radius: 999px;
 }
 
 .gridToggles {
@@ -202,11 +284,12 @@
     justify-content: space-between;
     align-items: center;
     gap: 0;
-    margin: 8px 0 6px;
-    background: rgba(255, 255, 255, 0.015);
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    margin: 6px 0 4px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 12px;
-    padding: 4px;
+    padding: 5px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
 .toggleCard {
@@ -214,9 +297,12 @@
     border: none;
     border-radius: 8px;
     flex: 1;
-    height: 36px;
+    height: 34px;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition:
+        transform 180ms var(--recording-ease),
+        background 180ms var(--recording-ease),
+        box-shadow 180ms var(--recording-ease);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -237,23 +323,28 @@
 }
 
 .toggleCard:hover {
-    background: rgba(255, 255, 255, 0.025);
+    background: rgba(255, 255, 255, 0.03);
 }
 
 .toggleCard.active {
-    background: rgba(255, 255, 255, 0.05);
+    background:
+        linear-gradient(180deg, rgba(191, 219, 254, 0.08), rgba(255, 255, 255, 0.04));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .toggleIcon {
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     border-radius: 8px;
     background: transparent;
     display: flex;
     align-items: center;
     justify-content: center;
     color: #64748b; /* Sleeker inactive color */
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition:
+        transform 180ms var(--recording-ease),
+        color 180ms var(--recording-ease),
+        filter 180ms var(--recording-ease);
     position: relative;
     z-index: 2;
 }
@@ -268,8 +359,8 @@
 }
 
 .toggleCard.active .toggleIcon {
-    color: #ffffff;
-    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.45));
+    color: #eff6ff;
+    filter: drop-shadow(0 0 10px rgba(147, 197, 253, 0.32));
 }
 
 .toggleInfo {
@@ -319,22 +410,22 @@
 }
 
 .section {
-    animation: fadeIn 0.3s ease;
+    animation: fadeIn 220ms var(--recording-ease);
 }
 
 /* Sub-settings boxes for active features */
 .subSettingsBox {
     background: transparent;
-    padding: 8px 0 0 0;
+    padding: 6px 0 0 0;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     animation: slideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .subSettingsRow {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
 }
 
@@ -389,25 +480,30 @@
 }
 
 .optionRow {
-    display: flex;
-    gap: 0;
-    background: rgba(255, 255, 255, 0.015);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 10px;
-    padding: 3px;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 4px;
     flex: 1;
 }
 
 .optionBtn {
-    flex: 1;
-    height: 30px;
+    min-width: 0;
+    height: 28px;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     background: transparent;
     color: #64748b;
     font-size: 14px;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition:
+        transform 180ms var(--recording-ease),
+        background 180ms var(--recording-ease),
+        color 180ms var(--recording-ease),
+        filter 180ms var(--recording-ease);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -415,15 +511,7 @@
 }
 
 .optionBtn:not(:last-child)::after {
-    content: '';
-    position: absolute;
-    right: -1px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 1px;
-    height: 12px;
-    background: rgba(255, 255, 255, 0.08);
-    pointer-events: none;
+    display: none;
 }
 
 .optionBtn:hover {
@@ -432,17 +520,18 @@
 }
 
 .optionBtn.active {
-    background: rgba(255, 255, 255, 0.06);
-    color: #ffffff;
-    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.4));
+    background:
+        linear-gradient(180deg, rgba(191, 219, 254, 0.08), rgba(255, 255, 255, 0.04));
+    color: #eff6ff;
+    filter: drop-shadow(0 0 8px rgba(147, 197, 253, 0.28));
 }
 
 .sliderRow {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 0 4px;
-    height: 20px;
+    gap: 8px;
+    padding: 0 2px;
+    min-height: 20px;
 }
 
 .sliderLabel {
@@ -456,7 +545,7 @@
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: rgba(255, 255, 255, 0.1);
+    background: linear-gradient(90deg, rgba(148, 163, 184, 0.28), rgba(148, 163, 184, 0.12));
     border-radius: 2px;
     outline: none;
     cursor: pointer;
@@ -470,8 +559,11 @@
     background: rgba(226, 232, 240, 0.9);
     border-radius: 50%;
     cursor: pointer;
-    transition: all 0.15s ease;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+    transition:
+        transform 160ms var(--recording-ease),
+        background 160ms var(--recording-ease),
+        box-shadow 160ms var(--recording-ease);
+    box-shadow: 0 6px 14px rgba(2, 6, 23, 0.32);
 }
 
 .sizeSlider::-webkit-slider-thumb:hover {
@@ -486,8 +578,11 @@
     border-radius: 50%;
     border: none;
     cursor: pointer;
-    transition: all 0.15s ease;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+    transition:
+        transform 160ms var(--recording-ease),
+        background 160ms var(--recording-ease),
+        box-shadow 160ms var(--recording-ease);
+    box-shadow: 0 6px 14px rgba(2, 6, 23, 0.32);
 }
 
 .sizeValue {
@@ -499,46 +594,63 @@
 }
 
 .footer {
-    padding: 0 14px 12px;
+    padding: 0 14px 14px;
 }
 
 .startBtn {
     width: 100%;
-    height: 40px;
-    border: none;
-    border-radius: 10px;
-    background: #f8fafc;
-    color: #0f1115;
+    height: 38px;
+    border: 1px solid rgba(255, 255, 255, 0.34);
+    border-radius: 11px;
+    background:
+        linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.94));
+    color: #0b1220;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition:
+        transform 180ms var(--recording-ease),
+        background 180ms var(--recording-ease),
+        box-shadow 220ms var(--recording-ease),
+        border-color 180ms var(--recording-ease);
     letter-spacing: 0.01em;
+    box-shadow:
+        0 16px 34px rgba(148, 163, 184, 0.14),
+        inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .startBtn:hover {
-    background: rgba(241, 245, 249, 0.98);
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    transform: translateY(-1px);
+    background:
+        linear-gradient(180deg, #ffffff, rgba(241, 245, 249, 0.96));
+    box-shadow:
+        0 18px 34px rgba(148, 163, 184, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.84);
 }
 
 .startBtn:active {
-    transform: scale(0.98);
-    background: rgba(203, 213, 225, 0.95);
+    transform: translateY(0) scale(0.985);
+    background:
+        linear-gradient(180deg, rgba(226, 232, 240, 0.96), rgba(203, 213, 225, 0.95));
 }
 
 .startBtn.counting {
-    background: rgba(148, 163, 184, 0.9);
-    color: #1e293b;
+    border-color: rgba(191, 219, 254, 0.18);
+    background:
+        linear-gradient(180deg, rgba(191, 219, 254, 0.44), rgba(148, 163, 184, 0.36));
+    color: #e2e8f0;
     cursor: default;
+    box-shadow: none;
 }
 
 .countdown {
     font-size: 56px;
     font-weight: 700;
     color: #fff;
+    letter-spacing: -0.04em;
     text-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
@@ -551,20 +663,24 @@
     padding: 8px 10px;
     box-sizing: border-box;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    background: rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: linear-gradient(180deg, rgba(9, 14, 24, 0.74), rgba(7, 11, 18, 0.84));
     color: #e2e8f0;
     font-size: 11px;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: inherit;
     line-height: 1.5;
     resize: vertical;
     outline: none;
-    transition: all 0.2s ease;
+    transition:
+        border-color 180ms var(--recording-ease),
+        background 180ms var(--recording-ease),
+        box-shadow 180ms var(--recording-ease);
 }
 
 .scriptTextarea:focus {
-    border-color: rgba(255, 255, 255, 0.15);
-    background: rgba(0, 0, 0, 0.2);
+    border-color: rgba(191, 219, 254, 0.22);
+    background: linear-gradient(180deg, rgba(10, 16, 28, 0.84), rgba(8, 12, 22, 0.92));
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.12);
 }
 
 .nameInput {
@@ -573,38 +689,46 @@
     padding: 0 10px;
     box-sizing: border-box;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    background: rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: linear-gradient(180deg, rgba(9, 14, 24, 0.74), rgba(7, 11, 18, 0.84));
     color: #e2e8f0;
     font-size: 12px;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: inherit;
     outline: none;
-    transition: all 0.2s ease;
+    transition:
+        border-color 180ms var(--recording-ease),
+        background 180ms var(--recording-ease),
+        box-shadow 180ms var(--recording-ease);
 }
 
 .nameInput:focus {
-    border-color: rgba(255, 255, 255, 0.15);
-    background: rgba(0, 0, 0, 0.2);
+    border-color: rgba(191, 219, 254, 0.22);
+    background: linear-gradient(180deg, rgba(10, 16, 28, 0.84), rgba(8, 12, 22, 0.92));
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.12);
 }
 
 .modeSelector {
     display: flex;
     gap: 0;
-    background: rgba(255, 255, 255, 0.015);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 10px;
-    padding: 3px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 4px;
 }
 
 .modeBtn {
     flex: 1;
     height: 30px;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     background: transparent;
     color: #64748b;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition:
+        transform 180ms var(--recording-ease),
+        background 180ms var(--recording-ease),
+        color 180ms var(--recording-ease),
+        filter 180ms var(--recording-ease);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -629,9 +753,10 @@
 }
 
 .modeBtn.active {
-    background: rgba(255, 255, 255, 0.06);
-    color: #ffffff;
-    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.4));
+    background:
+        linear-gradient(180deg, rgba(191, 219, 254, 0.08), rgba(255, 255, 255, 0.04));
+    color: #eff6ff;
+    filter: drop-shadow(0 0 8px rgba(147, 197, 253, 0.28));
 }
 
 .colorControl {
@@ -639,8 +764,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 10px 14px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 14px;
     margin-top: 14px;
     transition: all 0.3s cubic-bezier(0.19, 1, 0.22, 1);
@@ -648,7 +773,7 @@
 
 .colorControl:hover {
     background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(191, 219, 254, 0.12);
     transform: translateY(-1px);
 }
 
@@ -715,20 +840,24 @@
 }
 
 .colorPickerWrapper {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: 8px;
     overflow: hidden;
     flex-shrink: 0;
     border: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.03);
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    background: linear-gradient(180deg, rgba(12, 18, 29, 0.92), rgba(8, 12, 20, 0.96));
+    transition:
+        transform 180ms var(--recording-ease),
+        border-color 180ms var(--recording-ease),
+        box-shadow 180ms var(--recording-ease);
     position: relative;
     box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
     cursor: pointer;
 }
 
 .colorPickerWrapper:hover {
+    transform: translateY(-1px);
     border-color: rgba(255, 255, 255, 0.15);
 }
 
@@ -748,11 +877,183 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
     background-color: var(--glow-color, #000);
     border: 2px solid rgba(255, 255, 255, 0.8);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
     pointer-events: none;
+}
+
+@keyframes shimmer {
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+.sliderGroup {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.switchRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 4px;
+}
+
+.toggle {
+    width: 32px;
+    height: 18px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.08);
+    position: relative;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    transition: all 0.3s var(--recording-ease);
+    padding: 0;
+}
+
+.toggle::after {
+    content: '';
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 14px;
+    height: 14px;
+    background: #94a3b8;
+    border-radius: 50%;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle.on {
+    background: rgba(59, 130, 246, 0.24);
+    border-color: rgba(96, 165, 250, 0.32);
+}
+
+.toggle.on::after {
+    left: 15px;
+    background: #60a5fa;
+    box-shadow: 0 0 10px rgba(96, 165, 250, 0.4);
+}
+
+.advancedToggle {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.02);
+    color: #64748b;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s var(--recording-ease);
+}
+
+.advancedToggle:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #f8fafc;
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+.advancedToggle.active {
+    background: rgba(147, 197, 253, 0.12);
+    color: #93c5fd;
+    border-color: rgba(147, 197, 253, 0.3);
+}
+
+.advancedSettings {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    margin-top: -4px;
+    margin-bottom: 4px;
+    animation: slideDown 0.3s var(--recording-ease);
+}
+
+.advancedRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.advancedLabel {
+    font-size: 10px;
+    color: #94a3b8;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    min-width: 80px;
+}
+
+.miniSlider {
+    flex: 1;
+    height: 3px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 2px;
+    outline: none;
+}
+
+.miniSlider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #94a3b8;
+    cursor: pointer;
+    transition: transform 0.1s ease;
+}
+
+.miniSlider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    background: #fff;
+}
+
+.miniValue {
+    font-size: 10px;
+    color: #64748b;
+    min-width: 25px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.glowToggle {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    color: #64748b;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s ease;
+}
+
+.glowToggle:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
+}
+
+.glowToggle.active {
+    background: linear-gradient(135deg, rgba(147, 197, 253, 0.15), rgba(59, 130, 246, 0.1));
+    color: #93c5fd;
+    border-color: rgba(147, 197, 253, 0.4);
+    box-shadow: 0 0 10px rgba(147, 197, 253, 0.1);
 }

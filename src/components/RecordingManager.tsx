@@ -8,6 +8,7 @@ import {
 import { RecordingEngine } from '../services/recording/RecordingEngine';
 import { RecordingConfig } from './RecordingSetup';
 import type { EntitlementState, UpgradeSource } from '../shared/licensing';
+import { getCameraDimensionsForWidth, normalizeCameraShape } from '../shared/cameraShapes';
 
 interface RecordingManagerProps {
   onMessage: (message: string) => void;
@@ -377,8 +378,8 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
         }
       }
 
-      const cameraShape = (smartFeatures?.cameraShape as any) || 'circle';
-      const cameraHeight = cameraShape === 'pill' ? Math.round(baseCamSize / 1.7) : baseCamSize;
+      const cameraShape = normalizeCameraShape(smartFeatures?.cameraShape);
+      const cameraBounds = getCameraDimensionsForWidth(cameraShape, baseCamSize);
       const sourceFrame = sourceWindowBounds || { x: 0, y: 0, width: window.screen.width || canvas.width, height: window.screen.height || canvas.height };
 
       const compState: CompositorState = {
@@ -388,12 +389,12 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
         webcam: {
           visible: isWindowMode && !!shouldEnableWebcam,
           video: webcamVideo,
-          borderColor: smartFeatures?.cameraBorderColor,
-          bounds: {
-            x: sourceFrame.x + Math.max(20, sourceFrame.width - baseCamSize - 20),
-            y: sourceFrame.y + Math.max(20, sourceFrame.height - cameraHeight - 20),
-            width: baseCamSize,
-            height: cameraHeight,
+            borderColor: smartFeatures?.cameraBorderColor,
+            bounds: {
+            x: sourceFrame.x + Math.max(20, sourceFrame.width - cameraBounds.width - 20),
+            y: sourceFrame.y + Math.max(20, sourceFrame.height - cameraBounds.height - 20),
+            width: cameraBounds.width,
+            height: cameraBounds.height,
           },
           shape: cameraShape,
           scaleFactor: 1,
@@ -441,17 +442,6 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
         }
       };
 
-      const cleanupTypingZoom = smartFeatures?.liveMagnifierEnabled
-        ? window.electronAPI?.onTypingZoomUpdate?.((zoomState: any) => {
-          if (!zoomState) return;
-          compState.typingZoom = {
-            isZoomed: !!zoomState.isZoomed,
-            x: zoomState.x ?? compState.typingZoom.x,
-            y: zoomState.y ?? compState.typingZoom.y,
-          };
-        })
-        : undefined;
-
       const cleanupWebcamUpdate = window.electronAPI?.onWebcamUpdate?.((data: any) => {
         if (!data || !isWindowMode) return;
         compState.webcam.visible = !!data.visible;
@@ -495,7 +485,6 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
               onMessage(`Finalization failed: ${(err as Error).message}`);
               console.error('[RecordingManager] Error finalizing video:', err);
             } finally {
-              cleanupTypingZoom?.();
               cleanupWebcamUpdate?.();
               cleanupCaptureResources(screenVideo, webcamVideo);
               setIsRecording(false);

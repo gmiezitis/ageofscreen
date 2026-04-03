@@ -1,12 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PanelLeft, Monitor, Palette, Undo2, Redo2, ChevronDown, Sparkles, Crop, Wand2, Mic2, Activity, Loader2, Crown, Lock } from 'lucide-react';
-import { ExportQuality, PlatformPreset, ColorGradePreset, SmartTrackingProfile } from '../../videoEditor/types';
+import { PanelLeft, Monitor, Palette, Undo2, Redo2, ChevronDown, Sparkles, Crop, Wand2, Mic2, Activity, Loader2, Crown, Lock, MousePointer2 } from 'lucide-react';
+import {
+    ExportQuality,
+    PlatformPreset,
+    ColorGradePreset,
+    SmartTrackingProfile,
+    CursorHighlightSettings,
+    CURSOR_HIGHLIGHT_MAX_OPACITY,
+    CURSOR_HIGHLIGHT_MAX_SIZE,
+    CURSOR_HIGHLIGHT_MIN_OPACITY,
+    CURSOR_HIGHLIGHT_MIN_SIZE,
+    normalizeCursorHighlightSettings,
+} from '../../videoEditor/types';
 import { BackgroundPicker } from './BackgroundPicker';
 import { WindowControls } from './WindowControls';
 import { resolveBackgroundCSS } from '../../videoEditor/effectMath';
 import type { EntitlementState, UpgradeSource } from '../../shared/licensing';
 
 interface HeaderProps {
+    mediaType: string | null;
     mediaName: string;
     isSidebarCollapsed: boolean;
     setIsSidebarCollapsed: (collapsed: boolean) => void;
@@ -20,6 +32,7 @@ interface HeaderProps {
     onAutoPolish?: () => void;
     onClose: () => void;
     isExporting: boolean;
+    exportProgress?: number;
     isAutoPolishing?: boolean;
     isCropping: boolean;
     onStartCropping: () => void;
@@ -29,6 +42,10 @@ interface HeaderProps {
     setBackgroundColor?: (color: string) => void;
     videoPadding?: number;
     setVideoPadding?: (padding: number) => void;
+    cursorHighlight: CursorHighlightSettings;
+    setCursorHighlight: (settings: CursorHighlightSettings) => void;
+    hasRecordingMetadata: boolean;
+    canRenderCursorHighlight?: boolean;
     onUndo?: () => void;
     onRedo?: () => void;
     canUndo?: boolean;
@@ -64,27 +81,56 @@ const PURCHASE_MESSAGES: Record<UpgradeSource, string> = {
     export_watermark: 'Upgrade to Pro to remove the export watermark.',
 };
 
-export const Header: React.FC<HeaderProps> = ({
-    mediaName, isSidebarCollapsed, setIsSidebarCollapsed,
+const renderCursorHighlightPreview = (
+    color: string,
+    opacity: number,
+    size = 18,
+): React.ReactNode => {
+    const safeOpacity = Math.max(0.18, Math.min(1, opacity));
+    const glowBoxShadow = [
+        `0 0 ${Math.max(8, Math.round(size * 0.7))}px ${color}44`,
+        `0 0 ${Math.max(14, Math.round(size * 1.1))}px ${color}22`,
+    ].join(', ');
+
+    return (
+        <div
+            style={{
+                width: size,
+                height: size,
+                borderRadius: '50%',
+                background: `radial-gradient(circle at 38% 34%, rgba(255,255,255,0.62), ${color} ${Math.max(42, Math.round(safeOpacity * 100))}%, transparent 82%)`,
+                opacity: safeOpacity,
+                boxShadow: glowBoxShadow,
+                filter: 'saturate(1.05)',
+            }}
+        />
+    );
+};
+
+export const Header: React.FC<HeaderProps> = React.memo(({
+    mediaType, mediaName, isSidebarCollapsed, setIsSidebarCollapsed,
     selectedPlatform, setSelectedPlatform, platformPresets,
     isMaximized, onMaximize, onMinimize, onExport, onAutoPolish, onClose,
-    isExporting, isAutoPolishing = false, isCropping, onStartCropping, onApplyCrop, onCancelCrop,
+    isExporting, exportProgress = 0, isAutoPolishing = false, isCropping, onStartCropping, onApplyCrop, onCancelCrop,
     backgroundColor, setBackgroundColor, videoPadding = 0, setVideoPadding,
+    cursorHighlight, setCursorHighlight, hasRecordingMetadata, canRenderCursorHighlight = true,
     onUndo, onRedo, canUndo, canRedo,
     exportQuality, setExportQuality,
     colorGrade, setColorGrade,
     premiumVoice, setPremiumVoice,
     playbackSpeed, setPlaybackSpeed,
-    autoPolishTrackingProfile, setAutoPolishTrackingProfile,
+    autoPolishTrackingProfile: _autoPolishTrackingProfile, setAutoPolishTrackingProfile: _setAutoPolishTrackingProfile,
 }) => {
     const [showColorPicker, setShowColorPicker] = useState(false);
     const [showExports, setShowExports] = useState(false);
     const [showColorGrade, setShowColorGrade] = useState(false);
+    const [showCursorHighlight, setShowCursorHighlight] = useState(false);
     const [entitlementState, setEntitlementState] = useState<EntitlementState>(DEFAULT_ENTITLEMENT_STATE);
     const [purchaseMessage, setPurchaseMessage] = useState<string | null>(null);
     const [purchasePending, setPurchasePending] = useState(false);
     const colorPickerRef = useRef<HTMLDivElement>(null);
     const colorGradeRef = useRef<HTMLDivElement>(null);
+    const cursorHighlightRef = useRef<HTMLDivElement>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const backgroundSwatch = resolveBackgroundCSS(backgroundColor || '#000000');
     const api = (window as any).videoEditorAPI;
@@ -92,17 +138,19 @@ export const Header: React.FC<HeaderProps> = ({
     const canPurchasePro = entitlementState.purchaseAvailable;
     const canUseAutoPolish = entitlementState.canUseAutoPolish;
     const canUseStudioVoice = entitlementState.canUseStudioVoice;
+    const normalizedCursorHighlight = normalizeCursorHighlightSettings(cursorHighlight);
 
     useEffect(() => {
-        if (!showColorPicker && !showColorGrade && !showExports) return;
+        if (!showColorPicker && !showColorGrade && !showCursorHighlight && !showExports) return;
         const handleClickOutside = (e: MouseEvent) => {
             if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) setShowColorPicker(false);
             if (colorGradeRef.current && !colorGradeRef.current.contains(e.target as Node)) setShowColorGrade(false);
+            if (cursorHighlightRef.current && !cursorHighlightRef.current.contains(e.target as Node)) setShowCursorHighlight(false);
             if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) setShowExports(false);
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [showColorPicker, showColorGrade, showExports]);
+    }, [showColorPicker, showColorGrade, showCursorHighlight, showExports]);
 
     useEffect(() => {
         let cancelled = false;
@@ -151,8 +199,19 @@ export const Header: React.FC<HeaderProps> = ({
         }
     };
 
-    const autoPolishButtonDisabled = isAutoPolishing || isExporting || !canUseAutoPolish;
+    const importedVideoLacksMetadata = mediaType === 'video' && !hasRecordingMetadata;
+    const autoPolishButtonDisabled = isAutoPolishing || isExporting || !canUseAutoPolish || importedVideoLacksMetadata;
     const studioVoiceButtonDisabled = !canUseStudioVoice;
+    const cursorHighlightButtonDisabled = !hasRecordingMetadata || !canRenderCursorHighlight;
+    const cursorHighlightTitle = !hasRecordingMetadata
+        ? 'Cursor highlight is available only for videos with cursor metadata'
+        : 'Cursor Highlight';
+    const updateCursorHighlight = (updates: Partial<CursorHighlightSettings>) => {
+        setCursorHighlight(normalizeCursorHighlightSettings({
+            ...cursorHighlight,
+            ...updates,
+        }));
+    };
 
     return (
         <div className="editor-header" style={{ height: '56px', background: 'rgba(26,26,31,0.8)', backdropFilter: 'blur(20px)', zIndex: 1100, overflow: 'visible', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px', gap: '8px' }}>
@@ -162,9 +221,32 @@ export const Header: React.FC<HeaderProps> = ({
                     <PanelLeft size={18} />
                 </button>
                 <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>SnipFocus Editor</span>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>ageofscreen Editor</span>
                     {mediaName && <span style={{ fontSize: '10px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mediaName}</span>}
                 </div>
+                {importedVideoLacksMetadata && (
+                    <div
+                        title="Imported video detected. Cursor-based tools are available only for ageofscreen recordings with cursor metadata."
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '4px 10px',
+                            borderRadius: '999px',
+                            border: '1px solid rgba(148,163,184,0.18)',
+                            background: 'rgba(15,23,42,0.45)',
+                            color: '#cbd5e1',
+                            fontSize: '10px',
+                            fontWeight: 600,
+                            letterSpacing: '0.04em',
+                            textTransform: 'uppercase',
+                            flexShrink: 0,
+                        }}
+                    >
+                        <span>Imported Video</span>
+                        <span style={{ color: 'rgba(203,213,225,0.7)' }}>Cursor Tools Off</span>
+                    </div>
+                )}
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
@@ -184,6 +266,93 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                 )}
 
+                <div ref={cursorHighlightRef} style={{ position: 'relative', WebkitAppRegion: 'no-drag' } as any}>
+                    <button
+                        onClick={() => {
+                            if (!cursorHighlightButtonDisabled) {
+                                setShowCursorHighlight(!showCursorHighlight);
+                            }
+                        }}
+                        disabled={cursorHighlightButtonDisabled}
+                        title={cursorHighlightTitle}
+                        style={{
+                            background: normalizedCursorHighlight.enabled || showCursorHighlight ? 'rgba(245,158,11,0.14)' : 'transparent',
+                            border: '1px solid ' + ((normalizedCursorHighlight.enabled || showCursorHighlight) ? 'rgba(245,158,11,0.36)' : 'transparent'),
+                            color: cursorHighlightButtonDisabled ? 'rgba(255,255,255,0.35)' : (normalizedCursorHighlight.enabled ? '#fbbf24' : 'var(--text-muted)'),
+                            padding: '8px',
+                            cursor: cursorHighlightButtonDisabled ? 'not-allowed' : 'pointer',
+                            borderRadius: '8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            WebkitAppRegion: 'no-drag',
+                            opacity: cursorHighlightButtonDisabled ? 0.7 : 1,
+                        } as any}
+                    >
+                        <MousePointer2 size={18} />
+                        <div style={{ width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {renderCursorHighlightPreview(
+                                normalizedCursorHighlight.color,
+                                normalizedCursorHighlight.enabled ? Math.max(0.34, normalizedCursorHighlight.opacity) : 0.24,
+                                14,
+                            )}
+                        </div>
+                    </button>
+                    {showCursorHighlight && (
+                        <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '8px', background: 'rgba(26,26,31,0.96)', backdropFilter: 'blur(28px)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'var(--shadow-lg)', padding: '10px', zIndex: 2147483647, width: '228px', display: 'grid', gap: '10px', WebkitAppRegion: 'no-drag' } as any}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                                <div style={{ display: 'grid', gap: '3px' }}>
+                                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cursor Highlight</div>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Soft glow around the recorded cursor.</div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => updateCursorHighlight({ enabled: !normalizedCursorHighlight.enabled })}
+                                    style={{
+                                        border: '1px solid ' + (normalizedCursorHighlight.enabled ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.12)'),
+                                        background: normalizedCursorHighlight.enabled ? 'rgba(34,197,94,0.16)' : 'rgba(255,255,255,0.05)',
+                                        color: normalizedCursorHighlight.enabled ? '#86efac' : 'var(--text-primary)',
+                                        padding: '7px 11px',
+                                        borderRadius: '999px',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                        flexShrink: 0,
+                                    }}
+                                >
+                                    {normalizedCursorHighlight.enabled ? 'On' : 'Off'}
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'grid', gap: '8px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Color</span>
+                                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{normalizedCursorHighlight.color.toUpperCase()}</span>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr', gap: '8px', alignItems: 'center' }}>
+                                    <input type="color" value={normalizedCursorHighlight.color} onChange={(e) => updateCursorHighlight({ color: e.target.value })} style={{ width: 44, height: 36, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', background: 'transparent', padding: 0 }} />
+                                    <div style={{ display: 'grid', gap: '8px' }}>
+                                        <div style={{ display: 'grid', gap: '6px' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                                <span>Size</span>
+                                                <span>{normalizedCursorHighlight.size}%</span>
+                                            </div>
+                                            <input type="range" min={CURSOR_HIGHLIGHT_MIN_SIZE} max={CURSOR_HIGHLIGHT_MAX_SIZE} step="0.5" value={normalizedCursorHighlight.size} onChange={(e) => updateCursorHighlight({ size: Number(e.target.value) })} />
+                                        </div>
+                                        <div style={{ display: 'grid', gap: '6px' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                                <span>Opacity</span>
+                                                <span>{Math.round(normalizedCursorHighlight.opacity * 100)}%</span>
+                                            </div>
+                                            <input type="range" min={CURSOR_HIGHLIGHT_MIN_OPACITY} max={CURSOR_HIGHLIGHT_MAX_OPACITY} step="0.01" value={normalizedCursorHighlight.opacity} onChange={(e) => updateCursorHighlight({ opacity: Number(e.target.value) })} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 <div style={{ width: '1px', height: '20px', background: 'var(--border-light)' }} />
 
                 {isCropping ? (
@@ -200,14 +369,16 @@ export const Header: React.FC<HeaderProps> = ({
                         <button
                             onClick={canUseAutoPolish ? onAutoPolish : undefined}
                             disabled={autoPolishButtonDisabled}
-                            title={canUseAutoPolish
-                                ? 'Auto-Polish: trim dead air, apply a clean frame, enhance voice, and add focus motion'
-                                : 'Auto-Polish is a Pro feature'}
+                            title={importedVideoLacksMetadata
+                                ? 'Auto-Polish focus tracking is available only for ageofscreen recordings with cursor metadata'
+                                : canUseAutoPolish
+                                    ? 'Auto-Polish: trim dead air, apply a clean frame, enhance voice, and add focus motion'
+                                    : 'Auto-Polish is a Pro feature'}
                             style={{
                                 WebkitAppRegion: 'no-drag',
-                                background: canUseAutoPolish ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.08)',
-                                border: canUseAutoPolish ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                                color: canUseAutoPolish ? '#111' : 'rgba(255,255,255,0.6)',
+                                background: (canUseAutoPolish && !importedVideoLacksMetadata) ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.08)',
+                                border: (canUseAutoPolish && !importedVideoLacksMetadata) ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                                color: (canUseAutoPolish && !importedVideoLacksMetadata) ? '#111' : 'rgba(255,255,255,0.6)',
                                 padding: '5px 10px',
                                 cursor: autoPolishButtonDisabled ? 'not-allowed' : 'pointer',
                                 borderRadius: '999px',
@@ -218,33 +389,33 @@ export const Header: React.FC<HeaderProps> = ({
                                 gap: '5px',
                                 opacity: autoPolishButtonDisabled ? 0.7 : 1,
                                 transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                                boxShadow: canUseAutoPolish ? '0 2px 10px rgba(255,255,255,0.08)' : 'none',
+                                boxShadow: (canUseAutoPolish && !importedVideoLacksMetadata) ? '0 2px 10px rgba(255,255,255,0.08)' : 'none',
                                 lineHeight: 1,
                             } as any}
                             onMouseEnter={(e) => {
-                                if (!autoPolishButtonDisabled && canUseAutoPolish) {
+                                if (!autoPolishButtonDisabled && canUseAutoPolish && !importedVideoLacksMetadata) {
                                     e.currentTarget.style.background = '#ffffff';
                                     e.currentTarget.style.transform = 'scale(1.02)';
                                     e.currentTarget.style.boxShadow = '0 4px 16px rgba(255,255,255,0.15)';
                                 }
                             }}
                             onMouseLeave={(e) => {
-                                if (!autoPolishButtonDisabled && canUseAutoPolish) {
+                                if (!autoPolishButtonDisabled && canUseAutoPolish && !importedVideoLacksMetadata) {
                                     e.currentTarget.style.background = 'rgba(255,255,255,0.95)';
                                     e.currentTarget.style.transform = 'scale(1)';
                                     e.currentTarget.style.boxShadow = '0 2px 12px rgba(255,255,255,0.1)';
                                 }
                             }}
                             onMouseDown={(e) => {
-                                if (!autoPolishButtonDisabled && canUseAutoPolish) e.currentTarget.style.transform = 'scale(0.98)';
+                                if (!autoPolishButtonDisabled && canUseAutoPolish && !importedVideoLacksMetadata) e.currentTarget.style.transform = 'scale(0.98)';
                             }}
                             onMouseUp={(e) => {
-                                if (!autoPolishButtonDisabled && canUseAutoPolish) e.currentTarget.style.transform = 'scale(1.02)';
+                                if (!autoPolishButtonDisabled && canUseAutoPolish && !importedVideoLacksMetadata) e.currentTarget.style.transform = 'scale(1.02)';
                             }}
                         >
-                            <Sparkles size={11} strokeWidth={2.5} color={canUseAutoPolish ? '#111' : 'rgba(255,255,255,0.7)'} />
+                            <Sparkles size={11} strokeWidth={2.5} color={(canUseAutoPolish && !importedVideoLacksMetadata) ? '#111' : 'rgba(255,255,255,0.7)'} />
                             <span>{isAutoPolishing ? 'Polishing...' : 'Auto-Polish'}</span>
-                            {!canUseAutoPolish && <Lock size={10} />}
+                            {(!canUseAutoPolish || importedVideoLacksMetadata) && <Lock size={10} />}
                         </button>
                         {!canUseAutoPolish && canPurchasePro && (
                             <button
@@ -417,13 +588,13 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
 
                 <div ref={exportMenuRef} style={{ position: 'relative' }}>
-                    <style>{`@keyframes snipfocus-spin { to { transform: rotate(360deg); } }`}</style>
+                    <style>{`@keyframes ageofscreen-spin { to { transform: rotate(360deg); } }`}</style>
                     <button onClick={() => setShowExports(!showExports)} disabled={isExporting}
                         style={{ background: isExporting ? 'rgba(59,130,246,0.15)' : 'var(--accent)', color: isExporting ? '#60a5fa' : 'white', padding: '8px 20px', borderRadius: '100px', border: isExporting ? '1px solid rgba(59,130,246,0.3)' : '1px solid transparent', fontSize: '12px', fontWeight: 600, cursor: isExporting ? 'not-allowed' : 'pointer', transition: 'all 0.2s', boxShadow: isExporting ? 'none' : '0 4px 12px var(--accent-glow)', display: 'flex', alignItems: 'center', gap: '8px', WebkitAppRegion: 'no-drag' } as any}>
                         {isExporting ? (
                             <>
-                                <span>Exporting...</span>
-                                <Loader2 size={14} style={{ animation: 'snipfocus-spin 1s linear infinite' }} />
+                                <span>{`Exporting ${Math.max(0, Math.min(100, Math.round(exportProgress)))}%`}</span>
+                                <Loader2 size={14} style={{ animation: 'ageofscreen-spin 1s linear infinite' }} />
                             </>
                         ) : (
                             <>
@@ -451,7 +622,7 @@ export const Header: React.FC<HeaderProps> = ({
                                             Free export
                                         </div>
                                         <div style={{ fontSize: '11px', color: '#e2e8f0', lineHeight: 1.45 }}>
-                                            Exports include a SnipFocus watermark. Upgrade to remove it.
+                                            Exports include a ageofscreen watermark. Upgrade to remove it.
                                         </div>
                                         {canPurchasePro ? (
                                             <button
@@ -533,7 +704,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
         </div>
     );
-};
+});
 
 
 

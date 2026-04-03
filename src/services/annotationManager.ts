@@ -3,13 +3,14 @@ import type {
   AnnotationObject,
   TextAnnotation,
   PenAnnotation,
+  LineAnnotation,
   ArrowAnnotation,
   HighlighterAnnotation,
   RectangleAnnotation,
   EllipseAnnotation,
   StepAnnotation,
   BlurAnnotation,
-  FocusRectangleAnnotation,
+  ImageAnnotation,
   Tool,
   PenSize,
 } from '../types';
@@ -35,6 +36,7 @@ export interface AnnotationActions {
   addAnnotation: (annotation: AnnotationObject) => void;
   replaceAnnotations: (annotations: AnnotationObject[]) => void;
   updateAnnotation: (id: string, updates: Partial<AnnotationObject>) => void;
+  updateAnnotationLive: (id: string, updates: Partial<AnnotationObject>) => void;
   deleteAnnotation: (id: string) => void;
   clearAnnotations: () => void;
   resetAll: () => void;
@@ -138,6 +140,14 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
     );
   }, [annotations]);
 
+  const updateAnnotationLive = useCallback((id: string, updates: Partial<AnnotationObject>) => {
+    setAnnotations(prev =>
+      prev.map(ann =>
+        ann.id === id ? { ...ann, ...updates } as AnnotationObject : ann
+      )
+    );
+  }, []);
+
   const deleteAnnotation = useCallback((id: string) => {
     setHistory(prev => [...prev, annotations]);
     setFutureHistory([]);
@@ -205,6 +215,7 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
 
   const saveStateToHistory = useCallback(() => {
     setHistory(prev => [...prev, annotations]);
+    setFutureHistory([]);
   }, [annotations]);
 
   // Selection and editing
@@ -278,6 +289,7 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
           };
           break;
         case 'arrow':
+        case 'line':
           movedAnnotation = {
             ...originalAnn,
             startX: originalAnn.startX + deltaX,
@@ -324,6 +336,13 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
               y: point.y + deltaY
             }))
           };
+          break;
+        case 'image':
+          movedAnnotation = {
+            ...originalAnn,
+            x: originalAnn.x + deltaX,
+            y: originalAnn.y + deltaY,
+          } as ImageAnnotation;
           break;
         default:
           movedAnnotation = originalAnn;
@@ -435,6 +454,23 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
     };
   }, []);
 
+  const createLineAnnotation = useCallback((params: CreateAnnotationParams): LineAnnotation => {
+    if (!params.startPoint || !params.endPoint) {
+      throw new Error('Line annotation requires startPoint and endPoint');
+    }
+    return {
+      id: `line_${Date.now()}`,
+      type: 'line',
+      startX: params.startPoint.x,
+      startY: params.startPoint.y,
+      endX: params.endPoint.x,
+      endY: params.endPoint.y,
+      color: params.color || '#FF0000',
+      width: params.width || 5,
+      size: params.penSize || 'm',
+    };
+  }, []);
+
   const createRectangleAnnotation = useCallback((params: CreateAnnotationParams): RectangleAnnotation => {
     if (!params.size) {
       throw new Error('Rectangle annotation requires size');
@@ -492,20 +528,6 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
     brushSize: params.brushSize || 10,
   }), []);
 
-  const createFocusRectangleAnnotation = useCallback((params: CreateAnnotationParams): FocusRectangleAnnotation => {
-    if (!params.size) {
-      throw new Error('Focus rectangle annotation requires size');
-    }
-    return {
-      id: `focusRect_${Date.now()}`,
-      type: 'focusRect',
-      x: params.point.x,
-      y: params.point.y,
-      width: params.size.width,
-      height: params.size.height,
-    };
-  }, []);
-
   // Enhanced addAnnotation that can create annotations from parameters
   const createAndAddAnnotation = useCallback((params: CreateAnnotationParams): any => {
     let annotation: any;
@@ -522,6 +544,9 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
         break;
       case 'arrow':
         annotation = createArrowAnnotation(params);
+        break;
+      case 'line':
+        annotation = createLineAnnotation(params);
         break;
       case 'rectangle':
         annotation = createRectangleAnnotation(params);
@@ -547,6 +572,7 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
     createHighlighterAnnotation,
     createTextAnnotation,
     createArrowAnnotation,
+    createLineAnnotation,
     createRectangleAnnotation,
     createEllipseAnnotation,
     createStepAnnotation,
@@ -568,6 +594,7 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
     addAnnotation,
     replaceAnnotations,
     updateAnnotation,
+    updateAnnotationLive,
     deleteAnnotation,
     clearAnnotations,
     resetAll,

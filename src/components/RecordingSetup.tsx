@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Lightbulb, Circle, Square, LayoutTemplate } from 'lucide-react';
+import { X, Lightbulb, Circle, Square, LayoutTemplate, Heart, Hexagon, Diamond, Settings2, Sparkles } from 'lucide-react';
 import { FEATURES } from '../config/features';
+import { CameraShape, getCameraDimensionsForWidth, getCameraShapeStyle, normalizeCameraShape } from '../shared/cameraShapes';
 
 import styles from './RecordingSetup.module.css';
 import { PreviewPane } from './RecordingSetup/PreviewPane';
@@ -8,8 +9,6 @@ import { ConfigToggles } from './RecordingSetup/ConfigToggles';
 import { ModeSelector } from './RecordingSetup/ModeSelector';
 import WindowSelector from './WindowSelector';
 import { WindowSource } from '../types';
-
-type CameraShape = 'circle' | 'rounded' | 'pill' | 'square';
 
 const DEFAULT_CAMERA_SIZE = 100;
 const MIN_CAMERA_SIZE = 60;
@@ -29,6 +28,8 @@ export interface RecordingConfig {
     cameraShape: CameraShape;
     cameraSize: number;
     cameraBorderColor?: string;
+    cameraBorderWidth?: number;
+    cameraGlowEnabled?: boolean;
     teleprompterEnabled: boolean;
     teleprompterText: string;
     teleprompterSpeed: number;
@@ -46,8 +47,11 @@ export interface RecordingConfig {
 
 const SHAPE_OPTIONS: { value: CameraShape; label: string; icon: any }[] = [
     { value: 'circle', label: 'Circle', icon: Circle },
-    { value: 'pill', label: 'Pill', icon: LayoutTemplate }, // Using LayoutTemplate as a pill-like representation
-    { value: 'rounded', label: 'Rounded Square', icon: Square },
+    { value: 'pill', label: 'Pill', icon: LayoutTemplate },
+    { value: 'square', label: 'Square', icon: Square },
+    { value: 'hexagon', label: 'Hexagon', icon: Hexagon },
+    { value: 'heart', label: 'Heart', icon: Heart },
+    { value: 'romb', label: 'Rhombus', icon: Diamond },
 ];
 
 export const RecordingSetup: React.FC<RecordingSetupProps> = ({
@@ -60,9 +64,12 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
     const [cameraShape, setCameraShape] = useState<CameraShape>('circle');
     const [cameraSize, setCameraSize] = useState(DEFAULT_CAMERA_SIZE);
     const [cameraBorderColor, setCameraBorderColor] = useState(DEFAULT_CAMERA_BORDER_COLOR);
+    const [cameraBorderWidth, setCameraBorderWidth] = useState(4);
+    const [cameraGlowEnabled, setCameraGlowEnabled] = useState(false);
+    const [isAdvancedVisible, setIsAdvancedVisible] = useState(false);
     const [teleprompterEnabled, setTeleprompterEnabled] = useState(false);
     const [teleprompterText, setTeleprompterText] = useState('');
-    const [teleprompterSpeed, setTeleprompterSpeed] = useState(90);
+    const [teleprompterSpeed] = useState(90);
     const [liveMagnifierEnabled, setLiveMagnifierEnabled] = useState(true);
     const [captureCursorData, setCaptureCursorData] = useState(true);
     const [presenterNameEnabled, setPresenterNameEnabled] = useState(false);
@@ -72,12 +79,15 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
 
     const [selectedWindowId, setSelectedWindowId] = useState<string | null>(null);
     const [isWindowSelectorVisible, setIsWindowSelectorVisible] = useState(false);
+    const [isWindowSourcesLoading, setIsWindowSourcesLoading] = useState(false);
     const [windowSources, setWindowSources] = useState<WindowSource[]>([]);
     const [countdown, setCountdown] = useState<number | null>(null);
     const [stream, setStream] = useState<MediaStream | null>(null);
-    const [showRecordingTip, setShowRecordingTip] = useState(() => !localStorage.getItem('snipfocus-hasSeenRecordingTip'));
+    const [isPreviewStarting, setIsPreviewStarting] = useState(false);
+    const [showRecordingTip, setShowRecordingTip] = useState(() => !localStorage.getItem('ageofscreen-hasSeenRecordingTip'));
     const videoRef = useRef<HTMLVideoElement>(null);
     const previewRequestIdRef = useRef(0);
+    const windowSourceRequestIdRef = useRef(0);
     const previewStreamRef = useRef<MediaStream | null>(null);
 
     const stopStreamTracks = useCallback((mediaStream: MediaStream | null) => {
@@ -101,6 +111,7 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
 
     const startCameraPreview = useCallback(async () => {
         const requestId = ++previewRequestIdRef.current;
+        setIsPreviewStarting(true);
         replacePreviewStream(null);
         clearPreviewElement();
 
@@ -111,18 +122,22 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
             });
 
             if (previewRequestIdRef.current !== requestId || !isVisible || !cameraEnabled) {
+                setIsPreviewStarting(false);
                 stopStreamTracks(mediaStream);
                 return;
             }
 
             replacePreviewStream(mediaStream);
+            setIsPreviewStarting(false);
         } catch (err) {
+            setIsPreviewStarting(false);
             console.error('Failed to start camera preview:', err);
         }
     }, [cameraEnabled, clearPreviewElement, isVisible, replacePreviewStream, stopStreamTracks]);
 
     const stopCameraPreview = useCallback(() => {
         previewRequestIdRef.current += 1;
+        setIsPreviewStarting(false);
         replacePreviewStream(null);
         clearPreviewElement();
     }, [clearPreviewElement, replacePreviewStream]);
@@ -174,6 +189,7 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
             const effectiveTeleprompter = FEATURES.ENABLE_TELEPROMPTER ? teleprompterEnabled : false;
             onStartRecording({
                 cameraEnabled, micEnabled, cameraShape, cameraSize, cameraBorderColor,
+                cameraBorderWidth, cameraGlowEnabled,
                 teleprompterEnabled: effectiveTeleprompter,
                 teleprompterText, teleprompterSpeed,
                 liveMagnifierEnabled: effectiveMagnifier,
@@ -188,41 +204,57 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
         }
         const timer = setTimeout(() => setCountdown(prev => (prev !== null ? prev - 1 : null)), 1000);
         return () => clearTimeout(timer);
-    }, [countdown, cameraEnabled, cameraShape, cameraSize, cameraBorderColor, teleprompterEnabled, teleprompterText, teleprompterSpeed, liveMagnifierEnabled, captureCursorData, presenterNameEnabled, presenterName, recordingMode, selectedWindowId, editAfterRecording, onStartRecording, stopCameraPreview, onClose]);
+    }, [countdown, cameraEnabled, cameraShape, cameraSize, cameraBorderColor, cameraBorderWidth, cameraGlowEnabled, teleprompterEnabled, teleprompterText, teleprompterSpeed, liveMagnifierEnabled, captureCursorData, presenterNameEnabled, presenterName, recordingMode, selectedWindowId, editAfterRecording, onStartRecording, stopCameraPreview, onClose]);
 
 
     const handleClose = () => {
+        windowSourceRequestIdRef.current += 1;
         stopCameraPreview();
         setCountdown(null);
+        setIsWindowSourcesLoading(false);
         setIsWindowSelectorVisible(false);
+        setWindowSources([]);
         setSelectedWindowId(null);
         onClose();
     };
 
     const handleStartClick = async () => {
         if (recordingMode === 'window') {
+            const requestId = ++windowSourceRequestIdRef.current;
+            setIsWindowSelectorVisible(true);
+            setIsWindowSourcesLoading(true);
+            setWindowSources([]);
             try {
                 // Fetch window sources before showing selector
                 const sources = await (window as any).electronAPI.getScreenSources();
-                const filtered = sources.filter((s: any) => !s.id.startsWith("screen:"));
-
                 // Prefer dedicated getWindowSources for better thumbnails
+                let nextWindowSources: WindowSource[];
                 if ((window as any).electronAPI.getWindowSources) {
                     const winSources = await (window as any).electronAPI.getWindowSources();
-                    setWindowSources(winSources);
+                    nextWindowSources = winSources;
                 } else {
                     // Fallback to primary screen sources but mapped correctly
-                    const formatted: WindowSource[] = sources.map((s: any) => ({
+                    nextWindowSources = sources.map((s: any) => ({
                         id: s.id,
                         name: s.name,
                         thumbnailDataUrl: s.thumbnailDataUrl || s.appIcon || '',
                     })).filter((s: any) => s.id.startsWith("window:"));
-                    setWindowSources(formatted);
                 }
 
-                setIsWindowSelectorVisible(true);
+                if (windowSourceRequestIdRef.current !== requestId) {
+                    return;
+                }
+
+                setWindowSources(nextWindowSources);
+                setIsWindowSourcesLoading(false);
             } catch (err) {
+                if (windowSourceRequestIdRef.current !== requestId) {
+                    return;
+                }
+
                 console.error("Failed to fetch windows:", err);
+                setIsWindowSelectorVisible(false);
+                setIsWindowSourcesLoading(false);
                 setCountdown(3); // Fallback to auto-select
             }
         } else {
@@ -232,7 +264,9 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
 
     const handleWindowSelect = (id: string) => {
         console.log("[RecordingSetup] Window selected:", id);
+        windowSourceRequestIdRef.current += 1;
         setSelectedWindowId(id);
+        setIsWindowSourcesLoading(false);
         setIsWindowSelectorVisible(false);
         // Start the countdown after window is selected
         setCountdown(3);
@@ -253,13 +287,16 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
                         <div className={styles.onboardingTip}>
                             <Lightbulb size={14} />
                             <span>Record → Trim → Export. Your recording opens in the editor when you stop.</span>
-                            <button type="button" className={styles.tipDismiss} onClick={() => { setShowRecordingTip(false); localStorage.setItem('snipfocus-hasSeenRecordingTip', '1'); }} aria-label="Dismiss"><X size={12} /></button>
+                            <button type="button" className={styles.tipDismiss} onClick={() => { setShowRecordingTip(false); localStorage.setItem('ageofscreen-hasSeenRecordingTip', '1'); }} aria-label="Dismiss"><X size={12} /></button>
                         </div>
                     )}
                     <PreviewPane
                         countdown={countdown} cameraEnabled={cameraEnabled} stream={stream}
                         videoRef={videoRef} cameraSize={cameraSize} cameraShape={cameraShape}
                         cameraBorderColor={cameraBorderColor}
+                        cameraBorderWidth={cameraBorderWidth}
+                        cameraGlowEnabled={cameraGlowEnabled}
+                        isPreviewStarting={isPreviewStarting}
                         presenterNameEnabled={presenterNameEnabled} presenterName={presenterName}
                     />
 
@@ -296,6 +333,7 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
                                         className={`${styles.optionBtn} ${cameraShape === opt.value ? styles.active : ''}`}
                                         onClick={() => setCameraShape(opt.value)}
                                         title={opt.label}
+                                        aria-label={opt.label}
                                     >
                                         <opt.icon size={16} strokeWidth={cameraShape === opt.value ? 2.5 : 2} />
                                     </button>
@@ -310,7 +348,38 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
                                     style={{ '--glow-color': cameraBorderColor + '44' } as any}
                                 />
                             </div>
+                            <button
+                                className={`${styles.advancedToggle} ${isAdvancedVisible ? styles.active : ''}`}
+                                onClick={() => setIsAdvancedVisible(!isAdvancedVisible)}
+                                title="Advanced Border Settings"
+                            >
+                                <Settings2 size={16} />
+                            </button>
                             </div>
+
+                            {isAdvancedVisible && (
+                                <div className={styles.advancedSettings}>
+                                    <div className={styles.advancedRow}>
+                                        <span className={styles.advancedLabel}>Border Width</span>
+                                        <input
+                                            type="range" min={0} max={12} value={cameraBorderWidth}
+                                            onChange={(e) => setCameraBorderWidth(Number(e.target.value))}
+                                            className={styles.miniSlider}
+                                        />
+                                        <span className={styles.miniValue}>{cameraBorderWidth}px</span>
+                                    </div>
+                                    <div className={styles.advancedRow}>
+                                        <span className={styles.advancedLabel}>Floating Glow</span>
+                                        <button
+                                            className={`${styles.glowToggle} ${cameraGlowEnabled ? styles.active : ''}`}
+                                            onClick={() => setCameraGlowEnabled(!cameraGlowEnabled)}
+                                        >
+                                            <Sparkles size={12} />
+                                            {cameraGlowEnabled ? 'On' : 'Off'}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                             <div className={styles.sliderRow}>
                                 <span className={styles.sliderLabel}>Size</span>
                                 <input
@@ -348,8 +417,13 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
             {isWindowSelectorVisible && (
                 <WindowSelector
                     sources={windowSources}
+                    isLoading={isWindowSourcesLoading}
                     onSelect={handleWindowSelect}
-                    onCancel={() => setIsWindowSelectorVisible(false)}
+                    onCancel={() => {
+                        windowSourceRequestIdRef.current += 1;
+                        setIsWindowSourcesLoading(false);
+                        setIsWindowSelectorVisible(false);
+                    }}
                 />
             )}
         </div>

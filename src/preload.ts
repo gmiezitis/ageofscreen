@@ -24,9 +24,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
     invokeCapture: (type: string) => ipcRenderer.invoke("invoke-capture", type),
     saveImageAs: (dataUrl: string) => ipcRenderer.invoke("save-image-as", dataUrl),
+    showItemInFolder: (filePath: string) => ipcRenderer.invoke("show-item-in-folder", filePath),
     importImage: () => ipcRenderer.invoke("import-image"),
     importRandomImage: () => ipcRenderer.invoke("import-random-image"),
     focusMainWindow: () => ipcRenderer.send("focus-main-window"),
+    minimizeMainWindow: () => ipcRenderer.send("minimize-window"),
+    maximizeMainWindow: () => ipcRenderer.send("maximize-window"),
     closeMainWindow: () => ipcRenderer.send("close-main-window"),
 
     // Recording APIs
@@ -55,11 +58,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.on("webcam-update", listener);
         return () => ipcRenderer.removeListener("webcam-update", listener);
     },
-    onTypingZoomUpdate: (callback: (state: { isZoomed: boolean; x: number; y: number; changed: boolean }) => void) => {
-        const listener = (_event: any, state: { isZoomed: boolean; x: number; y: number; changed: boolean }) => callback(state);
-        ipcRenderer.on("typing-zoom-update", listener);
-        return () => ipcRenderer.removeListener("typing-zoom-update", listener);
-    },
     requestWebcamBroadcast: () => ipcRenderer.send("request-webcam-broadcast"),
     hideWebcamWindow: () => ipcRenderer.send("webcam-hide-camera"),
     showWebcamWindow: () => ipcRenderer.send("webcam-show-camera"),
@@ -78,7 +76,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     settings: {
         getOnboardingState: (): Promise<OnboardingState> => ipcRenderer.invoke("settings:get-onboarding-state"),
         completeOnboarding: (): Promise<OnboardingState> => ipcRenderer.invoke("settings:complete-onboarding"),
-        setCaptureShortcut: (preference: CaptureShortcutPreference): Promise<OnboardingState> =>
-            ipcRenderer.invoke("settings:set-capture-shortcut", preference),
+        onChanged: (callback: (state: OnboardingState) => void) => {
+            const listener = (_event: IpcRendererEvent, state: OnboardingState) => callback(state);
+            ipcRenderer.on("settings:onboarding-state-changed", listener);
+            return () => ipcRenderer.removeListener("settings:onboarding-state-changed", listener);
+        },
     },
 });

@@ -1,12 +1,12 @@
-# SnipFocus Privacy Policy
+# ageofscreen Privacy Policy
 
 Publish this content at a public URL before Store submission, for example:
 
-- `https://snipfocus.app/privacy`
+- `https://ageofscreen.app/privacy`
 
 ## Summary
 
-SnipFocus is a local-first Windows desktop app for screen capture, recording, trimming, styling, and exporting videos. By default, SnipFocus processes recordings on the device and does not upload captured media to a cloud service.
+ageofscreen is a local-first Windows desktop app for screen capture, recording, trimming, styling, and exporting videos. By default, ageofscreen processes recordings on the device and does not upload captured media to a cloud service.
 
 ## Data we may access
 
@@ -30,7 +30,7 @@ SnipFocus is a local-first Windows desktop app for screen capture, recording, tr
 
 ## Local storage
 
-SnipFocus stores temporary processing files in the app temp directory and preferences/support files in the app data directory. Exported recordings are saved only to locations the user selects or to user library folders used by the app flow.
+ageofscreen stores temporary processing files in the app temp directory and preferences/support files in the app data directory. Exported recordings are saved only to locations the user selects or to user library folders used by the app flow.
 
 ## Support bundles
 
@@ -38,7 +38,7 @@ If the user exports a support bundle, it may contain runtime information, featur
 
 ## Contact
 
-- Support URL: `https://snipfocus.app/support`
-- Support email: `support@snipfocus.app`
+- Support URL: `https://ageofscreen.app/support`
+- Support email: `support@ageofscreen.app`
 
 Replace these placeholders with your production URLs before submission.

@@ -9,14 +9,14 @@
         "CaptureManager.cpp"
       ],
       "include_dirs": [
-        "../../../node_modules/node-addon-api"
+        "<!@(node -p \"require('node-addon-api').include\")"
       ],
       "libraries": [
         "d3d11.lib",
         "dxgi.lib"
       ],
       "dependencies": [
-        "../../../node_modules/node-addon-api/nothing.gyp:nothing"
+        "<!(node -p \"require('node-addon-api').gyp\")"
       ],
       "defines": [ "NAPI_DISABLE_CPP_EXCEPTIONS" ],
       "msvs_settings": {

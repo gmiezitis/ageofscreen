@@ -98,7 +98,7 @@ if (!fs.existsSync(outDir)) {
 
 const appDirs = fs
     .readdirSync(outDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith("SnipFocus-win32-"))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("ageofscreen-win32-"))
     .map((entry) => path.join(outDir, entry.name));
 
 if (appDirs.length === 0) {

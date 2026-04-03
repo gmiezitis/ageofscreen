@@ -1,5 +1,6 @@
 import React from 'react';
 import { Camera } from 'lucide-react';
+import { CameraShape, getCameraDimensionsForWidth, getCameraShapeStyle, normalizeCameraShape } from '../../shared/cameraShapes';
 import styles from '../RecordingSetup.module.css';
 
 interface PreviewPaneProps {
@@ -8,8 +9,11 @@ interface PreviewPaneProps {
     stream: MediaStream | null;
     videoRef: React.RefObject<HTMLVideoElement | null>;
     cameraSize: number;
-    cameraShape: string;
+    cameraShape: CameraShape;
     cameraBorderColor?: string;
+    cameraBorderWidth: number;
+    cameraGlowEnabled: boolean;
+    isPreviewStarting: boolean;
     presenterNameEnabled: boolean;
     presenterName: string;
 }
@@ -22,9 +26,16 @@ export const PreviewPane: React.FC<PreviewPaneProps> = ({
     cameraSize,
     cameraShape,
     cameraBorderColor = '#22c55e',
+    cameraBorderWidth,
+    cameraGlowEnabled,
+    isPreviewStarting,
     presenterNameEnabled,
     presenterName,
 }) => {
+    const normalizedShape = normalizeCameraShape(cameraShape);
+    const previewDimensions = getCameraDimensionsForWidth(normalizedShape, cameraSize);
+    const previewShapeStyle = getCameraShapeStyle(normalizedShape);
+
     return (
         <div className={styles.cameraPreview}>
             {countdown !== null ? (
@@ -33,13 +44,11 @@ export const PreviewPane: React.FC<PreviewPaneProps> = ({
                 <div
                     className={styles.previewShape}
                     style={{
-                        width: `${60 + (cameraSize - 60) * 1}px`,
-                        height: cameraShape === 'pill' ? `${(60 + (cameraSize - 60) * 1) / 1.7}px` : `${60 + (cameraSize - 60) * 1}px`,
-                        borderRadius: cameraShape === 'circle' ? '50%'
-                            : cameraShape === 'pill' ? '9999px'
-                                : cameraShape === 'rounded' ? '24px'
-                                    : '12px',
-                        border: `2px solid ${cameraBorderColor}`,
+                        width: `${previewDimensions.width}px`,
+                        height: `${previewDimensions.height}px`,
+                        border: `${cameraBorderWidth}px solid ${cameraBorderColor}`,
+                        boxShadow: cameraGlowEnabled ? `0 0 20px ${cameraBorderColor}88, inset 0 0 10px ${cameraBorderColor}44` : 'none',
+                        ...previewShapeStyle,
                     }}
                 >
                     <video
@@ -54,6 +63,11 @@ export const PreviewPane: React.FC<PreviewPaneProps> = ({
                             {presenterName}
                         </div>
                     )}
+                </div>
+            ) : cameraEnabled && isPreviewStarting ? (
+                <div className={styles.previewLoading} aria-hidden="true">
+                    <div className={styles.previewSkeletonShape} />
+                    <div className={styles.previewSkeletonLine} />
                 </div>
             ) : (
                 <div className={styles.previewPlaceholder}>

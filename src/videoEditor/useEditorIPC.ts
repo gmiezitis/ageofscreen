@@ -38,6 +38,7 @@ const applyLoadedVideoToState = (
     state.setTextOverlays([]);
     state.setAnnotationOverlays([]);
     state.setAnnotationCanvasSize(null);
+    state.crop?.clearCrop?.();
     state.setIsPlaying(false);
     state.setHistory?.([]);
     state.setHistoryIndex?.(-1);
@@ -156,7 +157,7 @@ const buildAgentSummaryOverlays = (payload: AgentSummaryPayload, duration: numbe
 
     overlays.push({
         id: `agent-footer-${Date.now()}`,
-        text: payload.style === 'focus_demo' ? 'Focused walkthrough generated locally' : 'Summary prepared locally in SnipFocus',
+        text: payload.style === 'focus_demo' ? 'Focused walkthrough generated locally' : 'Summary prepared locally in ageofscreen',
         startTime: Math.max(0.4, safeDuration - 2.6),
         duration: 2.4,
         x: 50,
@@ -175,6 +176,7 @@ const applyAgentSummaryToState = (
     state: any,
     payload: AgentSummaryPayload,
     showNotification: (type: string, title: string, message: string) => void,
+    saveHistory?: (stateOverride?: any) => void,
 ) => {
     let attempts = 0;
     const apply = () => {
@@ -185,10 +187,22 @@ const applyAgentSummaryToState = (
             return;
         }
 
-        state.setBackgroundColor(payload.style === 'focus_demo' ? '#0f172a' : '#111827');
-        state.setVideoPadding(16);
-        state.setColorGrade('studio_clean');
-        state.setTextOverlays(buildAgentSummaryOverlays(payload, mediaDuration));
+        const nextBackgroundColor = payload.style === 'focus_demo' ? '#0f172a' : '#111827';
+        const nextVideoPadding = 16;
+        const nextColorGrade = 'studio_clean';
+        const nextTextOverlays = buildAgentSummaryOverlays(payload, mediaDuration);
+
+        saveHistory?.();
+        state.setBackgroundColor(nextBackgroundColor);
+        state.setVideoPadding(nextVideoPadding);
+        state.setColorGrade(nextColorGrade);
+        state.setTextOverlays(nextTextOverlays);
+        saveHistory?.({
+            backgroundColor: nextBackgroundColor,
+            videoPadding: nextVideoPadding,
+            colorGrade: nextColorGrade,
+            textOverlays: nextTextOverlays,
+        });
         showNotification('success', 'Agent Summary Ready', 'Summary captions and clean styling were added. Review and export when ready.');
     };
 
@@ -203,6 +217,7 @@ const applyAgentSummaryToState = (
 export function useEditorIPC(
     state: any, 
     showNotification: (type: string, title: string, message: string) => void,
+    saveHistory?: (stateOverride?: any) => void,
     onLoadVideo?: () => void
 ) {
     const stateRef = useRef(state);
@@ -284,11 +299,13 @@ export function useEditorIPC(
         }, 0);
 
         const cleanupBg = api.on('update-background-color', (color: string) => {
+            saveHistory?.();
             stateRef.current.setBackgroundColor(color);
+            saveHistory?.({ backgroundColor: color });
         });
 
         const cleanupAgentSummary = api.on('apply-agent-summary', (payload: AgentSummaryPayload) => {
-            applyAgentSummaryToState(stateRef.current, payload, showNotificationRef.current);
+            applyAgentSummaryToState(stateRef.current, payload, showNotificationRef.current, saveHistory);
         });
 
         return () => {

@@ -9,6 +9,7 @@ const ON_CHANNELS = new Set([
     "update-mic-status",
     "drawing-status",
     "stop-stream",
+    "window-visibility",
 ]);
 
 const SEND_CHANNELS = new Set([

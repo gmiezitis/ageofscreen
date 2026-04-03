@@ -1,5 +1,6 @@
-import React, { useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useCallback, useEffect, useMemo } from 'react';
 import { TextOverlay } from '../../../videoEditor/types';
+import { getTextOverlayFontFamily, renderTextOverlaySprite } from '../../../videoEditor/textOverlayRendering';
 
 interface Props {
     tov: TextOverlay;
@@ -7,13 +8,71 @@ interface Props {
     disabled?: boolean;
     onSelect: () => void;
     onMove: (x: number, y: number) => void;
+    onMoveEnd?: () => void;
+    visualFilter?: string;
 }
 
-const TextOverlayDraggable: React.FC<Props> = ({ tov, isSelected, disabled = false, onSelect, onMove }) => {
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+const hexToRgba = (color: string, alpha: number): string => {
+    const hex = color.trim().replace('#', '');
+    if (hex.length !== 6) {
+        return color;
+    }
+
+    const r = Number.parseInt(hex.slice(0, 2), 16);
+    const g = Number.parseInt(hex.slice(2, 4), 16);
+    const b = Number.parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${clamp01(alpha).toFixed(3)})`;
+};
+
+const TextOverlayDraggable: React.FC<Props> = ({
+    tov,
+    isSelected,
+    disabled = false,
+    onSelect,
+    onMove,
+    onMoveEnd,
+    visualFilter,
+}) => {
     const onMoveRef = useRef(onMove);
     const onSelectRef = useRef(onSelect);
+    const onMoveEndRef = useRef(onMoveEnd);
     useEffect(() => { onMoveRef.current = onMove; }, [onMove]);
     useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
+    useEffect(() => { onMoveEndRef.current = onMoveEnd; }, [onMoveEnd]);
+
+    const hasBackground = Boolean(
+        tov.backgroundColor
+        && (tov.backgroundOpacity ?? 0) > 0
+        && (tov.padding ?? 0) > 0,
+    );
+    const strokeWidth = Math.max(0, Math.round(tov.borderWidth ?? 0));
+    const shadowOffsetX = Math.round(tov.shadowOffsetX ?? 0);
+    const shadowOffsetY = Math.round(tov.shadowOffsetY ?? 0);
+    const showShadow = Boolean(
+        tov.shadowColor
+        && (shadowOffsetX !== 0 || shadowOffsetY !== 0),
+    );
+    const sprite = useMemo(
+        () => renderTextOverlaySprite(tov),
+        [
+            tov.backgroundColor,
+            tov.backgroundOpacity,
+            tov.borderColor,
+            tov.borderWidth,
+            tov.color,
+            tov.fontFamily,
+            tov.fontSize,
+            tov.fontWeight,
+            tov.padding,
+            tov.shadowBlur,
+            tov.shadowColor,
+            tov.shadowOffsetX,
+            tov.shadowOffsetY,
+            tov.text,
+        ],
+    );
 
     const onMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
         if (disabled) return;
@@ -44,6 +103,7 @@ const TextOverlayDraggable: React.FC<Props> = ({ tov, isSelected, disabled = fal
             window.removeEventListener('mousemove', handleMove);
             window.removeEventListener('mouseup', handleUp);
             if (!state.moved) onSelectRef.current();
+            else onMoveEndRef.current?.();
         };
         window.addEventListener('mousemove', handleMove);
         window.addEventListener('mouseup', handleUp);
@@ -56,26 +116,59 @@ const TextOverlayDraggable: React.FC<Props> = ({ tov, isSelected, disabled = fal
                 position: 'absolute',
                 left: `${tov.x}%`,
                 top: `${tov.y}%`,
-                transform: 'translate(-50%, -50%)',
+                transform: sprite
+                    ? `translate(-${Math.round(sprite.hotspotX)}px, -${Math.round(sprite.hotspotY)}px)`
+                    : 'translate(-50%, -50%)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: sprite?.width,
+                height: sprite?.height,
                 color: tov.color,
+                fontFamily: getTextOverlayFontFamily(tov),
                 fontWeight: tov.fontWeight || 'normal',
                 fontSize: `${tov.fontSize}px`,
-                backgroundColor: tov.backgroundColor ? `${tov.backgroundColor}${Math.round((tov.backgroundOpacity ?? 0.8) * 255).toString(16).padStart(2, '0')}` : 'transparent',
-                padding: tov.backgroundColor ? `${tov.padding || 8}px` : (isSelected ? '4px 8px' : 0),
-                border: tov.borderWidth ? `${tov.borderWidth}px solid ${tov.borderColor || 'white'}` : (isSelected ? '1px dashed rgba(255,255,255,0.75)' : 'none'),
-                borderRadius: tov.borderRadius ?? 6,
-                boxShadow: tov.shadowColor ? `${tov.shadowOffsetX ?? 2}px ${tov.shadowOffsetY ?? 2}px ${tov.shadowBlur ?? 4}px ${tov.shadowColor}` : '0 2px 10px rgba(0,0,0,0.4)',
-                textShadow: tov.shadowColor ? 'none' : '0 1px 4px rgba(0,0,0,0.5)',
+                lineHeight: 1.12,
+                backgroundColor: !sprite && hasBackground && tov.backgroundColor
+                    ? hexToRgba(tov.backgroundColor, tov.backgroundOpacity ?? 0.8)
+                    : 'transparent',
+                padding: !sprite && hasBackground ? `${Math.max(0, Math.round(tov.padding ?? 0))}px` : 0,
+                borderRadius: 4,
+                outline: isSelected ? '1px dashed rgba(255,255,255,0.75)' : 'none',
+                outlineOffset: isSelected ? '4px' : 0,
+                WebkitTextStroke: !sprite && strokeWidth > 0
+                    ? `${strokeWidth}px ${tov.borderColor || '#020617'}`
+                    : undefined,
+                paintOrder: !sprite && strokeWidth > 0 ? 'stroke fill' : undefined,
+                textShadow: !sprite && showShadow && tov.shadowColor
+                    ? `${shadowOffsetX}px ${shadowOffsetY}px 0 ${tov.shadowColor}`
+                    : 'none',
                 cursor: disabled ? 'default' : isSelected ? 'move' : 'pointer',
                 zIndex: 35,
                 userSelect: 'none',
                 whiteSpace: 'pre-wrap',
                 textAlign: 'center',
-                maxWidth: 'min(70vw, 520px)',
                 pointerEvents: disabled ? 'none' : 'auto',
+                filter: !sprite ? visualFilter || undefined : undefined,
             }}
         >
-            {tov.text}
+            {sprite ? (
+                <img
+                    alt=""
+                    aria-hidden="true"
+                    draggable={false}
+                    src={sprite.file}
+                    style={{
+                        display: 'block',
+                        width: '100%',
+                        height: '100%',
+                        pointerEvents: 'none',
+                        filter: visualFilter || undefined,
+                    }}
+                />
+            ) : (
+                tov.text
+            )}
         </div>
     );
 };

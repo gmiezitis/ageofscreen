@@ -23,20 +23,25 @@
 
 .hexagon {
   fill: rgba(0, 0, 0, 0.4); /* Adds contrast on light backgrounds while remaining transparent */
-  stroke: rgba(255, 255, 255, 0.15);
-  stroke-width: 1;
+  stroke: rgba(255, 255, 255, 0.26);
+  stroke-width: 1.1;
   transition: all 0.3s ease;
 }
 
 .hexGroup:hover .hexagon {
   fill: rgba(255, 255, 255, 0.05);
-  stroke: rgba(255, 255, 255, 0.3);
+  stroke: rgba(255, 255, 255, 0.42);
 }
 
 .centerHexagon {
-  fill: rgba(0, 0, 0, 0.4);
-  stroke: rgba(255, 255, 255, 0.15);
-  stroke-width: 1;
+  fill: transparent;
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 1.1;
+}
+
+.hexGroup:hover .centerHexagon {
+  fill: rgba(255, 255, 255, 0.02);
+  stroke: rgba(255, 255, 255, 0.38);
 }
 
 .hexLabel {
@@ -75,8 +80,8 @@
 
 /* Clean unified borders for all colors */
 .hexagon[data-color] {
-  stroke: rgba(255, 255, 255, 0.15); /* Slightly more visible */
+  stroke: rgba(255, 255, 255, 0.26);
 }
 .hexGroup:hover .hexagon[data-color] {
-  stroke: rgba(255, 255, 255, 0.3);
+  stroke: rgba(255, 255, 255, 0.42);
 }

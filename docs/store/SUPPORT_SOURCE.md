@@ -1,12 +1,12 @@
-# SnipFocus Support
+# ageofscreen Support
 
 Publish this content at a public URL before Store submission, for example:
 
-- `https://snipfocus.app/support`
+- `https://ageofscreen.app/support`
 
 ## Contact
 
-- Email: `support@snipfocus.app`
+- Email: `support@ageofscreen.app`
 
 ## Include in the published page
 

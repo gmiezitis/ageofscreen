@@ -1,5 +1,5 @@
 /**
- * SnipFocus Design System - Animations
+ * ageofscreen Design System - Animations
  * Smooth, delightful transitions and animations
  */
 

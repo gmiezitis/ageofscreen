@@ -1,6 +1,6 @@
 # Microsoft Store Deployment Plan
 
-This plan turns SnipFocus into a Microsoft Store-ready release with the smoothest possible first submission and update path.
+This plan turns ageofscreen into a Microsoft Store-ready release with the smoothest possible first submission and update path.
 
 It follows the current product priority order:
 1. Recording reliability and smooth playback
@@ -10,7 +10,7 @@ It follows the current product priority order:
 
 ## Goal
 
-Ship a Store-safe Windows release of SnipFocus that:
+Ship a Store-safe Windows release of ageofscreen that:
 - installs cleanly through `MSIX`
 - passes Windows App Certification Kit
 - preserves the core `Record -> Trim -> Style -> Export` flow

@@ -132,6 +132,7 @@ const CURSOR_CLICK_ACTIVE_MS = 130;
 const CURSOR_SMOOTHING_MIN_ALPHA = 0.16;
 const CURSOR_SMOOTHING_MAX_ALPHA = 0.5;
 const CURSOR_SMOOTHING_SPEED_REF = 180;
+const CURSOR_MOTION_DISTANCE_THRESHOLD_PX = 0.5;
 
 const catmullRomInterpolate = (p0: number, p1: number, p2: number, p3: number, t: number): number => {
     const t2 = t * t;
@@ -142,6 +143,52 @@ const catmullRomInterpolate = (p0: number, p1: number, p2: number, p3: number, t
         + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
         + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
     );
+};
+
+const findLastEventIndexAtOrBeforeTime = <T extends { t: number }>(
+    events: T[],
+    targetTime: number,
+): number => {
+    let low = 0;
+    let high = events.length - 1;
+    let result = -1;
+
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        if (events[mid].t <= targetTime) {
+            result = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    return result;
+};
+
+const findNearestClickTimestamp = (
+    clickEvents: Array<{ t: number }>,
+    targetTime: number,
+): number | null => {
+    if (clickEvents.length === 0) {
+        return null;
+    }
+
+    const previousIndex = findLastEventIndexAtOrBeforeTime(clickEvents, targetTime);
+    const candidates = [
+        previousIndex >= 0 ? clickEvents[previousIndex] : null,
+        previousIndex + 1 < clickEvents.length ? clickEvents[previousIndex + 1] : null,
+    ].filter((event): event is { t: number } => !!event);
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    const nearest = candidates.reduce((closest, event) => (
+        Math.abs(event.t - targetTime) < Math.abs(closest.t - targetTime) ? event : closest
+    ));
+
+    return Math.abs(nearest.t - targetTime) <= CURSOR_CLICK_ACTIVE_MS ? nearest.t : null;
 };
 
 const buildAdaptiveSmoothedCursorEvents = (
@@ -242,16 +289,190 @@ export const prepareCursorPreviewData = (recordedCursorData: any[] | undefined):
     return prepared;
 };
 
+export const getNativeCursorSuppressionState = (recordedCursorData: any[] | undefined): boolean | null => {
+    if (!Array.isArray(recordedCursorData) || recordedCursorData.length === 0) return null;
+
+    const metaEvent = recordedCursorData.find((event) => event?.type === 'meta');
+    return typeof metaEvent?.nativeCursorSuppressed === 'boolean'
+        ? metaEvent.nativeCursorSuppressed
+        : null;
+};
+
 export const isCursorReplacementSafe = (recordedCursorData: any[] | undefined): boolean => {
     if (!Array.isArray(recordedCursorData) || recordedCursorData.length === 0) return false;
 
-    const metaEvent = recordedCursorData.find((event) => event?.type === 'meta');
-    if (typeof metaEvent?.nativeCursorSuppressed === 'boolean') {
-        return metaEvent.nativeCursorSuppressed;
+    const hasCursorTimeline = recordedCursorData.some((event) => event?.type === 'move' || event?.type === 'click');
+    if (!hasCursorTimeline) return false;
+
+    const nativeCursorSuppressed = getNativeCursorSuppressionState(recordedCursorData);
+    if (nativeCursorSuppressed != null) {
+        return nativeCursorSuppressed;
     }
 
-    // Older recordings did not annotate cursor suppression status.
+    // Legacy ageofscreen recordings can have cursor metadata without the newer
+    // nativeCursorSuppressed flag. Keep cursor tools available for that data.
     return true;
+};
+
+export type TimeRange = {
+    startTime: number;
+    endTime: number;
+};
+
+const mergeTimeRanges = (ranges: TimeRange[]): TimeRange[] => {
+    const normalized = ranges
+        .map((range) => ({
+            startTime: Math.max(0, Number.isFinite(range.startTime) ? Number(range.startTime.toFixed(3)) : 0),
+            endTime: Math.max(0, Number.isFinite(range.endTime) ? Number(range.endTime.toFixed(3)) : 0),
+        }))
+        .filter((range) => range.endTime > range.startTime)
+        .sort((a, b) => a.startTime - b.startTime);
+
+    if (normalized.length === 0) {
+        return [];
+    }
+
+    return normalized.reduce<TimeRange[]>((merged, range) => {
+        const previous = merged[merged.length - 1];
+        if (!previous || range.startTime > previous.endTime) {
+            merged.push({ ...range });
+            return merged;
+        }
+
+        previous.endTime = Math.max(previous.endTime, range.endTime);
+        return merged;
+    }, []);
+};
+
+const getCursorPositionEvents = (
+    recordedCursorData: any[] | undefined,
+): Array<{ type: 'move' | 'click'; x: number; y: number; t: number }> => (
+    Array.isArray(recordedCursorData)
+        ? recordedCursorData
+            .filter((event) =>
+                event
+                && typeof event.t === 'number'
+                && (event.type === 'move' || event.type === 'click')
+                && typeof event.x === 'number'
+                && typeof event.y === 'number'
+            )
+            .map((event) => ({
+                type: event.type as 'move' | 'click',
+                x: event.x,
+                y: event.y,
+                t: event.t,
+            }))
+            .sort((a, b) => a.t - b.t)
+        : []
+);
+
+export const buildCursorMotionActiveRanges = (
+    recordedCursorData: any[] | undefined,
+    holdSeconds: number,
+    totalDuration = Number.POSITIVE_INFINITY,
+): TimeRange[] => {
+    const cursorEvents = getCursorPositionEvents(recordedCursorData);
+    if (cursorEvents.length < 2) {
+        return [];
+    }
+
+    const safeHoldSeconds = Math.max(0, Number.isFinite(holdSeconds) ? holdSeconds : 0);
+    const activeRanges: TimeRange[] = [];
+
+    let previousEvent = cursorEvents[0];
+    for (let index = 1; index < cursorEvents.length; index += 1) {
+        const currentEvent = cursorEvents[index];
+        const movementDistance = Math.hypot(currentEvent.x - previousEvent.x, currentEvent.y - previousEvent.y);
+
+        if (currentEvent.type === 'move' && movementDistance >= CURSOR_MOTION_DISTANCE_THRESHOLD_PX) {
+            const startTime = Math.max(0, currentEvent.t / 1000);
+            const unclampedEndTime = startTime + safeHoldSeconds;
+            const endTime = Number.isFinite(totalDuration)
+                ? Math.min(totalDuration, unclampedEndTime)
+                : unclampedEndTime;
+
+            if (endTime > startTime) {
+                activeRanges.push({
+                    startTime,
+                    endTime,
+                });
+            }
+        }
+
+        previousEvent = currentEvent;
+    }
+
+    return mergeTimeRanges(activeRanges);
+};
+
+export const invertTimeRanges = (
+    ranges: TimeRange[],
+    totalDuration: number,
+): TimeRange[] => {
+    if (!Number.isFinite(totalDuration) || totalDuration <= 0) {
+        return [];
+    }
+
+    const normalizedRanges = mergeTimeRanges(
+        ranges.map((range) => ({
+            startTime: Math.max(0, Math.min(totalDuration, range.startTime)),
+            endTime: Math.max(0, Math.min(totalDuration, range.endTime)),
+        })),
+    );
+
+    if (normalizedRanges.length === 0) {
+        return [{ startTime: 0, endTime: Number(totalDuration.toFixed(3)) }];
+    }
+
+    const invertedRanges: TimeRange[] = [];
+    let cursor = 0;
+
+    for (const range of normalizedRanges) {
+        if (range.startTime > cursor) {
+            invertedRanges.push({
+                startTime: Number(cursor.toFixed(3)),
+                endTime: Number(range.startTime.toFixed(3)),
+            });
+        }
+        cursor = Math.max(cursor, range.endTime);
+    }
+
+    if (cursor < totalDuration) {
+        invertedRanges.push({
+            startTime: Number(cursor.toFixed(3)),
+            endTime: Number(totalDuration.toFixed(3)),
+        });
+    }
+
+    return invertedRanges.filter((range) => range.endTime > range.startTime);
+};
+
+export const isTimeWithinRanges = (
+    time: number,
+    ranges: TimeRange[],
+): boolean => {
+    if (!Number.isFinite(time) || ranges.length === 0) {
+        return false;
+    }
+
+    let low = 0;
+    let high = ranges.length - 1;
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const range = ranges[mid];
+
+        if (time < range.startTime) {
+            high = mid - 1;
+            continue;
+        }
+        if (time > range.endTime) {
+            low = mid + 1;
+            continue;
+        }
+        return true;
+    }
+
+    return false;
 };
 
 export type PreviewCursorState = {
@@ -307,33 +528,18 @@ export const getPreviewCursorState = (
 
     if (cursorEvents.length === 0) return null;
 
-    let previousEvent: { t: number; x: number; y: number; type: 'move' | 'click' } | null = null;
-    let nextEvent: { t: number; x: number; y: number; type: 'move' | 'click' } | null = null;
-    let previousIndex = 0;
-    let nextIndex = -1;
-
-    for (let i = 0; i < cursorEvents.length; i += 1) {
-        const event = cursorEvents[i];
-        if (event.t <= targetTime) {
-            previousEvent = event;
-            previousIndex = i;
-            continue;
-        }
-        nextEvent = event;
-        nextIndex = i;
-        break;
-    }
-
-    if (!previousEvent) {
-        previousEvent = cursorEvents[0];
-    }
+    const previousIndex = findLastEventIndexAtOrBeforeTime(cursorEvents, targetTime);
+    const safePreviousIndex = previousIndex >= 0 ? previousIndex : 0;
+    const previousEvent = cursorEvents[safePreviousIndex];
+    const nextIndex = previousIndex >= 0 ? previousIndex + 1 : -1;
+    const nextEvent = nextIndex >= 0 && nextIndex < cursorEvents.length ? cursorEvents[nextIndex] : null;
 
     let interpolatedPoint = { x: previousEvent.x, y: previousEvent.y };
     if (nextEvent) {
         if (nextEvent.t > previousEvent.t) {
             const t = Math.max(0, Math.min(1, (targetTime - previousEvent.t) / (nextEvent.t - previousEvent.t)));
             if (mode === 'smooth') {
-                const beforeEvent = cursorEvents[Math.max(0, previousIndex - 1)] ?? previousEvent;
+                const beforeEvent = cursorEvents[Math.max(0, safePreviousIndex - 1)] ?? previousEvent;
                 const afterEvent = cursorEvents[Math.min(cursorEvents.length - 1, nextIndex + 1)] ?? nextEvent;
                 interpolatedPoint = clampPreviewPoint({
                     x: catmullRomInterpolate(beforeEvent.x, previousEvent.x, nextEvent.x, afterEvent.x, t),
@@ -348,27 +554,21 @@ export const getPreviewCursorState = (
         }
     }
 
+    const nearestClickTimestamp = findNearestClickTimestamp(clickEvents, targetTime);
+
     if (mode === 'direct') {
         const directPoint = clampPreviewPoint(interpolatedPoint);
-        const nearestClick = clickEvents.reduce<{ distance: number; timestamp: number | null }>((closest, event) => {
-            const distance = Math.abs(event.t - targetTime);
-            return distance < closest.distance ? { distance, timestamp: event.t } : closest;
-        }, { distance: Number.POSITIVE_INFINITY, timestamp: null });
         return {
             ...directPoint,
-            isClicking: nearestClick.distance <= CURSOR_CLICK_ACTIVE_MS,
-            clickTimestamp: nearestClick.distance <= CURSOR_CLICK_ACTIVE_MS ? nearestClick.timestamp : null,
+            isClicking: nearestClickTimestamp !== null,
+            clickTimestamp: nearestClickTimestamp,
         };
     }
-    const nearestClick = clickEvents.reduce<{ distance: number; timestamp: number | null }>((closest, event) => {
-        const distance = Math.abs(event.t - targetTime);
-        return distance < closest.distance ? { distance, timestamp: event.t } : closest;
-    }, { distance: Number.POSITIVE_INFINITY, timestamp: null });
 
     return {
         ...clampPreviewPoint(interpolatedPoint),
-        isClicking: nearestClick.distance <= CURSOR_CLICK_ACTIVE_MS,
-        clickTimestamp: nearestClick.distance <= CURSOR_CLICK_ACTIVE_MS ? nearestClick.timestamp : null,
+        isClicking: nearestClickTimestamp !== null,
+        clickTimestamp: nearestClickTimestamp,
     };
 };
 

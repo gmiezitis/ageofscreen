@@ -1,5 +1,5 @@
 /**
- * SnipFocus Design System - Colors
+ * ageofscreen Design System - Colors
  * Scandinavian-inspired color palette
  */
 

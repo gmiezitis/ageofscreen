@@ -6,6 +6,7 @@ import type {
   AnnotationObject,
   TextAnnotation,
   PenAnnotation,
+  LineAnnotation,
   ArrowAnnotation,
   HighlighterAnnotation,
   RectangleAnnotation,
@@ -13,13 +14,9 @@ import type {
   StepAnnotation,
   BlurAnnotation,
   SymbolAnnotation,
-  FocusRectangleAnnotation
+  FocusRectangleAnnotation,
 } from '../types';
-import {
-  penSizeValues,
-  textSizeValues,
-  highlighterSizeValues
-} from '../styles';
+import { textSizeValues } from '../styles';
 import { CanvasRenderer } from '../services/canvasRenderer';
 
 interface AnnotationCanvasProps {
@@ -44,6 +41,8 @@ interface AnnotationCanvasProps {
   highlighterWidth: number;
   textColor: string;
   selectedTextSize: PenSize;
+  defaultTextFontSize: number;
+  defaultTextBoxWidth: number;
   stepColor: string;
   selectedStepSize: PenSize;
   selectedStepSymbol?: string;
@@ -81,7 +80,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
   previewCanvasRef,
   blurredImageCanvasRef,
   imageElementRef,
-  canvasContainerRef,
+  canvasContainerRef: _canvasContainerRef,
   isImageLoaded,
   capturedDataUrl,
   selectedTool,
@@ -93,6 +92,8 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
   highlighterWidth,
   textColor,
   selectedTextSize,
+  defaultTextFontSize,
+  defaultTextBoxWidth,
   stepColor,
   selectedStepSize,
   selectedStepSymbol,
@@ -102,24 +103,65 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
   blurBrushSize,
   isDrawing,
   setIsDrawing,
-  lastPosition,
+  lastPosition: _lastPosition,
   setLastPosition,
   annotations,
   selectedAnnotationId,
   isEditing,
   annotationActions,
   scrollOffset,
-  setScrollOffset,
+  setScrollOffset: _setScrollOffset,
   dynamicCursorStyle,
   onStepCounterIncrement,
   onToolSelect, // Destructure new prop
 }) => {
-  // Refs for drag optimization
-  const canvasRectRef = useRef<DOMRect | null>(null);
-  const canvasScaleRef = useRef<{ x: number; y: number } | null>(null);
+  const [hoverCursor, setHoverCursor] = React.useState<string | null>(null);
+
   const relativeStartPosRef = useRef<{ x: number; y: number } | null>(null);
-  const previewElementStartPosRef = useRef<{ x: number; y: number } | null>(null);
-  const penLastRelativePosRef = useRef<{ x: number; y: number } | null>(null);
+  const imageResizeStateRef = useRef<{
+    id: string;
+    corner: "nw" | "ne" | "sw" | "se";
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+    startAnnotationX: number;
+    startAnnotationY: number;
+    aspectRatio: number;
+  } | null>(null);
+
+  const clearPreviewCanvas = useCallback(() => {
+    const previewCanvas = previewCanvasRef.current;
+    const ctx = previewCanvas?.getContext("2d");
+    if (!previewCanvas || !ctx) return;
+    ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+  }, [previewCanvasRef]);
+
+  const findImageResizeHandleAtPoint = useCallback((x: number, y: number) => {
+    for (let i = annotations.length - 1; i >= 0; i--) {
+      const annotation = annotations[i];
+      if (annotation.type !== "image") continue;
+
+      const handle = CanvasRenderer.getImageResizeHandles(annotation, null).find((candidate) => {
+        const half = candidate.size / 2 + CanvasRenderer.IMAGE_HANDLE_HIT_PADDING;
+        return (
+          x >= candidate.x - half
+          && x <= candidate.x + half
+          && y >= candidate.y - half
+          && y <= candidate.y + half
+        );
+      });
+
+      if (handle) {
+        return {
+          annotation,
+          corner: handle.corner,
+        };
+      }
+    }
+
+    return null;
+  }, [annotations]);
 
   // Helper: Simple Hit Test
   const findAnnotationAtPoint = (x: number, y: number): string | null => {
@@ -137,6 +179,10 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
     return null;
   };
 
+  useEffect(() => {
+    clearPreviewCanvas();
+  }, [clearPreviewCanvas, selectedTool]);
+
   // --- Mouse Event Handlers ---
   const handleMouseDown = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -152,6 +198,29 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
 
       // Store relative start position for shapes and other tools
       relativeStartPosRef.current = { x, y };
+
+      if (selectedTool === "move" || selectedTool === "select") {
+        const resizeTarget = findImageResizeHandleAtPoint(x, y);
+        if (resizeTarget) {
+          if (selectedAnnotationId !== resizeTarget.annotation.id) {
+            annotationActions.selectAnnotation(resizeTarget.annotation.id);
+          }
+          annotationActions.saveStateToHistory?.();
+          imageResizeStateRef.current = {
+            id: resizeTarget.annotation.id,
+            corner: resizeTarget.corner,
+            startX: x,
+            startY: y,
+            startWidth: resizeTarget.annotation.width,
+            startHeight: resizeTarget.annotation.height,
+            startAnnotationX: resizeTarget.annotation.x,
+            startAnnotationY: resizeTarget.annotation.y,
+            aspectRatio: resizeTarget.annotation.aspectRatio || (resizeTarget.annotation.width / Math.max(1, resizeTarget.annotation.height)),
+          };
+          setIsDrawing(true);
+          return;
+        }
+      }
 
       // Select/Move Logic
       if (selectedTool === "move" || selectedTool === "select") {
@@ -246,7 +315,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
         };
 
         annotationActions.addAnnotation(newAnnotation);
-      } else if (["arrow", "rectangle", "ellipse", "text"].includes(selectedTool)) {
+      } else if (["line", "arrow", "rectangle", "ellipse", "text"].includes(selectedTool)) {
         // Start interactive drawing for shapes AND text box
         setIsDrawing(true);
       } else if (selectedTool === "blur" && selectedBlurMode === "focus") {
@@ -274,13 +343,15 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       setIsDrawing,
       setLastPosition,
       onStepCounterIncrement,
-      annotations // Added dependency for hit test
+      annotations, // Added dependency for hit test
+      findImageResizeHandleAtPoint,
+      selectedAnnotationId,
     ]
   );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!canvasRef.current || !isDrawing) return;
+      if (!canvasRef.current) return;
 
       const canvas = canvasRef.current;
       const rect = canvas.getBoundingClientRect();
@@ -290,8 +361,64 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       const x = (e.clientX - rect.left) * scaleX;
       const y = (e.clientY - rect.top) * scaleY;
 
+      if (!isDrawing) {
+        if (selectedTool === "move" || selectedTool === "select") {
+          // Detect hover over resize handles
+          const resizeTarget = findImageResizeHandleAtPoint(x, y);
+          if (resizeTarget && resizeTarget.annotation.id === selectedAnnotationId) {
+            const corner = resizeTarget.corner;
+            const cursor = corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize";
+            if (hoverCursor !== cursor) setHoverCursor(cursor);
+          } else {
+            const annId = findAnnotationAtPoint(x, y);
+            if (annId) {
+              if (hoverCursor !== "move") setHoverCursor("move");
+            } else if (hoverCursor) {
+              setHoverCursor(null);
+            }
+          }
+        } else if (hoverCursor) {
+          setHoverCursor(null);
+        }
+        return;
+      }
+
+      if ((selectedTool === "move" || selectedTool === "select") && imageResizeStateRef.current) {
+        const resizeState = imageResizeStateRef.current;
+        const corner = resizeState.corner;
+        const cursor = corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize";
+        if (hoverCursor !== cursor) setHoverCursor(cursor);
+
+        const minWidth = 48;
+        let nextWidth = resizeState.startWidth;
+
+        if (resizeState.corner === "ne" || resizeState.corner === "se") {
+          nextWidth = Math.max(minWidth, resizeState.startWidth + (x - resizeState.startX));
+        } else {
+          nextWidth = Math.max(minWidth, resizeState.startWidth - (x - resizeState.startX));
+        }
+
+        const aspectRatio = Math.max(0.1, resizeState.aspectRatio || 1);
+        const nextHeight = Math.max(32, nextWidth / aspectRatio);
+        const nextX = resizeState.corner === "nw" || resizeState.corner === "sw"
+          ? resizeState.startAnnotationX + (resizeState.startWidth - nextWidth)
+          : resizeState.startAnnotationX;
+        const nextY = resizeState.corner === "nw" || resizeState.corner === "ne"
+          ? resizeState.startAnnotationY + (resizeState.startHeight - nextHeight)
+          : resizeState.startAnnotationY;
+
+        (annotationActions.updateAnnotationLive ?? annotationActions.updateAnnotation)(resizeState.id, {
+          x: nextX,
+          y: nextY,
+          width: nextWidth,
+          height: nextHeight,
+        });
+        return;
+      }
+
       // Dragging logic
-      if ((selectedTool === "move" || selectedTool === "select")) {
+      if (selectedTool === "move" || selectedTool === "select") {
+        if (hoverCursor !== "grabbing") setHoverCursor("grabbing");
         annotationActions.updateDragOffset({ x, y });
         return;
       }
@@ -342,6 +469,9 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
               CanvasRenderer.drawRectangleObject(ctx, {
                 type: 'rectangle', x: rx, y: ry, width: rw, height: rh, color: penColor, lineWidth: penWidth
               } as any);
+            } else if (selectedTool === "line") {
+              ctx.strokeStyle = penColor;
+              CanvasRenderer.drawLine(ctx, startPos.x, startPos.y, x, y);
             } else if (selectedTool === "arrow") {
               ctx.strokeStyle = penColor;
               ctx.fillStyle = penColor;
@@ -367,6 +497,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
         }
       }
     },
+
     [
       isDrawing,
       selectedTool,
@@ -378,6 +509,8 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       penColor,
       penWidth,
       textColor,
+      findImageResizeHandleAtPoint,
+      hoverCursor,
     ]
   );
 
@@ -395,6 +528,12 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       const x = (e.clientX - rect.left) * scaleX;
       const y = (e.clientY - rect.top) * scaleY;
 
+      if ((selectedTool === "move" || selectedTool === "select") && imageResizeStateRef.current) {
+        imageResizeStateRef.current = null;
+        setIsDrawing(false);
+        return;
+      }
+
       // Stop dragging if moving
       if (selectedTool === "move" || selectedTool === "select") {
         annotationActions.stopDragging();
@@ -402,7 +541,21 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
         return;
       }
 
-      if (selectedTool === "arrow" && relativeStartPosRef.current) {
+      if (selectedTool === "line" && relativeStartPosRef.current) {
+        const startPos = relativeStartPosRef.current;
+        const newAnnotation: LineAnnotation = {
+          id: `line_${Date.now()}`,
+          type: "line",
+          startX: startPos.x,
+          startY: startPos.y,
+          endX: x,
+          endY: y,
+          color: penColor,
+          width: penWidth,
+          size: selectedPenSize,
+        };
+        annotationActions.addAnnotation(newAnnotation);
+      } else if (selectedTool === "arrow" && relativeStartPosRef.current) {
         // Complete arrow drawing with user-defined start and end points
         const startPos = relativeStartPosRef.current;
         const newAnnotation: ArrowAnnotation = {
@@ -470,25 +623,27 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
         let rectY = Math.min(startPos.y, y);
         let rectWidth = Math.abs(x - startPos.x);
         let rectHeight = Math.abs(y - startPos.y);
+        const minBoxHeight = Math.max(52, Math.round(defaultTextFontSize * 2.2));
 
         // If click without drag (small box), create a default box
         if (rectWidth < 10 || rectHeight < 10) {
-          const defaultSize = textSizeValues[selectedTextSize] || 24;
-          rectWidth = 200;
-          rectHeight = defaultSize * 1.5;
+          rectWidth = defaultTextBoxWidth;
+          rectHeight = minBoxHeight;
           // Center on click
           rectX = startPos.x - rectWidth / 2;
           rectY = startPos.y - rectHeight / 2;
+        } else {
+          rectWidth = Math.max(120, rectWidth);
+          rectHeight = Math.max(minBoxHeight, rectHeight);
         }
 
-        // Auto-size font to fit height approx 70% of box height
-        const fontSize = Math.floor(rectHeight * 0.7);
+        const fontSize = defaultTextFontSize;
 
         const newAnnotation: TextAnnotation = {
           id: `text_${Date.now()}`,
           type: "text",
-          x: rectX,
-          y: rectY + rectHeight / 2, // Baseline approx middle
+          x: rectX + 12,
+          y: rectY + 12,
           content: "",
           color: textColor,
           font: `${fontSize}px sans-serif`,
@@ -557,15 +712,14 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       penColor,
       penWidth,
       selectedPenSize,
-      scrollOffset,
-      highlighterColor,
       textColor,
       selectedTextSize,
+      defaultTextFontSize,
+      defaultTextBoxWidth,
       selectedBlurMode,
       annotationActions,
       setIsDrawing,
-      textSizeValues,
-      onToolSelect
+      onToolSelect,
     ]
   );
 
@@ -628,6 +782,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
         isEditing,
         img: imgElement,
         scrollOffset,
+        blurredImageCanvas: blurredImageCanvasRef.current,
       });
 
       context.restore();
@@ -655,18 +810,27 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       // Initial draw or update
       redrawCanvas(annotations);
 
-      // If editing, start animation loop for cursor blink
+      // If editing, refresh at the cursor blink cadence instead of redrawing at 60fps.
       if (isEditing) {
-        let animationFrameId: number;
-        const renderLoop = () => {
+        const blinkIntervalId = window.setInterval(() => {
           redrawCanvas(annotations);
-          animationFrameId = requestAnimationFrame(renderLoop);
-        };
-        renderLoop(); // Start loop
-        return () => cancelAnimationFrame(animationFrameId);
+        }, 480);
+        return () => window.clearInterval(blinkIntervalId);
       }
     }
   }, [annotations, isImageLoaded, capturedDataUrl, redrawCanvas, isEditing]);
+
+  const applyTextContentChange = useCallback((
+    annotation: TextAnnotation,
+    nextContent: string,
+    textMeasureContext: CanvasRenderingContext2D | null,
+  ) => {
+    const nextLayout = CanvasRenderer.getTextBoxLayout(annotation, textMeasureContext, nextContent);
+    (annotationActions.updateAnnotationLive ?? annotationActions.updateAnnotation)(annotation.id, {
+      content: nextContent,
+      boxHeight: nextLayout.boxHeight,
+    });
+  }, [annotationActions]);
 
   // --- Keyboard Input for Text ---
   useEffect(() => {
@@ -676,16 +840,19 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       // Find the currently selected annotation
       const annotation = annotations.find(a => a.id === selectedAnnotationId);
       if (!annotation || annotation.type !== 'text') return;
+      const textMeasureContext = canvasRef.current?.getContext("2d")
+        ?? previewCanvasRef.current?.getContext("2d")
+        ?? null;
 
       e.preventDefault(); // Prevent standard browser shortcuts/scrolling
 
       if (e.key === 'Backspace') {
         const newContent = annotation.content.slice(0, -1);
-        annotationActions.updateTextContent(annotation.id, newContent);
+        applyTextContentChange(annotation, newContent, textMeasureContext);
       } else if (e.key === 'Enter') {
         if (e.shiftKey) {
           const newContent = annotation.content + '\n';
-          annotationActions.updateTextContent(annotation.id, newContent);
+          applyTextContentChange(annotation, newContent, textMeasureContext);
         } else {
           // Finish editing on Enter (without Shift)
           annotationActions.stopEditing();
@@ -697,13 +864,13 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         // Regular character input
         const newContent = annotation.content + e.key;
-        annotationActions.updateTextContent(annotation.id, newContent);
+        applyTextContentChange(annotation, newContent, textMeasureContext);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isEditing, selectedAnnotationId, annotations, annotationActions, onToolSelect]);
+  }, [applyTextContentChange, isEditing, selectedAnnotationId, annotations, annotationActions, onToolSelect]);
 
   return (
     <canvas
@@ -718,7 +885,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
         // Removed fixed sizing/object-fit here, handled by parent/renderer to Fix Precision
         width: "100%",
         height: "100%",
-        cursor: dynamicCursorStyle,
+        cursor: hoverCursor ?? dynamicCursorStyle,
       }}
     />
   );

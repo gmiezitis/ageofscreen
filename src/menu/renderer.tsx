@@ -5,8 +5,8 @@ import { RadialMenu, RadialMenuTool } from "../components/RadialMenu";
 import { RecordingSetup, RecordingConfig } from "../components/RecordingSetup";
 import { useRecordingManager } from "../components/RecordingManager";
 import type { AgentJob, AgentRecordingRequest, ShieldMode, ShieldState } from "../shared/agent";
+import { getMenuSleepSuppressedUntil, isMenuSleepSuppressed } from "./menuLifecycle";
 import {
-    Aperture,
     Bot,
     Camera,
     Film,
@@ -26,19 +26,19 @@ const DEFAULT_SHIELD_STATE: ShieldState = {
     networkFilterEnabled: true,
 };
 
-const MENU_SLEEP_RADIUS_X = 210;
-const MENU_SLEEP_RADIUS_Y = 182;
-const MENU_WAKE_CORRIDOR_HALF_WIDTH = 78;
-const MENU_WAKE_CORRIDOR_BOTTOM_OFFSET = 36;
-const AGENT_PANEL_WAKE_WIDTH = 340;
-const AGENT_PANEL_WAKE_HEIGHT = 380;
+const MENU_WAKE_ZONE_WIDTH = 380;
+const MENU_WAKE_ZONE_HEIGHT = 380;
+const MENU_WAKE_ZONE_OFFSET_Y = -12;
+const TRIGGER_WAKE_CORRIDOR_HALF_WIDTH = 28;
+const TRIGGER_WAKE_CORRIDOR_BOTTOM_OFFSET = 28;
 
-type MenuPointerPosition = {
-    screenX: number;
-    screenY: number;
-    localX: number;
-    localY: number;
-};
+const pointInsideRect = (x: number, y: number, rect: DOMRect | null): boolean => (
+    !!rect
+    && x >= rect.left
+    && x <= rect.right
+    && y >= rect.top
+    && y <= rect.bottom
+);
 
 const MenuApp: React.FC = () => {
     const [isRecordingSetupVisible, setIsRecordingSetupVisible] = useState(false);
@@ -46,6 +46,9 @@ const MenuApp: React.FC = () => {
     const [shieldState, setShieldState] = useState<ShieldState>(DEFAULT_SHIELD_STATE);
     const [shieldToast, setShieldToast] = useState<string | null>(null);
     const sleepRequestedRef = useRef(false);
+    const sleepSuppressedUntilRef = useRef(0);
+    const menuWakeZoneRef = useRef<HTMLDivElement | null>(null);
+    const agentPanelRef = useRef<HTMLDivElement | null>(null);
 
     const showTimedStatus = (message: string, durationMs = 3200) => {
         setStatusMessage(message);
@@ -107,42 +110,93 @@ const MenuApp: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        const cleanupMouseMoved = window.menuAPI.onMouseMoved((point: MenuPointerPosition) => {
-            if (isRecordingSetupVisible || isRecording) {
-                sleepRequestedRef.current = false;
-                return;
-            }
-
-            const menuCenterX = window.innerWidth / 2;
-            const menuCenterY = window.innerHeight / 2;
-            const dx = point.localX - menuCenterX;
-            const dy = point.localY - menuCenterY;
-            const withinWakeCorridor = Math.abs(dx) <= MENU_WAKE_CORRIDOR_HALF_WIDTH
-                && point.localY <= menuCenterY + MENU_WAKE_CORRIDOR_BOTTOM_OFFSET;
-            const withinMenuHalo = ((dx * dx) / (MENU_SLEEP_RADIUS_X * MENU_SLEEP_RADIUS_X))
-                + ((dy * dy) / (MENU_SLEEP_RADIUS_Y * MENU_SLEEP_RADIUS_Y)) <= 1;
-            const withinAgentPanelZone = FEATURES.ENABLE_AGENT_SURFACES
-                && shieldState.mode === "agent_local"
-                && point.localX >= window.innerWidth - AGENT_PANEL_WAKE_WIDTH
-                && point.localY >= window.innerHeight - AGENT_PANEL_WAKE_HEIGHT;
-
-            if (withinWakeCorridor || withinMenuHalo || withinAgentPanelZone) {
-                sleepRequestedRef.current = false;
-                return;
-            }
-
-            if (sleepRequestedRef.current) {
-                return;
-            }
-
-            sleepRequestedRef.current = true;
-            window.menuAPI.hideMenu();
-        });
-
-        return () => {
-            cleanupMouseMoved();
+        const applyMenuOpenPayload = (payload: { reason: "manual"; openedAt: number }) => {
+            sleepRequestedRef.current = false;
+            sleepSuppressedUntilRef.current = Math.max(
+                sleepSuppressedUntilRef.current,
+                getMenuSleepSuppressedUntil(payload),
+            );
         };
+
+        const cleanupMenuOpened = window.menuAPI.onMenuOpened(applyMenuOpenPayload);
+        const pendingPayload = window.menuAPI.consumeMenuOpened();
+        if (pendingPayload) {
+            applyMenuOpenPayload(pendingPayload);
+        }
+
+        return cleanupMenuOpened;
+    }, []);
+
+    useEffect(() => {
+        sleepRequestedRef.current = false;
     }, [isRecording, isRecordingSetupVisible, shieldState.mode]);
+
+    const requestSleep = () => {
+        if (
+            isRecordingSetupVisible
+            || isRecording
+            || sleepRequestedRef.current
+            || isMenuSleepSuppressed(sleepSuppressedUntilRef.current)
+        ) {
+            return;
+        }
+
+        sleepRequestedRef.current = true;
+        window.menuAPI.hideMenu();
+    };
+
+    const clearSleepRequest = () => {
+        sleepRequestedRef.current = false;
+    };
+
+    const clearSleepSuppression = () => {
+        sleepSuppressedUntilRef.current = 0;
+    };
+
+    const handleRootMouseEnter = () => {
+        clearSleepRequest();
+    };
+
+    const handleInteractiveMouseEnter = () => {
+        clearSleepRequest();
+        clearSleepSuppression();
+    };
+
+    const handleRootMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+        if (isRecordingSetupVisible || isRecording) {
+            clearSleepRequest();
+            return;
+        }
+
+        const rootRect = event.currentTarget.getBoundingClientRect();
+        const rootCenterX = rootRect.left + (rootRect.width / 2);
+        const menuRect = menuWakeZoneRef.current?.getBoundingClientRect() ?? null;
+        const withinMenu = pointInsideRect(
+            event.clientX,
+            event.clientY,
+            menuRect,
+        );
+        const withinAgentPanel = pointInsideRect(
+            event.clientX,
+            event.clientY,
+            agentPanelRef.current?.getBoundingClientRect() ?? null,
+        );
+        const withinTriggerCorridor = Math.abs(event.clientX - rootCenterX) <= TRIGGER_WAKE_CORRIDOR_HALF_WIDTH
+            && event.clientY <= ((menuRect?.top ?? rootRect.top) + TRIGGER_WAKE_CORRIDOR_BOTTOM_OFFSET);
+
+        if (withinMenu || withinAgentPanel) {
+            clearSleepRequest();
+            clearSleepSuppression();
+            return;
+        }
+
+        if (withinTriggerCorridor) {
+            clearSleepRequest();
+            return;
+        }
+
+        requestSleep();
+    };
 
     const runAgentJob = async (job: AgentJob) => {
         try {
@@ -160,6 +214,8 @@ const MenuApp: React.FC = () => {
                 config.cameraSize,
                 config.presenterNameEnabled ? config.presenterName : undefined,
                 config.cameraBorderColor,
+                config.cameraBorderWidth,
+                config.cameraGlowEnabled,
             );
         }
 
@@ -298,6 +354,9 @@ const MenuApp: React.FC = () => {
                 fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
                 WebkitFontSmoothing: "antialiased",
             }}
+            onMouseMove={handleRootMouseMove}
+            onMouseLeave={requestSleep}
+            onMouseEnter={handleRootMouseEnter}
         >
             <style>
                 {`
@@ -363,18 +422,30 @@ const MenuApp: React.FC = () => {
                 </div>
             )}
 
-            <RadialMenu
-                onHide={() => window.menuAPI.hideMenu()}
-                tools={tools}
-                centerAction={() => {
-                    sleepRequestedRef.current = false;
-                    setIsRecordingSetupVisible(true);
+            <div
+                ref={menuWakeZoneRef}
+                style={{
+                    width: MENU_WAKE_ZONE_WIDTH,
+                    height: MENU_WAKE_ZONE_HEIGHT,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transform: `translateY(${MENU_WAKE_ZONE_OFFSET_Y}px)`,
                 }}
-                centerIcon={<Aperture size={18} strokeWidth={2} />}
-            />
+                onMouseEnter={handleInteractiveMouseEnter}
+            >
+                <RadialMenu
+                    onHide={() => window.menuAPI.hideMenu()}
+                    tools={tools}
+                    centerAction={() => {
+                        sleepRequestedRef.current = false;
+                        setIsRecordingSetupVisible(true);
+                    }}
+                />
+            </div>
 
             {FEATURES.ENABLE_AGENT_SURFACES && !shieldIsHuman && (
-                <div style={agentPanelStyle}>
+                <div ref={agentPanelRef} style={agentPanelStyle} onMouseEnter={handleInteractiveMouseEnter}>
                     <div
                         style={{
                             fontSize: 11,
@@ -434,7 +505,7 @@ const MenuApp: React.FC = () => {
                             bullets: [
                                 "Captured locally with Agent mode",
                                 "Ready for polish and review",
-                                "Prepared for export in SnipFocus",
+                                "Prepared for export in ageofscreen",
                             ],
                             style: "studio_clean",
                         })}
@@ -460,9 +531,5 @@ const MenuApp: React.FC = () => {
 const rootElement = document.getElementById("root");
 if (rootElement) {
     const root = ReactDOM.createRoot(rootElement);
-    root.render(
-        <React.StrictMode>
-            <MenuApp />
-        </React.StrictMode>,
-    );
+    root.render(<MenuApp />);
 }

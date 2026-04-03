@@ -1,5 +1,5 @@
 const FILE_URL_PREFIX = 'file:///';
-const APP_MEDIA_PROTOCOL_PREFIX = 'snipfocus-media://local/';
+const APP_MEDIA_PROTOCOL_PREFIX = 'ageofscreen-media://local/';
 
 export function isRenderableMediaUrl(value: string | null | undefined): boolean {
     if (!value) return false;

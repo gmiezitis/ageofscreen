@@ -8,7 +8,7 @@ interface SmoothCursorProps {
 
 type CursorVariant = 'off' | 'minimal_light' | 'minimal_dark' | 'warm' | 'dot';
 
-const CURSOR_STORAGE_KEY = 'snipfocus-cursor-variant';
+const CURSOR_STORAGE_KEY = 'ageofscreen-cursor-variant';
 const DEFAULT_CURSOR_VARIANT: CursorVariant = 'minimal_light';
 
 const getCursorVariant = (): CursorVariant => {

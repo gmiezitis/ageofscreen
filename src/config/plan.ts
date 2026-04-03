@@ -21,10 +21,10 @@ const parseBooleanFlag = (value: string | undefined): boolean | null => {
 export type PlanTier = "free" | "pro";
 
 export const PLAN_CONFIG = {
-    defaultTier: parsePlanTier(process.env.SNIPFOCUS_DEFAULT_TIER) ?? "free" as PlanTier,
-    devOverrideTier: parsePlanTier(process.env.SNIPFOCUS_DEV_TIER),
+    defaultTier: parsePlanTier(process.env.AGEOFSCREEN_DEFAULT_TIER) ?? "free" as PlanTier,
+    devOverrideTier: parsePlanTier(process.env.AGEOFSCREEN_DEV_TIER),
     freeRecordingSeconds: 180,
-    storeProAddOnId: process.env.SNIPFOCUS_STORE_PRO_ADDON_ID || "pro_features_unlock",
-    allowManualTierOverride: parseBooleanFlag(process.env.SNIPFOCUS_ALLOW_TIER_OVERRIDE)
+    storeProAddOnId: process.env.AGEOFSCREEN_STORE_PRO_ADDON_ID || "pro_features_unlock",
+    allowManualTierOverride: parseBooleanFlag(process.env.AGEOFSCREEN_ALLOW_TIER_OVERRIDE)
         ?? (process.env.NODE_ENV === "development"),
 } as const;

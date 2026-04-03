@@ -19,7 +19,7 @@ import {
 import { FEATURES } from "./src/config/features";
 import { buildReleaseProfile, inferReleaseProfileName } from "./src/config/releaseProfile";
 
-const productName = "SnipFocus";
+const productName = "ageofscreen";
 const packageDescription = "Local-first AI demo video maker";
 const releaseProfile = buildReleaseProfile(inferReleaseProfileName());
 const parsePort = (value: string | undefined, fallback: number): number => {
@@ -31,8 +31,8 @@ const windowsPublisher = process.env.WINDOWS_PUBLISHER || WINDOWS_PUBLISHER_DEFA
 const windowsCertFile = process.env.WINDOWS_CERT_FILE;
 const windowsCertPassword = process.env.WINDOWS_CERT_PASSWORD;
 const windowsKitRoot = process.env.WINDOWS_KIT_ROOT || "C:\\Program Files (x86)\\Windows Kits\\10\\bin";
-const devServerPort = parsePort(process.env.SNIPFOCUS_DEV_SERVER_PORT, 3030);
-const devLoggerPort = parsePort(process.env.SNIPFOCUS_DEV_LOGGER_PORT, 9333);
+const devServerPort = parsePort(process.env.AGEOFSCREEN_DEV_SERVER_PORT, 3030);
+const devLoggerPort = parsePort(process.env.AGEOFSCREEN_DEV_LOGGER_PORT, 9333);
 const requiredWindowsKitExecutables = ["makeappx.exe", "makepri.exe", "signtool.exe", "makecert.exe"];
 
 const hasWindowsKitExecutables = (candidatePath: string): boolean => (
@@ -104,19 +104,32 @@ const windowsSignOptions = windowsCertFile && windowsCertPassword
         certificateFile: windowsCertFile,
         certificatePassword: windowsCertPassword,
         description: productName,
-        website: "https://snipfocus.app",
+        website: "https://ageofscreen.app",
     }
     : undefined;
 const ffmpegResourceRoot = path.resolve(__dirname, "resources", "ffmpeg");
+const brandingResourceRoot = path.resolve(__dirname, "resources", "branding");
 const nativeCaptureAddonPath = path.resolve(__dirname, "src", "native", "capture_engine", "build", "Release", "capture_engine.node");
 const windowsKitPath = resolveWindowsKitPath();
+const expectedBundledFfmpegPaths = [
+    path.join(ffmpegResourceRoot, "win32-x64", "ffmpeg.exe"),
+    path.join(ffmpegResourceRoot, "win32-x64", "ffprobe.exe"),
+    path.join(ffmpegResourceRoot, "win32-arm64", "ffmpeg.exe"),
+    path.join(ffmpegResourceRoot, "win32-arm64", "ffprobe.exe"),
+];
+const hasBundledFfmpegPayloads = expectedBundledFfmpegPaths.every((candidatePath) => fs.existsSync(candidatePath));
 const extraResources = [
     ...(fs.existsSync(ffmpegResourceRoot) ? [ffmpegResourceRoot] : []),
+    ...(fs.existsSync(brandingResourceRoot) ? [brandingResourceRoot] : []),
     ...(fs.existsSync(nativeCaptureAddonPath) ? [{ from: nativeCaptureAddonPath, to: path.join("native", "capture_engine", "build", "Release", "capture_engine.node") }] : []),
 ];
 
-if (releaseProfile.allowBundledFfmpegOnly && extraResources.length === 0) {
-    console.warn("[forge.config] resources/ffmpeg is missing. Packaged builds will not have deterministic FFmpeg until architecture-specific binaries are added.");
+if (releaseProfile.allowBundledFfmpegOnly && !hasBundledFfmpegPayloads) {
+    console.warn("[forge.config] Bundled FFmpeg payloads are incomplete. Add resources/ffmpeg/win32-x64/* and resources/ffmpeg/win32-arm64/* before creating release packages.");
+}
+
+if (releaseProfile.storeSafe && !fs.existsSync(nativeCaptureAddonPath)) {
+    console.warn("[forge.config] Native capture addon is missing. Run the native build/rebuild steps before creating Store packages.");
 }
 
 if (releaseProfile.storeSafe && !windowsKitPath) {
@@ -233,7 +246,7 @@ const directDownloadMakers = [
 
 const storeMakers = [
     new MakerMSIX({
-        packageName: "SnipFocus.msix",
+        packageName: "ageofscreen.msix",
         sign: true,
         logLevel: "warn",
         windowsKitPath,
@@ -264,7 +277,7 @@ const config: ForgeConfig = {
         new AutoUnpackNativesPlugin({}),
         new WebpackPlugin({
             mainConfig,
-            devContentSecurityPolicy: "default-src 'self' 'unsafe-inline' 'unsafe-eval' file: data: blob: snipfocus-media:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; media-src 'self' file: blob: data: snipfocus-media: *; img-src 'self' file: blob: data: snipfocus-media: *;",
+            devContentSecurityPolicy: "default-src 'self' 'unsafe-inline' 'unsafe-eval' file: data: blob: ageofscreen-media:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; media-src 'self' file: blob: data: ageofscreen-media: *; img-src 'self' file: blob: data: ageofscreen-media: *;",
             port: devServerPort,
             loggerPort: devLoggerPort,
             renderer: {

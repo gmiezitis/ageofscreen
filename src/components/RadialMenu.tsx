@@ -1,12 +1,6 @@
 import React, { useMemo } from "react";
 import {
-    Maximize,
-    Monitor,
-    Target,
-    Scissors,
-    Camera,
     X,
-    Video
 } from "lucide-react";
 import styles from "./RadialMenu.module.css";
 import { HexagonColor } from "../types";
@@ -24,7 +18,6 @@ interface RadialMenuProps {
     onHide: () => void;
     tools: RadialMenuTool[];
     centerAction?: () => void;
-    centerIcon?: React.ReactNode;
 }
 
 const getHexagonPoints = (centerX: number, centerY: number, size: number): string => {
@@ -43,7 +36,6 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({
     onHide,
     tools,
     centerAction,
-    centerIcon = <Camera size={20} strokeWidth={1.5} />
 }) => {
     // Canvas dimensions matching index.ts window size
     const centerX = 140;
@@ -51,8 +43,6 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({
     const hexSize = 40; // Reduced size to make the whole menu slightly smaller
     const spacing = hexSize * Math.sqrt(3); // Maintains seamless tiling
     const iconSize = 22; // Slightly smaller outer icons
-    const centerIconSize = 20; // Re-added size for the middle icon
-
     const positions = useMemo(() => {
         const pos: { x: number, y: number }[] = [];
         for (let i = 0; i < 6; i++) {

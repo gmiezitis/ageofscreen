@@ -1,12 +1,9 @@
 import React from 'react';
 import { Check, Zap, X, Loader2 } from 'lucide-react';
+import type { EditorNotification } from '../../videoEditor/types';
 
 interface ToastProps {
-    notification: {
-        type: 'success' | 'warning' | 'error' | 'info';
-        title: string;
-        message: string;
-    } | null;
+    notification: EditorNotification | null;
     onClose: () => void;
 }
 
@@ -60,10 +57,33 @@ export const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
                 {notification.type === 'info' && <Loader2 size={16} color="#6496c8" style={{ animation: 'spin 1s linear infinite' }} />}
             </div>
 
-            <div style={{ flex: 1 }}>
-                <div style={{ color: 'var(--text-primary)', fontSize: '12.5px', fontWeight: 500, letterSpacing: '-0.01em' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: 'var(--text-primary)', fontSize: '12px', fontWeight: 700, letterSpacing: '0.01em', marginBottom: 2 }}>
+                    {notification.title}
+                </div>
+                <div style={{ color: 'var(--text-primary)', fontSize: '12.5px', fontWeight: 500, letterSpacing: '-0.01em', lineHeight: 1.4 }}>
                     {notification.message}
                 </div>
+                {notification.actionLabel && notification.onAction && (
+                    <button
+                        type="button"
+                        onClick={notification.onAction}
+                        style={{
+                            marginTop: 10,
+                            padding: '7px 12px',
+                            borderRadius: 999,
+                            border: '1px solid rgba(96, 165, 250, 0.3)',
+                            background: 'rgba(59, 130, 246, 0.14)',
+                            color: '#bfdbfe',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            letterSpacing: '0.02em',
+                        }}
+                    >
+                        {notification.actionLabel}
+                    </button>
+                )}
             </div>
 
             <button

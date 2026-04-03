@@ -1,9 +1,11 @@
 /**
  * RecordingEngine.ts
  *
- * The high-performance implementation of the SnipFocus recording pipeline.
+ * The high-performance implementation of the ageofscreen recording pipeline.
  * Manages zero-latency compositing and encoding on the main thread via standard canvas captureStream.
  */
+
+import { getCameraDimensionsForWidth, normalizeCameraShape, traceCameraShapePath } from '../../shared/cameraShapes';
 
 const ZOOM_LERP_IN = 0.1;
 const ZOOM_LERP_OUT = 0.075;
@@ -197,12 +199,11 @@ export class RecordingEngine {
         const sourceY = sourceBounds?.y || 0;
         const zoomEase = this.smootherStep(this.zoomProgress);
         const zoomScale = Math.exp(Math.log(WEBCAM_ZOOM_MIN_SCALE) * zoomEase);
+        const normalizedShape = normalizeCameraShape(webcam.shape);
         const baseWidth = webcam.bounds.width * scale;
-        const baseHeight = webcam.bounds.height * scale;
+        const baseHeight = getCameraDimensionsForWidth(normalizedShape, baseWidth).height;
         const targetWidth = baseWidth * zoomScale;
-        const targetHeight = webcam.shape === 'pill'
-            ? targetWidth / 1.7
-            : baseHeight * zoomScale;
+        const targetHeight = getCameraDimensionsForWidth(normalizedShape, targetWidth).height;
         const baseX = (webcam.bounds.x - sourceX) * scale;
         const baseY = (webcam.bounds.y - sourceY) * scale;
         const safeInset = 16;
@@ -213,7 +214,7 @@ export class RecordingEngine {
 
         this.ctx.save();
         this.ctx.beginPath();
-        this.drawShapePath(webcam.shape, clampedX, clampedY, targetWidth, targetHeight);
+        traceCameraShapePath(this.ctx, normalizedShape, clampedX, clampedY, targetWidth, targetHeight);
         this.ctx.clip();
 
         const videoRatio = this.currentWebcamFrame.displayWidth / Math.max(1, this.currentWebcamFrame.displayHeight);
@@ -242,44 +243,10 @@ export class RecordingEngine {
         this.ctx.restore();
 
         this.ctx.beginPath();
-        this.drawShapePath(webcam.shape, clampedX, clampedY, targetWidth, targetHeight);
+        traceCameraShapePath(this.ctx, normalizedShape, clampedX, clampedY, targetWidth, targetHeight);
         this.ctx.lineWidth = 2;
         this.ctx.strokeStyle = this.hexToRgba(webcam.borderColor || '#22c55e', 0.8);
         this.ctx.stroke();
-    }
-
-    private drawShapePath(shape: string, x: number, y: number, w: number, h: number) {
-        if (!this.ctx) return;
-        if (shape === 'circle') {
-            this.ctx.arc(x + w / 2, y + h / 2, w / 2, 0, Math.PI * 2);
-            return;
-        }
-        if (shape === 'pill') {
-            const radius = h / 2;
-            if ((this.ctx as any).roundRect) {
-                (this.ctx as any).roundRect(x, y, w, h, radius);
-            } else {
-                this.ctx.arc(x + radius, y + radius, radius, Math.PI, Math.PI * 1.5);
-                this.ctx.lineTo(x + w - radius, y);
-                this.ctx.arc(x + w - radius, y + radius, radius, Math.PI * 1.5, 0);
-                this.ctx.lineTo(x + w, y + h - radius);
-                this.ctx.arc(x + w - radius, y + h - radius, radius, 0, Math.PI * 0.5);
-                this.ctx.lineTo(x + radius, y + h);
-                this.ctx.arc(x + radius, y + h - radius, radius, Math.PI * 0.5, Math.PI);
-                this.ctx.closePath();
-            }
-            return;
-        }
-        if (shape === 'rounded') {
-            const radius = w * 0.15;
-            if ((this.ctx as any).roundRect) {
-                (this.ctx as any).roundRect(x, y, w, h, radius);
-            } else {
-                this.ctx.rect(x, y, w, h);
-            }
-            return;
-        }
-        this.ctx.rect(x, y, w, h);
     }
 
     private lerp(a: number, b: number, t: number) {

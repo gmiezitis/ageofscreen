@@ -16,7 +16,6 @@ export interface ReleaseProfile {
         smartTargetingOcr: boolean;
         liveMagnifier: boolean;
         autoZoomAdvanced: boolean;
-        typingZoom: boolean;
         proFeatures: boolean;
         agentSurfaces: boolean;
     };
@@ -31,7 +30,7 @@ const normalizeReleaseProfileName = (value: string | undefined): ReleaseProfileN
 };
 
 export const inferReleaseProfileName = (): ReleaseProfileName => {
-    const envProfile = normalizeReleaseProfileName(process.env?.SNIPFOCUS_RELEASE_PROFILE);
+    const envProfile = normalizeReleaseProfileName(process.env?.AGEOFSCREEN_RELEASE_PROFILE);
     if (envProfile) return envProfile;
 
     const processWithStore = process as NodeJS.Process & { windowsStore?: boolean; defaultApp?: boolean };
@@ -65,7 +64,6 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     smartTargetingOcr: false,
                     liveMagnifier: false,
                     autoZoomAdvanced: false,
-                    typingZoom: false,
                     proFeatures: false,
                     agentSurfaces: false,
                 },
@@ -87,7 +85,6 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     smartTargetingOcr: false,
                     liveMagnifier: false,
                     autoZoomAdvanced: false,
-                    typingZoom: false,
                     proFeatures: false,
                     agentSurfaces: false,
                 },
@@ -110,7 +107,6 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     smartTargetingOcr: false,
                     liveMagnifier: false,
                     autoZoomAdvanced: false,
-                    typingZoom: false,
                     proFeatures: false,
                     agentSurfaces: true,
                 },

@@ -1,12 +1,14 @@
 import { useCallback } from 'react';
-import { ExportQuality, Segment, SmartEffect, TransitionType } from './types';
+import { ExportQuality, Segment, SmartEffect, TextOverlay, TransitionType, normalizeCursorHighlightSettings } from './types';
 import { fromMediaFileUrl } from '../shared/mediaPaths';
 import { CanvasRenderer } from '../services/canvasRenderer';
 import type { AnnotationObject } from '../types';
 import type { EntitlementState } from '../shared/licensing';
-import { buildCursorTimedTrack, FOLLOW_CURSOR_TRACK_MAX_POINTS } from './cursorStyling';
+import { buildCursorHighlightOverlayData, buildCursorTimedTrack, FOLLOW_CURSOR_TRACK_MAX_POINTS } from './cursorStyling';
 import { DEFAULT_ZOOM_INTENSITY, getEffectIntensity } from './effectIntensity';
 import { getTimelineDuration as getTimelineDurationFromItems } from './timelineClips';
+import { getPreviewOverlayFrameSize, getRenderedVideoFrameSize, resolveExportFrameStyle, scaleTextOverlayForExport } from './exportOverlayMath';
+import { renderTextOverlayToDataUrl } from './textOverlayRendering';
 import {
     applyKeepRangesToSegments,
     AUTO_POLISH_BACKGROUND,
@@ -49,7 +51,12 @@ const DEFAULT_ENTITLEMENT_STATE: EntitlementState = {
  */
 export function useEditorExport(
     state: any,
-    showNotification: (type: string, title: string, message: string) => void,
+    showNotification: (
+        type: string,
+        title: string,
+        message: string,
+        options?: { actionLabel?: string; onAction?: () => void; sticky?: boolean; durationMs?: number },
+    ) => void,
     saveHistory: (stateOverride?: any) => void,
 ) {
     const { mediaPath, segments, imageClips, duration, smartEffects, overlayImages, textOverlays, annotationOverlays, annotationCanvasSize, recordedCursorData } = state;
@@ -69,7 +76,53 @@ export function useEditorExport(
         endTime: Number(segment.endTime.toFixed(3)),
         timelineStart: Number(segment.timelineStart.toFixed(3)),
     }));
-    const getOverlayExportFrameSize = () => {
+    const mergeTimeRanges = (ranges: Array<{ startTime: number; endTime: number }>) => {
+        const normalized = ranges
+            .map((range) => ({
+                startTime: Math.max(0, Number(range.startTime.toFixed(3))),
+                endTime: Math.max(0, Number(range.endTime.toFixed(3))),
+            }))
+            .filter((range) => range.endTime > range.startTime)
+            .sort((a, b) => a.startTime - b.startTime);
+
+        if (normalized.length === 0) {
+            return [];
+        }
+
+        return normalized.reduce<Array<{ startTime: number; endTime: number }>>((merged, range) => {
+            const previous = merged[merged.length - 1];
+            if (!previous || range.startTime > previous.endTime) {
+                merged.push({ ...range });
+                return merged;
+            }
+
+            previous.endTime = Math.max(previous.endTime, range.endTime);
+            return merged;
+        }, []);
+    };
+    const getOverlayEditorFrameSize = () => {
+        const previewContainerWidth = Math.round(state.threeContainerRef?.current?.clientWidth || 0);
+        const previewContainerHeight = Math.round(state.threeContainerRef?.current?.clientHeight || 0);
+        const previewVideoBounds = state.crop?.videoBounds;
+        const previewFrameSize = getPreviewOverlayFrameSize(
+            previewVideoBounds?.width > 0 && previewVideoBounds?.height > 0
+                ? {
+                    width: Math.round(previewVideoBounds.width),
+                    height: Math.round(previewVideoBounds.height),
+                }
+                : null,
+            previewContainerWidth > 0 && previewContainerHeight > 0
+                ? {
+                    width: previewContainerWidth,
+                    height: previewContainerHeight,
+                }
+                : null,
+            state.crop.appliedCrop,
+        );
+        if (previewFrameSize) {
+            return previewFrameSize;
+        }
+
         const previewElement = state.threeContainerRef?.current as HTMLDivElement | null | undefined;
         const previewWidth = Math.round(previewElement?.clientWidth || 0);
         const previewHeight = Math.round(previewElement?.clientHeight || 0);
@@ -88,10 +141,18 @@ export function useEditorExport(
                 return { width: 1920, height: 1080 };
         }
     };
+    const getRenderedVideoExportFrameSize = () => {
+        const previewFallback = getOverlayEditorFrameSize();
+        const sourceFrameSize = {
+            width: Math.round(state.videoRef?.current?.videoWidth || 0),
+            height: Math.round(state.videoRef?.current?.videoHeight || 0),
+        };
+        return getRenderedVideoFrameSize(sourceFrameSize, state.crop.appliedCrop) ?? previewFallback;
+    };
     const buildImageOverlays = (
         overlays: Array<{ file: string; startTime: number; duration: number; x: number; y: number; width: number; height: number; renderMode?: 'overlay' | 'fullscreen' }>
     ) => {
-        const frameSize = getOverlayExportFrameSize();
+        const frameSize = getOverlayEditorFrameSize();
         return overlays
             .map((overlay) => {
                 if (overlay.renderMode === 'fullscreen') {
@@ -159,6 +220,26 @@ export function useEditorExport(
             })
             .filter((item): item is { file: string; startTime: number; duration: number } => !!item);
     };
+    const buildTextImageOverlays = (
+        overlays: TextOverlay[],
+        totalDuration: number,
+        renderFrameSize: { width: number; height: number },
+    ) => (
+        overlays
+            .map((overlay) => {
+                const file = renderTextOverlayToDataUrl(overlay, renderFrameSize);
+                if (!file) return null;
+
+                const startTime = Math.max(0, overlay.startTime ?? 0);
+                const durationLeft = Math.max(0.1, totalDuration - startTime);
+                return {
+                    file,
+                    startTime,
+                    duration: Math.max(0.1, overlay.duration ?? durationLeft),
+                };
+            })
+            .filter((item): item is { file: string; startTime: number; duration: number } => !!item)
+    );
 
     const handleExport = async () => {
         if (!mediaPath) {
@@ -167,9 +248,10 @@ export function useEditorExport(
         }
 
         state.setIsExporting(true);
-        showNotification('info', 'Exporting...', 'Processing your video. This may take a moment.');
+        state.setExportProgress?.(4);
         const exportStart = Date.now();
         const api = (window as any).videoEditorAPI;
+        let wasCanceled = false;
 
         try {
             const entitlementState = await getEntitlementState();
@@ -189,8 +271,81 @@ export function useEditorExport(
                 exportSegments = [{ id: 'segment-0', startSeconds: 0, endSeconds: duration, timelineStart: 0 }];
             }
             const exportDuration = getTimelineDurationFromItems(segments, imageClips);
-            const annotationImageOverlays = buildAnnotationImageOverlays(annotationOverlays, annotationCanvasSize, exportDuration);
+            const overlayEditorFrameSize = getOverlayEditorFrameSize();
+            const renderedVideoFrameSize = getRenderedVideoExportFrameSize();
+            const exportFrameStyle = resolveExportFrameStyle({
+                selectedPlatform: state.selectedPlatform,
+                backgroundColor: state.backgroundColor,
+                videoPadding: state.videoPadding,
+            });
+            const scaledTextOverlays = textOverlays.map((t: any) => (
+                scaleTextOverlayForExport(
+                    {
+                        text: t.text,
+                        startTime: t.startTime,
+                        duration: t.duration,
+                        x: t.x,
+                        y: t.y,
+                        fontSize: t.fontSize,
+                        color: t.color,
+                        fontWeight: t.fontWeight || 'normal',
+                        fontFamily: t.fontFamily,
+                        backgroundColor: t.backgroundColor,
+                        backgroundOpacity: t.backgroundOpacity,
+                        padding: t.padding,
+                        borderRadius: t.borderRadius,
+                        borderWidth: t.borderWidth,
+                        borderColor: t.borderColor,
+                        shadowColor: t.shadowColor,
+                        shadowBlur: t.shadowBlur,
+                        shadowOffsetX: t.shadowOffsetX,
+                        shadowOffsetY: t.shadowOffsetY,
+                        id: t.id || `text-${Math.random().toString(36).slice(2)}`,
+                    },
+                    overlayEditorFrameSize,
+                    renderedVideoFrameSize,
+                )
+            ));
+            const textImageOverlays = buildTextImageOverlays(
+                scaledTextOverlays,
+                exportDuration,
+                renderedVideoFrameSize,
+            );
+            const annotationImageOverlays = buildAnnotationImageOverlays(
+                annotationOverlays,
+                annotationCanvasSize,
+                exportDuration,
+            );
             const imageOverlaysForExport = buildImageOverlays(overlayImages);
+            const cursorHighlightSettings = normalizeCursorHighlightSettings(state.cursorHighlight);
+            const zoomCursorHighlightDisabledRanges = mergeTimeRanges(
+                smartEffects
+                    .filter((effect: SmartEffect) => effect.type === 'zoom' && effect.duration > 0)
+                    .map((effect: SmartEffect) => ({
+                        startTime: Math.min(exportDuration, Math.max(0, effect.startTime)),
+                        endTime: Math.min(exportDuration, Math.max(effect.startTime, effect.startTime + effect.duration)),
+                    }))
+            );
+            const hasCursorMetadata = Array.isArray(recordedCursorData) && recordedCursorData.length > 0;
+            const baseCursorOverlay = hasCursorMetadata
+                ? buildCursorHighlightOverlayData(
+                    recordedCursorData,
+                    exportDuration,
+                    cursorHighlightSettings,
+                    state.crop.appliedCrop,
+                    renderedVideoFrameSize,
+                )
+                : null;
+            const cursorHighlightDisabledRanges = mergeTimeRanges([
+                ...zoomCursorHighlightDisabledRanges,
+                ...(baseCursorOverlay?.disabledRanges ?? []),
+            ]);
+            const cursorOverlay = baseCursorOverlay
+                ? {
+                    ...baseCursorOverlay,
+                    disabledRanges: cursorHighlightDisabledRanges.length > 0 ? cursorHighlightDisabledRanges : undefined,
+                }
+                : null;
             const buildCursorTrack = (effect: SmartEffect) => {
                 if (!effect.followCursor || !Array.isArray(recordedCursorData) || recordedCursorData.length === 0) {
                     return [];
@@ -213,33 +368,15 @@ export function useEditorExport(
                 aspectRatio: null as number | null,
                 crop: state.crop.appliedCrop,
                 quality: (state.exportQuality || 'high') as ExportQuality,
-                backgroundColor: state.backgroundColor || '#000000',
-                videoPadding: state.videoPadding || 0,
+                backgroundColor: exportFrameStyle.backgroundColor,
+                videoPadding: exportFrameStyle.videoPadding,
                 audioSegments: state.audioSegments.map((a: any) => ({
                     file: a.file,
                     startTime: a.startTime,
                     duration: a.duration,
                     volume: a.volume ?? 1,
                 })),
-                textOverlays: textOverlays.map((t: any) => ({
-                    text: t.text,
-                    startTime: t.startTime,
-                    duration: t.duration,
-                    x: t.x,
-                    y: t.y,
-                    fontSize: t.fontSize,
-                    color: t.color,
-                    fontWeight: t.fontWeight || 'normal',
-                    backgroundColor: t.backgroundColor,
-                    backgroundOpacity: t.backgroundOpacity,
-                    padding: t.padding,
-                    borderWidth: t.borderWidth,
-                    borderColor: t.borderColor,
-                    shadowColor: t.shadowColor,
-                    shadowBlur: t.shadowBlur,
-                    shadowOffsetX: t.shadowOffsetX,
-                    shadowOffsetY: t.shadowOffsetY,
-                })),
+                textOverlays: textImageOverlays as unknown as TextOverlay[],
                 imageOverlays: imageOverlaysForExport,
                 imageClips: imageClips.map((clip: any) => ({
                     id: clip.id,
@@ -247,7 +384,11 @@ export function useEditorExport(
                     startTime: clip.startTime,
                     duration: clip.duration,
                 })),
-                clipTransitions: [] as Array<{ fromItemId: string; toItemId: string; type: TransitionType }>,
+                clipTransitions: (state.clipTransitions || []).map((transition: { fromItemId: string; toItemId: string; type: TransitionType }) => ({
+                    fromItemId: transition.fromItemId,
+                    toItemId: transition.toItemId,
+                    type: transition.type,
+                })),
                 annotationImageOverlays,
                 smartEffects: smartEffects.map((e: SmartEffect) => ({
                     type: e.type,
@@ -262,7 +403,8 @@ export function useEditorExport(
                     tiltDirection: e.tiltDirection ?? 'orbital',
                     tiltSnap: e.tiltSnap ?? 50,
                 })),
-                transitionType: 'crossfade' as TransitionType,
+                transitionType: (state.transitionType || 'cut') as TransitionType,
+                cursorOverlay,
                 colorGrade: state.colorGrade || 'none',
                 premiumVoice: premiumVoiceEnabled,
             };
@@ -277,11 +419,20 @@ export function useEditorExport(
             }
 
             if (result?.success) {
+                state.setExportProgress?.(100);
                 showNotification(
                     result.warning ? 'warning' : 'success',
                     result.warning ? 'Export Complete (with limitations)' : 'Export Successful',
-                    result.warning || `File saved to: ${result.filePath}`,
+                    result.warning || `Saved to ${result.filePath}`,
+                    result.filePath ? {
+                        actionLabel: 'Show in Folder',
+                        onAction: () => { void api?.invoke?.('show-item-in-folder', result.filePath); },
+                        sticky: true,
+                        durationMs: 7000,
+                    } : undefined,
                 );
+            } else if (result?.canceled) {
+                wasCanceled = true;
             } else {
                 showNotification('error', 'Export Failed', result?.error || 'Unknown error');
             }
@@ -291,10 +442,11 @@ export function useEditorExport(
         } finally {
             const elapsed = Date.now() - exportStart;
             const minVisible = 1200;
-            if (elapsed < minVisible) {
+            if (!wasCanceled && elapsed < minVisible) {
                 await new Promise(r => setTimeout(r, minVisible - elapsed));
             }
             state.setIsExporting(false);
+            state.setExportProgress?.(0);
         }
     };
 
@@ -306,6 +458,10 @@ export function useEditorExport(
         const entitlementState = await getEntitlementState();
         if (!entitlementState.canUseAutoPolish) {
             showNotification('warning', 'Auto-Polish locked', 'Auto-Polish is a Pro feature. Upgrade to Pro to unlock it.');
+            return;
+        }
+        if (!Array.isArray(recordedCursorData) || recordedCursorData.length === 0) {
+            showNotification('warning', 'Auto-Polish', 'Auto-Polish focus tracking is available only for ageofscreen recordings with cursor metadata.');
             return;
         }
         if (imageClips.length > 0) {
@@ -422,7 +578,6 @@ export function useEditorExport(
             state.setSelectedTextOverlayId(null);
 
             saveHistory(historySnapshot);
-            const summary = appliedChanges.join(' • ');
             showNotification(
                 analysis?.error ? 'warning' : 'success',
                 'Auto-Polish Applied',

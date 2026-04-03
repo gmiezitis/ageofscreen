@@ -64,7 +64,7 @@ export interface AutoPolishConfig {
   padding?: number;
   /** Background color hex */
   backgroundColor?: string;
-  /** Add "Made with SnipFocus" watermark (free plan) */
+  /** Add "Made with ageofscreen" watermark (free plan) */
   addWatermark?: boolean;
 }
 
@@ -402,7 +402,7 @@ export async function runAutoPolish(
   let videoMap = '[vid]';
 
   if (addWatermark) {
-    const drawtext = "drawtext=text='Made with SnipFocus':fontsize=min(h\\,w)/28:fontcolor=white@0.4:x=w-text_w-24:y=h-text_h-20";
+    const drawtext = "drawtext=text='Made with ageofscreen':fontsize=min(h\\,w)/28:fontcolor=white@0.4:x=w-text_w-24:y=h-text_h-20";
     vFilter += `;[vid]${drawtext}[vid2]`;
     videoMap = '[vid2]';
   }

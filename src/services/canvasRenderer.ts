@@ -2,6 +2,7 @@ import type {
   AnnotationObject,
   TextAnnotation,
   PenAnnotation,
+  LineAnnotation,
   ArrowAnnotation,
   HighlighterAnnotation,
   RectangleAnnotation,
@@ -9,6 +10,7 @@ import type {
   StepAnnotation,
   BlurAnnotation,
   SymbolAnnotation,
+  ImageAnnotation,
 } from '../types';
 
 /**
@@ -18,6 +20,31 @@ import type {
  * to eliminate code duplication and improve maintainability.
  */
 export class CanvasRenderer {
+  private static imageCache = new Map<string, HTMLImageElement>();
+  static readonly SELECTION_PADDING = 3;
+  static readonly IMAGE_HANDLE_SIZE = 14;
+  static readonly IMAGE_HANDLE_HIT_PADDING = 4;
+  static readonly ARROW_HEAD_LENGTH_MULTIPLIER = 6.2;
+  static readonly ARROW_HEAD_MIN_LENGTH = 20;
+  static readonly ARROW_HEAD_MAX_LENGTH = 34;
+  static readonly ARROW_HEAD_HALF_ANGLE = Math.PI / 22;
+
+  static primeImageCache(src: string, image: HTMLImageElement) {
+    if (!src || !image) return;
+    this.imageCache.set(src, image);
+  }
+
+  static getCachedImage(src: string): HTMLImageElement | null {
+    if (!src) return null;
+
+    const cached = this.imageCache.get(src);
+    if (cached) return cached;
+
+    const image = new Image();
+    image.src = src;
+    this.imageCache.set(src, image);
+    return image;
+  }
 
   // Utility: Convert hex color to rgba
   static hexToRgba(hex: string, alpha: number): string {
@@ -53,11 +80,12 @@ export class CanvasRenderer {
   ): { x: number; y: number; width: number; height: number } {
     // If we have explicit box bounds, return them
     if (annotation.boxWidth !== undefined && annotation.boxHeight !== undefined && annotation.boxX !== undefined && annotation.boxY !== undefined) {
+      const layout = this.getTextBoxLayout(annotation, ctx);
       return {
-        x: annotation.boxX,
-        y: annotation.boxY,
-        width: annotation.boxWidth,
-        height: annotation.boxHeight
+        x: layout.boxX,
+        y: layout.boxY,
+        width: layout.boxWidth,
+        height: layout.boxHeight,
       };
     }
 
@@ -92,6 +120,224 @@ export class CanvasRenderer {
     };
   }
 
+  static parseFontSize(font: string): number {
+    const match = font.match(/(\d+(?:\.\d+)?)px/i);
+    return match ? Number(match[1]) : 16;
+  }
+
+  static measureTextWidth(
+    ctx: CanvasRenderingContext2D | null,
+    text: string,
+    fontSize: number,
+  ): number {
+    if (!text) return 0;
+    return ctx ? ctx.measureText(text).width : text.length * fontSize * 0.56;
+  }
+
+  static wrapTextToWidth(
+    ctx: CanvasRenderingContext2D | null,
+    text: string,
+    maxWidth: number,
+    fontSize: number,
+  ): string[] {
+    const safeWidth = Math.max(16, maxWidth);
+    const paragraphs = (text ?? "").replace(/\r/g, "").split("\n");
+    const lines: string[] = [];
+
+    for (const paragraph of paragraphs) {
+      if (!paragraph.length) {
+        lines.push("");
+        continue;
+      }
+
+      const tokens = paragraph.match(/\S+\s*|\s+/g) ?? [paragraph];
+      let currentLine = "";
+
+      for (const token of tokens) {
+        const candidate = `${currentLine}${token}`;
+        if (!currentLine || this.measureTextWidth(ctx, candidate, fontSize) <= safeWidth) {
+          currentLine = candidate;
+          continue;
+        }
+
+        lines.push(currentLine.trimEnd());
+        currentLine = "";
+
+        if (this.measureTextWidth(ctx, token, fontSize) <= safeWidth) {
+          currentLine = token;
+          continue;
+        }
+
+        for (const character of token) {
+          const charCandidate = `${currentLine}${character}`;
+          if (!currentLine || this.measureTextWidth(ctx, charCandidate, fontSize) <= safeWidth) {
+            currentLine = charCandidate;
+          } else {
+            lines.push(currentLine.trimEnd());
+            currentLine = character;
+          }
+        }
+      }
+
+      lines.push(currentLine.trimEnd());
+    }
+
+    return lines.length > 0 ? lines : [""];
+  }
+
+  static normalizeHexColor(color: string): string | null {
+    if (typeof color !== "string") {
+      return null;
+    }
+
+    const trimmed = color.trim();
+    if (!trimmed.startsWith("#")) {
+      return null;
+    }
+
+    if (trimmed.length === 4) {
+      const [, r, g, b] = trimmed;
+      return `#${r}${r}${g}${g}${b}${b}`;
+    }
+
+    return trimmed.length === 7 ? trimmed : null;
+  }
+
+  static getRelativeLuminance(color: string): number {
+    const normalized = this.normalizeHexColor(color);
+    if (!normalized) {
+      return 0;
+    }
+
+    const channels = [1, 3, 5].map((index) => {
+      const channel = parseInt(normalized.slice(index, index + 2), 16) / 255;
+      return channel <= 0.03928
+        ? channel / 12.92
+        : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  }
+
+  static resolveStepContent(annotation: StepAnnotation): string {
+    if (annotation.symbol === "check") return "\u2713";
+    if (annotation.symbol === "x") return "\u2715";
+    if (annotation.symbol === "plus") return "+";
+    return annotation.number.toString();
+  }
+
+  static getStepBadgeMetrics(
+    annotation: StepAnnotation,
+    ctx: CanvasRenderingContext2D | null,
+  ): {
+    content: string;
+    radius: number;
+    fontSize: number;
+    textColor: string;
+    textOutlineColor: string;
+    textOutlineWidth: number;
+    circleOutlineColor: string;
+    circleOutlineWidth: number;
+  } {
+    const content = this.resolveStepContent(annotation);
+    const fontSize = Math.max(12, annotation.fontSize);
+    const textWidth = this.measureTextWidth(ctx, content, fontSize);
+    const textPadding = Math.max(6, Math.round(fontSize * 0.38));
+    const radius = Math.max(
+      annotation.radius,
+      Math.ceil(textWidth / 2 + textPadding),
+      Math.ceil(fontSize * 0.82),
+    );
+    const luminance = this.getRelativeLuminance(annotation.color);
+    const lightBadge = luminance >= 0.58;
+    const textColor = annotation.symbol === "none"
+      ? annotation.color
+      : (lightBadge ? "#0f172a" : "#ffffff");
+    const textOutlineColor = annotation.symbol === "none"
+      ? (lightBadge ? "rgba(255,255,255,0.88)" : "rgba(15,23,42,0.62)")
+      : (lightBadge ? "rgba(255,255,255,0.88)" : "rgba(15,23,42,0.52)");
+    const circleOutlineColor = lightBadge
+      ? "rgba(15,23,42,0.22)"
+      : "rgba(255,255,255,0.24)";
+
+    return {
+      content,
+      radius,
+      fontSize,
+      textColor,
+      textOutlineColor,
+      textOutlineWidth: Math.max(2, fontSize * 0.18),
+      circleOutlineColor,
+      circleOutlineWidth: Math.max(1.5, fontSize * 0.08),
+    };
+  }
+
+  static getTextBoxLayout(
+    annotation: TextAnnotation,
+    ctx: CanvasRenderingContext2D | null,
+    textOverride?: string,
+    options?: {
+      constrainToBox?: boolean;
+    },
+  ) {
+    const fontSize = this.parseFontSize(annotation.font);
+    const boxX = annotation.boxX ?? annotation.x;
+    const boxY = annotation.boxY ?? Math.max(0, annotation.y - fontSize);
+    const boxWidth = Math.max(120, annotation.boxWidth ?? Math.max(220, fontSize * 8));
+    const minBoxHeight = Math.max(Math.round(fontSize * 2.2), annotation.boxHeight ?? 0);
+    const paddingX = Math.max(12, Math.round(fontSize * 0.55));
+    const paddingY = Math.max(10, Math.round(fontSize * 0.45));
+    const innerWidth = Math.max(24, boxWidth - paddingX * 2);
+    const text = textOverride ?? annotation.content ?? "";
+
+    if (ctx) {
+      ctx.save();
+      ctx.font = annotation.font;
+    }
+
+    const lines = this.wrapTextToWidth(ctx, text, innerWidth, fontSize);
+
+    if (ctx) {
+      ctx.restore();
+    }
+
+    const lineHeight = Math.max(Math.round(fontSize * 1.28), fontSize + 6);
+    const availableHeight = Math.max(lineHeight, minBoxHeight - paddingY * 2);
+    const maxVisibleLines = Math.max(1, Math.floor(availableHeight / lineHeight));
+    const shouldConstrainToBox = !!options?.constrainToBox && annotation.boxHeight !== undefined;
+    const visibleLines = shouldConstrainToBox ? lines.slice(0, maxVisibleLines) : lines;
+    const contentHeight = Math.max(lineHeight, visibleLines.length * lineHeight);
+    const boxHeight = shouldConstrainToBox
+      ? minBoxHeight
+      : Math.max(minBoxHeight, contentHeight + paddingY * 2);
+    const isOverflowing = shouldConstrainToBox && lines.length > maxVisibleLines;
+
+    return {
+      boxX,
+      boxY,
+      boxWidth,
+      boxHeight,
+      paddingX,
+      paddingY,
+      innerWidth,
+      fontSize,
+      lineHeight,
+      lines: visibleLines,
+      rawLines: lines,
+      maxVisibleLines,
+      isOverflowing,
+    };
+  }
+
+  static canTextContentFit(
+    annotation: TextAnnotation,
+    ctx: CanvasRenderingContext2D | null,
+    text: string,
+  ): boolean {
+    const layout = this.getTextBoxLayout(annotation, ctx, text);
+    return !layout.isOverflowing;
+  }
+
   // Utility: Get annotation bounds
   static getAnnotationBounds(
     annotation: AnnotationObject,
@@ -113,10 +359,22 @@ export class CanvasRenderer {
         };
       }
       case "arrow": {
-        const arrowHalfWidth = annotation.width / 2;
+        const arrowPadding = Math.min(
+          this.ARROW_HEAD_MAX_LENGTH,
+          Math.max(this.ARROW_HEAD_MIN_LENGTH, annotation.width * this.ARROW_HEAD_LENGTH_MULTIPLIER),
+        );
         return {
-          x: Math.min(annotation.startX, annotation.endX) - arrowHalfWidth,
-          y: Math.min(annotation.startY, annotation.endY) - arrowHalfWidth,
+          x: Math.min(annotation.startX, annotation.endX) - arrowPadding,
+          y: Math.min(annotation.startY, annotation.endY) - arrowPadding,
+          width: Math.abs(annotation.startX - annotation.endX) + arrowPadding * 2,
+          height: Math.abs(annotation.startY - annotation.endY) + arrowPadding * 2,
+        };
+      }
+      case "line": {
+        const lineHalfWidth = annotation.width / 2;
+        return {
+          x: Math.min(annotation.startX, annotation.endX) - lineHalfWidth,
+          y: Math.min(annotation.startY, annotation.endY) - lineHalfWidth,
           width: Math.abs(annotation.startX - annotation.endX) + annotation.width,
           height: Math.abs(annotation.startY - annotation.endY) + annotation.width,
         };
@@ -141,13 +399,15 @@ export class CanvasRenderer {
           height: (annotation.ry + ellipseHalfWidth) * 2,
         };
       }
-      case "step":
+      case "step": {
+        const stepMetrics = this.getStepBadgeMetrics(annotation, ctx);
         return {
-          x: annotation.cx - annotation.radius,
-          y: annotation.cy - annotation.radius,
-          width: annotation.radius * 2,
-          height: annotation.radius * 2,
+          x: annotation.cx - stepMetrics.radius,
+          y: annotation.cy - stepMetrics.radius,
+          width: stepMetrics.radius * 2,
+          height: stepMetrics.radius * 2,
         };
+      }
       case "symbol":
         return {
           // Approximate bounds of a single emoji/symbol based on font size
@@ -178,9 +438,55 @@ export class CanvasRenderer {
           width: annotation.width,
           height: annotation.height,
         };
+      case "image":
+        return {
+          x: annotation.x,
+          y: annotation.y,
+          width: annotation.width,
+          height: annotation.height,
+        };
       default:
         return null;
     }
+  }
+
+  static getSelectionBounds(
+    annotation: AnnotationObject,
+    ctx: CanvasRenderingContext2D | null,
+  ): { x: number; y: number; width: number; height: number } | null {
+    const bounds = this.getAnnotationBounds(annotation, ctx);
+    if (!bounds) {
+      return null;
+    }
+
+    return {
+      x: bounds.x - this.SELECTION_PADDING,
+      y: bounds.y - this.SELECTION_PADDING,
+      width: bounds.width + this.SELECTION_PADDING * 2,
+      height: bounds.height + this.SELECTION_PADDING * 2,
+    };
+  }
+
+  static getImageResizeHandles(
+    annotation: ImageAnnotation,
+    ctx: CanvasRenderingContext2D | null,
+  ): Array<{
+    corner: "nw" | "ne" | "sw" | "se";
+    x: number;
+    y: number;
+    size: number;
+  }> {
+    const selectionBounds = this.getSelectionBounds(annotation, ctx);
+    if (!selectionBounds) {
+      return [];
+    }
+
+    return [
+      { corner: "nw", x: selectionBounds.x, y: selectionBounds.y, size: this.IMAGE_HANDLE_SIZE },
+      { corner: "ne", x: selectionBounds.x + selectionBounds.width, y: selectionBounds.y, size: this.IMAGE_HANDLE_SIZE },
+      { corner: "sw", x: selectionBounds.x, y: selectionBounds.y + selectionBounds.height, size: this.IMAGE_HANDLE_SIZE },
+      { corner: "se", x: selectionBounds.x + selectionBounds.width, y: selectionBounds.y + selectionBounds.height, size: this.IMAGE_HANDLE_SIZE },
+    ];
   }
 
   // Drawing: Classic Simple Arrow helper
@@ -195,22 +501,25 @@ export class CanvasRenderer {
     const dy = toY - fromY;
     const angle = Math.atan2(dy, dx);
 
-    // Classic proportions: simple and clear
-    const headLength = Math.min(24, Math.max(16, ctx.lineWidth * 4));
-
-    // Ultra pointy classic arrow angle (15 degrees total)
-    const arrowHeadAngle = Math.PI / 12; // 15 degrees for ultra sharp classic look
+    const headLength = Math.min(
+      this.ARROW_HEAD_MAX_LENGTH,
+      Math.max(this.ARROW_HEAD_MIN_LENGTH, ctx.lineWidth * this.ARROW_HEAD_LENGTH_MULTIPLIER),
+    );
+    const arrowHeadAngle = this.ARROW_HEAD_HALF_ANGLE;
+    const shaftEndX = toX - headLength * Math.cos(angle);
+    const shaftEndY = toY - headLength * Math.sin(angle);
 
     ctx.save();
 
-    // Set line properties for consistent drawing
-    ctx.lineCap = "round"; // Better appearance for arrows
-    ctx.lineJoin = "round";
+    // Keep the shaft clean but make the head feel crisp and pointed.
+    ctx.lineCap = "butt";
+    ctx.lineJoin = "miter";
+    ctx.miterLimit = 6;
 
-    // Draw the main line - simple and clean
+    // Stop the shaft at the head base so the point stays crisp.
     ctx.beginPath();
     ctx.moveTo(fromX, fromY);
-    ctx.lineTo(toX, toY);
+    ctx.lineTo(shaftEndX, shaftEndY);
     ctx.stroke();
 
     // Draw classic triangular arrowhead - bigger and more visible
@@ -230,10 +539,25 @@ export class CanvasRenderer {
     ctx.lineTo(rightX, rightY);
     ctx.closePath();
     ctx.fill();
-
-    // Also stroke the arrowhead for better definition
     ctx.stroke();
 
+    ctx.restore();
+  }
+
+  static drawLine(
+    ctx: CanvasRenderingContext2D,
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+  ) {
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -254,55 +578,61 @@ export class CanvasRenderer {
     ctx.fillStyle = annotation.color;
 
     if (hasBox) {
-      // BOX MODE: Center text in the drawn box
-      const x = annotation.boxX!;
-      const y = annotation.boxY!;
-      const w = annotation.boxWidth!;
-      const h = annotation.boxHeight!;
+      const actualText = annotation.content || "";
+      const displayText = actualText || (isCurrentlyEditing ? "Type here..." : "");
+      const layout = this.getTextBoxLayout(annotation, ctx, displayText);
+      const cursorLayout = this.getTextBoxLayout(annotation, ctx, actualText);
 
       ctx.fillStyle = "rgba(15, 23, 42, 0.78)";
       ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
       ctx.lineWidth = 1.5;
-      ctx.fillRect(x, y, w, h);
-      ctx.strokeRect(x, y, w, h);
+      ctx.fillRect(layout.boxX, layout.boxY, layout.boxWidth, layout.boxHeight);
+      ctx.strokeRect(layout.boxX, layout.boxY, layout.boxWidth, layout.boxHeight);
 
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const centerX = x + w / 2;
-      const centerY = y + h / 2;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(
+        layout.boxX + 1,
+        layout.boxY + 1,
+        Math.max(0, layout.boxWidth - 2),
+        Math.max(0, layout.boxHeight - 2),
+      );
+      ctx.clip();
 
-      const text = annotation.content || "";
-
-      // Render text (only if content exists)
-      if (text) {
-        ctx.fillStyle = annotation.color;
-        ctx.fillText(text, centerX, centerY);
+      if (displayText) {
+        ctx.fillStyle = actualText ? annotation.color : "rgba(148, 163, 184, 0.92)";
+        layout.lines.forEach((line, index) => {
+          ctx.fillText(
+            line,
+            layout.boxX + layout.paddingX,
+            layout.boxY + layout.paddingY + index * layout.lineHeight,
+          );
+        });
       }
 
-      // Draw cursor if editing
       if (isCurrentlyEditing) {
-        const metrics = ctx.measureText(text);
-        const halfWidth = metrics.width / 2;
-        // Cursor is at center + half width (right end of text)
-        const cursorX = centerX + halfWidth + 2;
-        const fontSize = parseInt(annotation.font, 10);
-
-        // Blink
         if (Math.floor(Date.now() / 500) % 2 === 0) {
+          const cursorLines = cursorLayout.lines.length > 0 ? cursorLayout.lines : [""];
+          const lastLine = cursorLines[cursorLines.length - 1] ?? "";
+          const cursorX = cursorLayout.boxX + cursorLayout.paddingX + this.measureTextWidth(ctx, lastLine, cursorLayout.fontSize);
+          const cursorY = cursorLayout.boxY + cursorLayout.paddingY + (cursorLines.length - 1) * cursorLayout.lineHeight;
+
           ctx.beginPath();
-          ctx.moveTo(cursorX, centerY - fontSize / 2);
-          ctx.lineTo(cursorX, centerY + fontSize / 2);
+          ctx.moveTo(cursorX, cursorY + 2);
+          ctx.lineTo(cursorX, cursorY + cursorLayout.lineHeight - 2);
           ctx.strokeStyle = annotation.color;
           ctx.lineWidth = 2;
           ctx.stroke();
         }
 
-        // Draw box border helper
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
-        ctx.setLineDash([4, 4]);
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, w, h);
+        ctx.strokeStyle = "rgba(59, 130, 246, 0.65)";
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(layout.boxX, layout.boxY, layout.boxWidth, layout.boxHeight);
       }
+
+      ctx.restore();
     } else {
       // LEGACY MODE (Click to type)
       if (annotation.content) {
@@ -359,6 +689,12 @@ export class CanvasRenderer {
     this.drawArrow(ctx, annotation.startX, annotation.startY, annotation.endX, annotation.endY);
   }
 
+  static drawLineObject(ctx: CanvasRenderingContext2D, annotation: LineAnnotation) {
+    ctx.strokeStyle = annotation.color;
+    ctx.lineWidth = annotation.width;
+    this.drawLine(ctx, annotation.startX, annotation.startY, annotation.endX, annotation.endY);
+  }
+
   // Drawing: Highlighter annotation
   static drawHighlighterObject(ctx: CanvasRenderingContext2D, annotation: HighlighterAnnotation) {
     if (annotation.points.length < 2) return;
@@ -405,28 +741,39 @@ export class CanvasRenderer {
 
   // Drawing: Step annotation
   static drawStepObject(ctx: CanvasRenderingContext2D, annotation: StepAnnotation) {
-    const isNoCircle = annotation.symbol === 'none';
+    const isNoCircle = annotation.symbol === "none";
+    const badge = this.getStepBadgeMetrics(annotation, ctx);
+
+    ctx.save();
 
     // Draw Circle (unless symbol is 'none' which means no circle)
     if (!isNoCircle) {
       ctx.fillStyle = annotation.color;
       ctx.beginPath();
-      ctx.arc(annotation.cx, annotation.cy, annotation.radius, 0, 2 * Math.PI);
+      ctx.arc(annotation.cx, annotation.cy, badge.radius, 0, 2 * Math.PI);
       ctx.fill();
+      ctx.strokeStyle = badge.circleOutlineColor;
+      ctx.lineWidth = badge.circleOutlineWidth;
+      ctx.stroke();
     }
 
     // Draw Content
-    ctx.fillStyle = isNoCircle ? annotation.color : "#FFFFFF";
-    ctx.font = `${annotation.fontSize}px sans-serif`;
+    ctx.fillStyle = badge.textColor;
+    ctx.font = `600 ${badge.fontSize}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
+    let content = badge.content;
 
-    let content = annotation.number.toString();
     if (annotation.symbol === 'check') content = '✓';
     else if (annotation.symbol === 'x') content = '✕';
     else if (annotation.symbol === 'plus') content = '＋';
 
-    ctx.fillText(content, annotation.cx, annotation.cy);
+    void content;
+    ctx.lineWidth = badge.textOutlineWidth;
+    ctx.strokeStyle = badge.textOutlineColor;
+    ctx.strokeText(badge.content, annotation.cx, annotation.cy);
+    ctx.fillText(badge.content, annotation.cx, annotation.cy);
+    ctx.restore();
   }
 
   // Drawing: Symbol annotation
@@ -437,6 +784,17 @@ export class CanvasRenderer {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(annotation.symbol, annotation.x, annotation.y);
+    ctx.restore();
+  }
+
+  static drawImageObject(ctx: CanvasRenderingContext2D, annotation: ImageAnnotation) {
+    const image = this.getCachedImage(annotation.src);
+    if (!image || !image.complete) {
+      return;
+    }
+
+    ctx.save();
+    ctx.drawImage(image, annotation.x, annotation.y, annotation.width, annotation.height);
     ctx.restore();
   }
 
@@ -487,24 +845,31 @@ export class CanvasRenderer {
     points: { x: number; y: number }[],
     brushSize: number,
     img: HTMLImageElement,
-    scrollOffset: { x: number; y: number }
+    _scrollOffset: { x: number; y: number },
+    blurredImageCanvas: HTMLCanvasElement | null,
   ) {
     if (!points || points.length === 0) return;
 
     try {
-      // Create blur canvas
-      const blurCanvas = document.createElement("canvas");
-      blurCanvas.width = canvas.width;
-      blurCanvas.height = canvas.height;
-      const blurCtx = blurCanvas.getContext("2d");
-      if (!blurCtx) return;
+      const blurCanvas = (
+        blurredImageCanvas
+        && blurredImageCanvas.width === canvas.width
+        && blurredImageCanvas.height === canvas.height
+      )
+        ? blurredImageCanvas
+        : (() => {
+          const fallbackBlurCanvas = document.createElement("canvas");
+          fallbackBlurCanvas.width = canvas.width;
+          fallbackBlurCanvas.height = canvas.height;
+          const blurCtx = fallbackBlurCanvas.getContext("2d");
+          if (!blurCtx) return null;
+          blurCtx.filter = "blur(10px)";
+          blurCtx.drawImage(img, 0, 0);
+          blurCtx.filter = "none";
+          return fallbackBlurCanvas;
+        })();
 
-      // Apply transform and blur
-      blurCtx.translate(-scrollOffset.x, -scrollOffset.y);
-      blurCtx.filter = "blur(10px)";
-      blurCtx.drawImage(img, 0, 0);
-      blurCtx.filter = "none";
-      blurCtx.resetTransform();
+      if (!blurCanvas) return;
 
       // Apply blur for each point
       points.forEach((point: { x: number; y: number }) => {
@@ -532,7 +897,8 @@ export class CanvasRenderer {
     annotation: BlurAnnotation,
     canvas: HTMLCanvasElement,
     img: HTMLImageElement,
-    scrollOffset: { x: number; y: number }
+    scrollOffset: { x: number; y: number },
+    blurredImageCanvas: HTMLCanvasElement | null,
   ) {
     if (annotation.mode !== "spot" || !annotation.points || annotation.points.length === 0) {
       return;
@@ -543,7 +909,8 @@ export class CanvasRenderer {
       annotation.points,
       annotation.brushSize || 10,
       img,
-      scrollOffset
+      scrollOffset,
+      blurredImageCanvas,
     );
   }
 
@@ -557,6 +924,7 @@ export class CanvasRenderer {
       isEditing: boolean;
       img?: HTMLImageElement;
       scrollOffset: { x: number; y: number };
+      blurredImageCanvas?: HTMLCanvasElement | null;
     }
   ) {
     // Separate spot blurs to draw them last
@@ -579,6 +947,9 @@ export class CanvasRenderer {
             selectedAnnotationId: options.selectedAnnotationId,
           });
           break;
+        case "line":
+          this.drawLineObject(ctx, annotation);
+          break;
         case "arrow":
           this.drawArrowObject(ctx, annotation);
           break;
@@ -597,6 +968,9 @@ export class CanvasRenderer {
         case "symbol":
           this.drawSymbolObject(ctx, annotation);
           break;
+        case "image":
+          this.drawImageObject(ctx, annotation);
+          break;
         // focusRects and other blur modes filtered out
       }
     });
@@ -604,7 +978,14 @@ export class CanvasRenderer {
     // Draw spot blurs on top
     if (options.img) {
       spotBlurAnnotations.forEach((annotation) => {
-        this.drawBlurObject(ctx, annotation, canvas, options.img!, options.scrollOffset);
+        this.drawBlurObject(
+          ctx,
+          annotation,
+          canvas,
+          options.img!,
+          options.scrollOffset,
+          options.blurredImageCanvas ?? null,
+        );
       });
     }
 
@@ -614,24 +995,36 @@ export class CanvasRenderer {
     );
 
     if (selectedAnnotation && selectedAnnotation.type !== "text") {
-      const bounds = this.getAnnotationBounds(selectedAnnotation, ctx);
-      if (bounds) {
+      const selectionBounds = this.getSelectionBounds(selectedAnnotation, ctx);
+      if (selectionBounds) {
         // Draw a solid selection border instead of dashed to avoid pulsing
         ctx.strokeStyle = "rgba(0, 100, 255, 0.8)";
         ctx.lineWidth = 2;
-        ctx.strokeRect(bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6);
+        ctx.strokeRect(selectionBounds.x, selectionBounds.y, selectionBounds.width, selectionBounds.height);
 
         // Draw corner handles for better visual feedback
-        const handleSize = 6;
         ctx.fillStyle = "rgba(0, 100, 255, 0.8)";
-        // Top-left
-        ctx.fillRect(bounds.x - 3 - handleSize / 2, bounds.y - 3 - handleSize / 2, handleSize, handleSize);
-        // Top-right
-        ctx.fillRect(bounds.x + bounds.width + 3 - handleSize / 2, bounds.y - 3 - handleSize / 2, handleSize, handleSize);
-        // Bottom-left
-        ctx.fillRect(bounds.x - 3 - handleSize / 2, bounds.y + bounds.height + 3 - handleSize / 2, handleSize, handleSize);
-        // Bottom-right
-        ctx.fillRect(bounds.x + bounds.width + 3 - handleSize / 2, bounds.y + bounds.height + 3 - handleSize / 2, handleSize, handleSize);
+
+        if (selectedAnnotation.type === "image") {
+          this.getImageResizeHandles(selectedAnnotation, ctx).forEach((handle) => {
+            ctx.fillRect(
+              handle.x - handle.size / 2,
+              handle.y - handle.size / 2,
+              handle.size,
+              handle.size,
+            );
+          });
+        } else {
+          const handleSize = 6;
+          // Top-left
+          ctx.fillRect(selectionBounds.x - handleSize / 2, selectionBounds.y - handleSize / 2, handleSize, handleSize);
+          // Top-right
+          ctx.fillRect(selectionBounds.x + selectionBounds.width - handleSize / 2, selectionBounds.y - handleSize / 2, handleSize, handleSize);
+          // Bottom-left
+          ctx.fillRect(selectionBounds.x - handleSize / 2, selectionBounds.y + selectionBounds.height - handleSize / 2, handleSize, handleSize);
+          // Bottom-right
+          ctx.fillRect(selectionBounds.x + selectionBounds.width - handleSize / 2, selectionBounds.y + selectionBounds.height - handleSize / 2, handleSize, handleSize);
+        }
       }
     }
   }

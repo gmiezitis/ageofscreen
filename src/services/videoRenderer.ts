@@ -10,9 +10,10 @@ import path from 'path';
 import fs from 'fs';
 import { execSync, spawn } from 'child_process';
 import { RELEASE_PROFILE } from '../config/releaseProfile';
-import { getSnipFocusTempDir } from './runtimePaths';
+import { getageofscreenTempDir } from './runtimePaths';
 import { perfMark } from '../utils/perf';
 import { fromMediaFileUrl } from '../shared/mediaPaths';
+import { isSupportedMediaFilePath } from '../shared/pathSecurity';
 import { normalizeArea, resolveBackgroundFFmpeg, CINEMATIC_CSS, computeBaseZoom, computeEffectFadeRatio, computeEffectiveCx, computeSafeFocusCoord, ZOOM_EASE_IN, ZOOM_EASE_OUT } from '../videoEditor/effectMath';
 import { DEFAULT_ZOOM_INTENSITY, getEffectIntensity } from '../videoEditor/effectIntensity';
 import { resolveClipTransitionType } from '../videoEditor/timelineScene';
@@ -105,6 +106,15 @@ const normalizeFfmpegColor = (value: string | null | undefined, fallback = 'whit
     const safeValue = (value || fallback).trim();
     if (!safeValue) return fallback;
     if (safeValue.startsWith('#')) return `0x${safeValue.slice(1)}`;
+    const rgbaMatch = safeValue.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
+    if (rgbaMatch) {
+        const r = Math.max(0, Math.min(255, Math.round(Number.parseFloat(rgbaMatch[1]))));
+        const g = Math.max(0, Math.min(255, Math.round(Number.parseFloat(rgbaMatch[2]))));
+        const b = Math.max(0, Math.min(255, Math.round(Number.parseFloat(rgbaMatch[3]))));
+        const alpha = rgbaMatch[4] != null ? clamp01(Number.parseFloat(rgbaMatch[4])) : null;
+        const hex = `0x${[r, g, b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+        return alpha == null ? hex : `${hex}@${alpha.toFixed(3)}`;
+    }
     return safeValue;
 };
 const sampleTimedTrack = <T extends { time: number }>(points: T[], maxPoints: number): T[] => {
@@ -124,13 +134,66 @@ const sampleTimedTrack = <T extends { time: number }>(points: T[], maxPoints: nu
 
     return result;
 };
-const MAX_CURSOR_OVERLAY_EXPR_POINTS = 32;
+const MAX_CURSOR_OVERLAY_EXPR_POINTS = 72;
 const MAX_FOLLOW_CURSOR_EXPR_POINTS = 18;
 const EXPORT_SAFE_EFFECT_TYPES = new Set(['zoom', '3d_tilt', 'card_flip', 'slow_zoom', 'breathing', 'blur_area', 'exposure']);
 const RELIABLE_FALLBACK_EFFECT_TYPES = new Set(['zoom', 'slow_zoom', 'breathing', 'blur_area', 'exposure']);
+const FFMPEG_INITIAL_PROGRESS_TIMEOUT_MS = 60_000;
+const FFMPEG_PROGRESS_STALL_TIMEOUT_MS = 45_000;
+const FFMPEG_PROGRESS_CHECK_INTERVAL_MS = 5_000;
+const FFMPEG_STALL_MARKER = '[VideoRenderer] FFmpeg progress stalled';
+const EXPORT_TRANSITION_PREFERRED_DURATION = 0.24;
+const EXPORT_TRANSITION_MIN_DURATION = 0.06;
+const EXPORT_TRANSITION_GAP_TOLERANCE = 0.04;
 const getExpressionPointBudget = (duration: number, maxPoints: number, pointsPerSecond: number, minPoints: number): number => (
     Math.max(minPoints, Math.min(maxPoints, Math.ceil(Math.max(0.1, duration) * pointsPerSecond) + 1))
 );
+const parseFfmpegTimestampSeconds = (value: string): number => {
+    const match = value.match(/(\d+):(\d+):(\d+(?:\.\d+)?)/);
+    if (!match) return Number.NaN;
+    const hours = Number.parseInt(match[1], 10);
+    const minutes = Number.parseInt(match[2], 10);
+    const seconds = Number.parseFloat(match[3]);
+    return (hours * 3600) + (minutes * 60) + seconds;
+};
+const EXPORT_WATERMARK_FILE = 'export-watermark.png';
+const resolveBrandingResourcePath = (fileName: string): string | null => {
+    const candidates = app.isPackaged
+        ? [
+            path.join(process.resourcesPath, 'branding', fileName),
+        ]
+        : [
+            path.resolve(process.cwd(), 'resources', 'branding', fileName),
+            path.resolve(app.getAppPath(), 'resources', 'branding', fileName),
+        ];
+
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return null;
+};
+
+const ensureReadableMediaInputPath = (source: string, label: string): string => {
+    const resolvedPath = fromMediaFileUrl(source);
+    if (!path.isAbsolute(resolvedPath)) {
+        throw new Error(`${label} must use an absolute file path.`);
+    }
+    if (!isSupportedMediaFilePath(resolvedPath)) {
+        throw new Error(`${label} uses an unsupported media type: ${resolvedPath}`);
+    }
+    if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`${label} file not found: ${resolvedPath}`);
+    }
+    try {
+        fs.accessSync(resolvedPath, fs.constants.R_OK);
+    } catch {
+        throw new Error(`${label} is not readable: ${resolvedPath}`);
+    }
+    return resolvedPath;
+};
 
 // FFmpeg path detection
 let ffmpegPath: string | null = null;
@@ -179,7 +242,7 @@ const findFFmpegInPath = (): string | null => {
                 return trimmed;
             }
         }
-    } catch (e) {
+    } catch {
         // Not found in PATH
     }
     return null;
@@ -230,7 +293,7 @@ const initFFmpeg = () => {
             console.log('[VideoRenderer] Using @ffmpeg-installer:', installer.path);
             return;
         }
-    } catch (e) {
+    } catch {
         // Package not available or platform not supported
     }
 
@@ -277,7 +340,7 @@ const initFFmpeg = () => {
                                         if (found) return found;
                                     }
                                 }
-                            } catch (e) { }
+                            } catch { }
                             return null;
                         };
                         const found = searchDirs(pkgPath);
@@ -289,7 +352,7 @@ const initFFmpeg = () => {
                         }
                     }
                 }
-            } catch (e) {
+            } catch {
                 console.log('[VideoRenderer] Could not search WinGet packages');
             }
         }
@@ -319,7 +382,9 @@ export class VideoRenderer {
         requestedEffectTypes: string[];
         exportedEffectTypes: string[];
         fallbackMode: 'none' | 'reliable_subset' | 'no_effects';
-    } = { requestedEffectTypes: [], exportedEffectTypes: [], fallbackMode: 'none' };
+        transitionFallbackMode: 'none' | 'cut';
+        cursorFallbackMode: 'none' | 'disabled';
+    } = { requestedEffectTypes: [], exportedEffectTypes: [], fallbackMode: 'none', transitionFallbackMode: 'none', cursorFallbackMode: 'none' };
 
     isAvailable(): boolean {
         // Re-check on each call in case FFmpeg was installed after startup
@@ -339,7 +404,7 @@ export class VideoRenderer {
 
     /**
      * Process video with trim, crop, frame/padding, audio overlays, effects, and optional watermark.
-     * When addWatermark is true, adds "Made with SnipFocus" at bottom-right (free plan).
+     * When addWatermark is true, adds the branded export watermark at bottom-right (free plan).
      */
     async processVideo(
         inputPath: string,
@@ -364,18 +429,24 @@ export class VideoRenderer {
             backdropHeight?: number;
             backdropHotspotX?: number;
             backdropHotspotY?: number;
-            cursorFile: string;
-            cursorWidth: number;
-            cursorHeight: number;
+            cursorFile?: string;
+            cursorWidth?: number;
+            cursorHeight?: number;
             cursorHotspotX?: number;
             cursorHotspotY?: number;
             rippleFile?: string;
             rippleSize?: number;
+            disabledRanges?: Array<{ startTime: number; endTime: number }>;
             track: Array<{ time: number; x: number; y: number }>;
             clicks: Array<{ time: number; x: number; y: number }>;
         } | null,
         colorGrade?: string,
-        premiumVoice?: boolean
+        premiumVoice?: boolean,
+        renderOptions?: {
+            forceCutTransitions?: boolean;
+            disableCursorOverlay?: boolean;
+            onProgress?: (fraction: number, progressSeconds: number, durationSeconds: number) => void;
+        }
     ): Promise<string> {
         const perf = perfMark('render:processVideo');
         if (!ffmpegAvailable) initFFmpeg();
@@ -439,6 +510,22 @@ export class VideoRenderer {
         const requestedEffects = smartEffects || [];
         const effects = requestedEffects.filter((fx) => EXPORT_SAFE_EFFECT_TYPES.has(fx.type));
         const skippedEffects = requestedEffects.filter((fx) => !EXPORT_SAFE_EFFECT_TYPES.has(fx.type));
+        const forceCutTransitions = renderOptions?.forceCutTransitions === true;
+        const disableCursorOverlay = renderOptions?.disableCursorOverlay === true;
+        const onProgress = renderOptions?.onProgress;
+        const effectiveCursorOverlay = disableCursorOverlay ? null : cursorOverlay;
+        const buildRenderInfo = (
+            fallbackMode: 'none' | 'reliable_subset' | 'no_effects',
+            exportedEffectTypes: string[] = effects.map((fx) => fx.type),
+            transitionFallbackMode: 'none' | 'cut' = forceCutTransitions ? 'cut' : 'none',
+            cursorFallbackMode: 'none' | 'disabled' = disableCursorOverlay ? 'disabled' : 'none',
+        ) => ({
+            requestedEffectTypes: requestedEffects.map((fx) => fx.type),
+            exportedEffectTypes,
+            fallbackMode,
+            transitionFallbackMode,
+            cursorFallbackMode,
+        });
         if (skippedEffects.length > 0) {
             console.warn('[VideoRenderer] Skipping export-unsafe effects:', skippedEffects.map((fx) => fx.type));
         }
@@ -471,7 +558,7 @@ export class VideoRenderer {
             });
         };
         const writeFilterScript = (contents: string, suffix: string) => {
-            const tempPath = path.join(getSnipFocusTempDir(), `snipfocus-ffmpeg-filter-${Date.now()}-${suffix}.txt`);
+            const tempPath = path.join(getageofscreenTempDir(), `ageofscreen-ffmpeg-filter-${Date.now()}-${suffix}.txt`);
             fs.writeFileSync(tempPath, contents, 'utf8');
             tempFilterScriptFiles.push(tempPath);
             return tempPath;
@@ -483,64 +570,152 @@ export class VideoRenderer {
                     throw new Error('Unsupported annotation overlay image format');
                 }
                 const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-                const tempPath = path.join(getSnipFocusTempDir(), `snipfocus-annotation-${Date.now()}-${index}.${ext}`);
+                const tempPath = path.join(getageofscreenTempDir(), `ageofscreen-annotation-${Date.now()}-${index}.${ext}`);
                 fs.writeFileSync(tempPath, Buffer.from(match[2], 'base64'));
                 tempOverlayFiles.push(tempPath);
                 return tempPath;
             }
-            return fromMediaFileUrl(file);
+            return ensureReadableMediaInputPath(file, 'Overlay input');
         };
         let nextInputIdx = 1;
         for (const a of audios) {
-            const audioPath = fromMediaFileUrl(a.file);
+            const audioPath = ensureReadableMediaInputPath(a.file, 'Audio overlay');
             args.push('-i', audioPath);
             audioProbeInfos.push(audioPath);
             nextInputIdx += 1;
         }
         const imageClipInputs = imageClips || [];
+        const timelineItems = [
+            ...segments.map((seg, index) => ({
+                id: seg.id || `segment-${index}`,
+                kind: 'video' as const,
+                startTime: seg.timelineStart ?? 0,
+                duration: Math.max(0.02, seg.endSeconds - seg.startSeconds),
+                segment: seg,
+            })),
+            ...imageClipInputs.map((clip, index) => ({
+                id: clip.id || `image-${index}`,
+                kind: 'image' as const,
+                startTime: Math.max(0, clip.startTime ?? 0),
+                duration: Math.max(0.1, clip.duration ?? 0.1),
+                imageClipIndex: index,
+                clip,
+            })),
+        ].sort((a, b) => {
+            const startDelta = a.startTime - b.startTime;
+            if (Math.abs(startDelta) > EXPORT_TRANSITION_GAP_TOLERANCE) {
+                return startDelta;
+            }
+            if (a.kind === b.kind) {
+                return a.id.localeCompare(b.id);
+            }
+            return a.kind === 'image' ? -1 : 1;
+        });
+
+        const requestedTimelineTransitions = timelineItems.slice(0, -1).map((item, index) => {
+            const nextItem = timelineItems[index + 1];
+            const requestedType = resolveClipTransitionType(
+                clipTransitions || [],
+                item.id,
+                nextItem.id,
+                (transitionType || 'cut') as TransitionType,
+            );
+            const gap = nextItem.startTime - (item.startTime + item.duration);
+            const duration = Math.min(
+                EXPORT_TRANSITION_PREFERRED_DURATION,
+                Math.max(0.02, item.duration * 0.5),
+                Math.max(0.02, nextItem.duration * 0.5),
+            );
+            const canApplyTransition = Math.abs(gap) <= EXPORT_TRANSITION_GAP_TOLERANCE
+                && requestedType !== 'cut'
+                && duration >= EXPORT_TRANSITION_MIN_DURATION;
+
+            return {
+                fromItemId: item.id,
+                toItemId: nextItem.id,
+                type: canApplyTransition ? requestedType : 'cut' as const,
+                requestedType,
+                duration: canApplyTransition ? duration : 0,
+            };
+        });
+        const timelineTransitions = forceCutTransitions
+            ? requestedTimelineTransitions.map((transition) => ({ ...transition, type: 'cut' as const, duration: 0 }))
+            : requestedTimelineTransitions;
+        const canRetryWithCutTransitions = imageClipInputs.length > 0
+            && !forceCutTransitions
+            && requestedTimelineTransitions.some((transition) => transition.type !== 'cut');
+        let exportDuration = timelineItems.reduce((max, item) => Math.max(max, item.startTime + item.duration), 0);
+        exportDuration = Math.max(
+            0.02,
+            exportDuration - timelineTransitions.reduce((sum, transition) => (
+                transition.type === 'crossfade' ? sum + transition.duration : sum
+            ), 0),
+        );
+        const exportDurationLabel = exportDuration.toFixed(3);
+
         const imageClipInputStartIdx = nextInputIdx;
         for (let i = 0; i < imageClipInputs.length; i += 1) {
             const resolvedPath = await resolveOverlayInputPath(imageClipInputs[i].file, i);
-            args.push('-loop', '1', '-t', Math.max(0.1, imageClipInputs[i].duration).toFixed(3), '-i', resolvedPath);
+            args.push('-framerate', '60', '-loop', '1', '-t', Math.max(0.1, imageClipInputs[i].duration).toFixed(3), '-i', resolvedPath);
+            nextInputIdx += 1;
+        }
+        const rawTextOverlays = textOverlays || [];
+        const textImageInputs = rawTextOverlays.filter((overlay) => typeof overlay?.file === 'string');
+        const drawTextOverlays = rawTextOverlays.filter((overlay) => typeof overlay?.file !== 'string');
+        const textImageInputStartIdx = nextInputIdx;
+        for (let i = 0; i < textImageInputs.length; i += 1) {
+            const resolvedPath = await resolveOverlayInputPath(textImageInputs[i].file, imageClipInputs.length + i);
+            args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
             nextInputIdx += 1;
         }
         const annotationInputs = annotationImageOverlays || [];
         const annotationInputStartIdx = nextInputIdx;
         for (let i = 0; i < annotationInputs.length; i += 1) {
-            const resolvedPath = await resolveOverlayInputPath(annotationInputs[i].file, imageClipInputs.length + i);
-            args.push('-loop', '1', '-i', resolvedPath);
+            const resolvedPath = await resolveOverlayInputPath(annotationInputs[i].file, imageClipInputs.length + textImageInputs.length + i);
+            args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
             nextInputIdx += 1;
         }
         const imageOverlayInputs = imageOverlays || [];
         const imageOverlayInputStartIdx = nextInputIdx;
         for (let i = 0; i < imageOverlayInputs.length; i += 1) {
-            const resolvedPath = await resolveOverlayInputPath(imageOverlayInputs[i].file, imageClipInputs.length + annotationInputs.length + i);
-            args.push('-loop', '1', '-i', resolvedPath);
+            const resolvedPath = await resolveOverlayInputPath(imageOverlayInputs[i].file, imageClipInputs.length + textImageInputs.length + annotationInputs.length + i);
+            args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
             nextInputIdx += 1;
         }
         let cursorBackdropInputIdx = -1;
-        if (cursorOverlay?.backdropFile) {
-            const resolvedPath = await resolveOverlayInputPath(cursorOverlay.backdropFile, imageClipInputs.length + annotationInputs.length + imageOverlayInputs.length);
-            args.push('-loop', '1', '-i', resolvedPath);
+        if (effectiveCursorOverlay?.backdropFile) {
+            const resolvedPath = await resolveOverlayInputPath(effectiveCursorOverlay.backdropFile, imageClipInputs.length + textImageInputs.length + annotationInputs.length + imageOverlayInputs.length);
+            args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
             cursorBackdropInputIdx = nextInputIdx;
             nextInputIdx += 1;
         }
         let cursorInputIdx = -1;
-        if (cursorOverlay?.cursorFile) {
-            const resolvedPath = await resolveOverlayInputPath(cursorOverlay.cursorFile, imageClipInputs.length + annotationInputs.length + imageOverlayInputs.length + (cursorBackdropInputIdx !== -1 ? 1 : 0));
-            args.push('-loop', '1', '-i', resolvedPath);
+        if (effectiveCursorOverlay?.cursorFile) {
+            const resolvedPath = await resolveOverlayInputPath(effectiveCursorOverlay.cursorFile, imageClipInputs.length + textImageInputs.length + annotationInputs.length + imageOverlayInputs.length + (cursorBackdropInputIdx !== -1 ? 1 : 0));
+            args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
             cursorInputIdx = nextInputIdx;
             nextInputIdx += 1;
         }
         let rippleInputIdx = -1;
-        if (cursorOverlay?.rippleFile) {
+        if (effectiveCursorOverlay?.rippleFile) {
             const resolvedPath = await resolveOverlayInputPath(
-                cursorOverlay.rippleFile,
-                imageClipInputs.length + annotationInputs.length + imageOverlayInputs.length + (cursorBackdropInputIdx !== -1 ? 1 : 0) + (cursorInputIdx !== -1 ? 1 : 0),
+                effectiveCursorOverlay.rippleFile,
+                imageClipInputs.length + textImageInputs.length + annotationInputs.length + imageOverlayInputs.length + (cursorBackdropInputIdx !== -1 ? 1 : 0) + (cursorInputIdx !== -1 ? 1 : 0),
             );
-            args.push('-loop', '1', '-i', resolvedPath);
+            args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
             rippleInputIdx = nextInputIdx;
             nextInputIdx += 1;
+        }
+        let watermarkInputIdx = -1;
+        if (addWatermark) {
+            const watermarkLogoPath = resolveBrandingResourcePath(EXPORT_WATERMARK_FILE);
+            if (watermarkLogoPath) {
+                args.push('-loop', '1', '-t', exportDurationLabel, '-i', watermarkLogoPath);
+                watermarkInputIdx = nextInputIdx;
+                nextInputIdx += 1;
+            } else {
+                console.warn('[VideoRenderer] Export watermark logo not found. Falling back to text-only watermark.');
+            }
         }
 
         const videoFilters: string[] = [];
@@ -577,7 +752,7 @@ export class VideoRenderer {
 
             // Double-check existence right before adding as FFmpeg input.
             if (fs.existsSync(bgPath)) {
-                args.push('-loop', '1', '-i', bgPath);
+                args.push('-loop', '1', '-t', exportDurationLabel, '-i', bgPath);
                 bgInputIdx = nextInputIdx;
                 nextInputIdx += 1;
             } else {
@@ -585,78 +760,49 @@ export class VideoRenderer {
             }
         }
 
-        const timelineItems = [
-            ...segments.map((seg, index) => ({
-                id: seg.id || `segment-${index}`,
-                kind: 'video' as const,
-                startTime: seg.timelineStart ?? 0,
-                duration: Math.max(0.02, seg.endSeconds - seg.startSeconds),
-                segment: seg,
-            })),
-            ...imageClipInputs.map((clip, index) => ({
-                id: clip.id || `image-${index}`,
-                kind: 'image' as const,
-                startTime: Math.max(0, clip.startTime ?? 0),
-                duration: Math.max(0.1, clip.duration ?? 0.1),
-                inputIdx: imageClipInputStartIdx + index,
-                clip,
-            })),
-        ].sort((a, b) => a.startTime - b.startTime);
-
-        const TD = 0.3;
-        const timelineTransitions = timelineItems.slice(0, -1).map((item, index) => ({
-            fromItemId: item.id,
-            toItemId: timelineItems[index + 1].id,
-            type: resolveClipTransitionType(
-                clipTransitions || [],
-                item.id,
-                timelineItems[index + 1].id,
-                (transitionType || 'cut') as TransitionType,
-            ),
-        }));
-
-        let exportDuration = timelineItems.reduce((max, item) => Math.max(max, item.startTime + item.duration), 0);
-        exportDuration = Math.max(
-            0.02,
-            exportDuration - (timelineTransitions.filter((transition) => transition.type === 'crossfade').length * TD),
-        );
-
         // Build trim+crop chains WITHOUT padding; padding is applied after effects
         // so that effect area % coords always reference the unpadded video dimensions.
         timelineItems.forEach((item, i) => {
-            const fadeIn = i > 0 && timelineTransitions[i - 1]?.type === 'dip_to_black';
-            const fadeOut = i < timelineTransitions.length && timelineTransitions[i]?.type === 'dip_to_black';
+            const fadeInDuration = i > 0 && timelineTransitions[i - 1]?.type === 'dip_to_black'
+                ? Math.max(0.03, timelineTransitions[i - 1].duration / 2)
+                : 0;
+            const fadeOutDuration = i < timelineTransitions.length && timelineTransitions[i]?.type === 'dip_to_black'
+                ? Math.max(0.03, timelineTransitions[i].duration / 2)
+                : 0;
+            const fadeIn = fadeInDuration > 0;
+            const fadeOut = fadeOutDuration > 0;
 
             if (item.kind === 'video') {
                 let vf = `[0:v]trim=start=${item.segment.startSeconds}:end=${item.segment.endSeconds},setpts=PTS-STARTPTS`;
                 if (hasCrop && crop) {
                     vf += `,crop=iw*${(crop.width / 100).toFixed(4)}:ih*${(crop.height / 100).toFixed(4)}:iw*${(crop.x / 100).toFixed(4)}:ih*${(crop.y / 100).toFixed(4)}`;
                 }
-                vf += `,scale=${effectW}:${effectH}:flags=lanczos,setsar=1,fps=60,format=rgba`;
-                if (fadeIn) vf += `,fade=t=in:st=0:d=${TD.toFixed(3)}`;
-                if (fadeOut) vf += `,fade=t=out:st=${Math.max(0, item.duration - TD).toFixed(3)}:d=${TD.toFixed(3)}`;
+                vf += `,scale=${effectW}:${effectH}:flags=lanczos,setsar=1,fps=60,settb=AVTB,format=rgba`;
+                if (fadeIn) vf += `,fade=t=in:st=0:d=${fadeInDuration.toFixed(3)}`;
+                if (fadeOut) vf += `,fade=t=out:st=${Math.max(0, item.duration - fadeOutDuration).toFixed(3)}:d=${fadeOutDuration.toFixed(3)}`;
                 vf += `[v${i}]`;
                 videoFilters.push(vf);
 
                 if (hasAudio) {
-                    let af = `[0:a]atrim=start=${item.segment.startSeconds}:end=${item.segment.endSeconds},asetpts=PTS-STARTPTS`;
-                    if (fadeIn) af += `,afade=t=in:st=0:d=${TD.toFixed(3)}`;
-                    if (fadeOut) af += `,afade=t=out:st=${Math.max(0, item.duration - TD).toFixed(3)}:d=${TD.toFixed(3)}`;
+                    let af = `[0:a]atrim=start=${item.segment.startSeconds}:end=${item.segment.endSeconds},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo`;
+                    if (fadeIn) af += `,afade=t=in:st=0:d=${fadeInDuration.toFixed(3)}`;
+                    if (fadeOut) af += `,afade=t=out:st=${Math.max(0, item.duration - fadeOutDuration).toFixed(3)}:d=${fadeOutDuration.toFixed(3)}`;
                     af += `[a${i}]`;
                     audioFilters.push(af);
                 }
                 return;
             }
 
-            let imageFilter = `[${item.inputIdx}:v]format=rgba,scale=w='min(iw,${effectW})':h='min(ih,${effectH})':force_original_aspect_ratio=decrease,pad=${effectW}:${effectH}:(ow-iw)/2:(oh-ih)/2:color=${hasStyledBackground ? ffBgColor : '#020617'},setsar=1,fps=60,trim=duration=${item.duration.toFixed(3)},setpts=PTS-STARTPTS`;
-            if (fadeIn) imageFilter += `,fade=t=in:st=0:d=${TD.toFixed(3)}`;
-            if (fadeOut) imageFilter += `,fade=t=out:st=${Math.max(0, item.duration - TD).toFixed(3)}:d=${TD.toFixed(3)}`;
+            const imageInputIdx = imageClipInputStartIdx + item.imageClipIndex;
+            let imageFilter = `[${imageInputIdx}:v]format=rgba,scale=w='min(iw,${effectW})':h='min(ih,${effectH})':force_original_aspect_ratio=decrease,pad=${effectW}:${effectH}:(ow-iw)/2:(oh-ih)/2:color=${hasStyledBackground ? ffBgColor : '#020617'},setsar=1,fps=60,settb=AVTB,trim=duration=${item.duration.toFixed(3)},setpts=PTS-STARTPTS`;
+            if (fadeIn) imageFilter += `,fade=t=in:st=0:d=${fadeInDuration.toFixed(3)}`;
+            if (fadeOut) imageFilter += `,fade=t=out:st=${Math.max(0, item.duration - fadeOutDuration).toFixed(3)}:d=${fadeOutDuration.toFixed(3)}`;
             imageFilter += `[v${i}]`;
             videoFilters.push(imageFilter);
             if (hasAudio) {
-                let af = `anullsrc=r=44100:cl=stereo,atrim=duration=${item.duration.toFixed(3)}`;
-                if (fadeIn) af += `,afade=t=in:st=0:d=${TD.toFixed(3)}`;
-                if (fadeOut) af += `,afade=t=out:st=${Math.max(0, item.duration - TD).toFixed(3)}:d=${TD.toFixed(3)}`;
+                let af = `anullsrc=r=44100:cl=stereo,atrim=duration=${item.duration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo`;
+                if (fadeIn) af += `,afade=t=in:st=0:d=${fadeInDuration.toFixed(3)}`;
+                if (fadeOut) af += `,afade=t=out:st=${Math.max(0, item.duration - fadeOutDuration).toFixed(3)}:d=${fadeOutDuration.toFixed(3)}`;
                 af += `[a${i}]`;
                 audioFilters.push(af);
             }
@@ -674,14 +820,15 @@ export class VideoRenderer {
 
             for (let i = 1; i < timelineItems.length; i += 1) {
                 const boundaryTransition = timelineTransitions[i - 1]?.type ?? ((transitionType || 'cut') as TransitionType);
+                const boundaryDuration = timelineTransitions[i - 1]?.duration ?? 0;
                 const nextVideoLabel = `[v${i}]`;
                 const isLastItem = i === timelineItems.length - 1;
                 const composedVideoLabel = isLastItem ? '[outv]' : `[vmix${i}]`;
 
-                if (boundaryTransition === 'crossfade') {
-                    const offset = Math.max(0, composedDuration - TD);
-                    videoFilters.push(`${currentVideoLabel}${nextVideoLabel}xfade=transition=fade:duration=${TD.toFixed(3)}:offset=${offset.toFixed(3)}${composedVideoLabel}`);
-                    composedDuration = composedDuration + timelineItems[i].duration - TD;
+                if (boundaryTransition === 'crossfade' && boundaryDuration > 0) {
+                    const offset = Math.max(0, composedDuration - boundaryDuration);
+                    videoFilters.push(`${currentVideoLabel}${nextVideoLabel}xfade=transition=fade:duration=${boundaryDuration.toFixed(3)}:offset=${offset.toFixed(3)}${composedVideoLabel}`);
+                    composedDuration = composedDuration + timelineItems[i].duration - boundaryDuration;
                 } else {
                     videoFilters.push(`${currentVideoLabel}${nextVideoLabel}concat=n=2:v=1:a=0${composedVideoLabel}`);
                     composedDuration += timelineItems[i].duration;
@@ -691,8 +838,8 @@ export class VideoRenderer {
                 if (hasAudio) {
                     const nextAudioLabel = `[a${i}]`;
                     const composedAudioLabel = isLastItem ? '[mainaud]' : `[amix${i}]`;
-                    if (boundaryTransition === 'crossfade') {
-                        audioFilters.push(`${currentAudioLabel}${nextAudioLabel}acrossfade=d=${TD.toFixed(3)}${composedAudioLabel}`);
+                    if (boundaryTransition === 'crossfade' && boundaryDuration > 0) {
+                        audioFilters.push(`${currentAudioLabel}${nextAudioLabel}acrossfade=d=${boundaryDuration.toFixed(3)}${composedAudioLabel}`);
                     } else {
                         audioFilters.push(`${currentAudioLabel}${nextAudioLabel}concat=n=2:v=0:a=1${composedAudioLabel}`);
                     }
@@ -705,13 +852,29 @@ export class VideoRenderer {
                 audioOut = currentAudioLabel;
             }
         }
-        if (cursorInputIdx !== -1 && cursorOverlay?.track?.length) {
-            const cursorExprBudget = getExpressionPointBudget(exportDuration, MAX_CURSOR_OVERLAY_EXPR_POINTS, 2, 10);
-            const normalizedTrack = sampleTimedTrack(cursorOverlay.track, cursorExprBudget).map((point) => ({
+        if ((cursorBackdropInputIdx !== -1 || cursorInputIdx !== -1) && effectiveCursorOverlay?.track?.length) {
+            const cursorExprBudget = getExpressionPointBudget(exportDuration, MAX_CURSOR_OVERLAY_EXPR_POINTS, 4, 18);
+            const normalizedTrack = sampleTimedTrack(effectiveCursorOverlay.track, cursorExprBudget).map((point) => ({
                 time: point.time,
                 x: clamp01(point.x / 100),
                 y: clamp01(point.y / 100),
             }));
+            const cursorEnableExpr = (() => {
+                const ranges = Array.isArray(effectiveCursorOverlay.disabledRanges)
+                    ? effectiveCursorOverlay.disabledRanges
+                        .filter((range) => range && range.endTime > range.startTime)
+                        .map((range) => ({
+                            startTime: Math.max(0, Math.min(exportDuration, range.startTime)),
+                            endTime: Math.max(0, Math.min(exportDuration, range.endTime)),
+                        }))
+                    : [];
+
+                let expression = `between(t\\,0\\,${exportDuration.toFixed(3)})`;
+                for (const range of ranges) {
+                    expression += `*if(between(t\\,${range.startTime.toFixed(3)}\\,${range.endTime.toFixed(3)})\\,0\\,1)`;
+                }
+                return expression;
+            })();
 
             const buildCursorCoordExpr = (axis: 'x' | 'y') => {
                 let expression = ff(normalizedTrack[normalizedTrack.length - 1][axis], 6);
@@ -728,32 +891,37 @@ export class VideoRenderer {
 
             const cursorXExpr = buildCursorCoordExpr('x');
             const cursorYExpr = buildCursorCoordExpr('y');
-            if (cursorBackdropInputIdx !== -1 && (cursorOverlay.backdropWidth ?? 0) > 0 && (cursorOverlay.backdropHeight ?? 0) > 0) {
+            if (cursorBackdropInputIdx !== -1 && (effectiveCursorOverlay.backdropWidth ?? 0) > 0 && (effectiveCursorOverlay.backdropHeight ?? 0) > 0) {
                 const backdropBaseLabel = `[cursorbackdropbase]`;
                 const backdropNextLabel = `[cursorbackdropfx]`;
-                const backdropHotspotX = Number.isFinite(cursorOverlay.backdropHotspotX) ? cursorOverlay.backdropHotspotX : (cursorOverlay.backdropWidth ?? 0) / 2;
-                const backdropHotspotY = Number.isFinite(cursorOverlay.backdropHotspotY) ? cursorOverlay.backdropHotspotY : (cursorOverlay.backdropHeight ?? 0) / 2;
-                videoFilters.push(`[${cursorBackdropInputIdx}:v]format=rgba,scale=${cursorOverlay.backdropWidth}:${cursorOverlay.backdropHeight}${backdropBaseLabel}`);
-                videoFilters.push(`${videoOut}${backdropBaseLabel}overlay=x='max(0\\,min(W-w\\,W*(${cursorXExpr})-${backdropHotspotX.toFixed(2)}))':y='max(0\\,min(H-h\\,H*(${cursorYExpr})-${backdropHotspotY.toFixed(2)}))':eval=frame:enable='between(t\\,0\\,${exportDuration.toFixed(3)})'${backdropNextLabel}`);
+                const backdropHotspotX = Number.isFinite(effectiveCursorOverlay.backdropHotspotX) ? effectiveCursorOverlay.backdropHotspotX : (effectiveCursorOverlay.backdropWidth ?? 0) / 2;
+                const backdropHotspotY = Number.isFinite(effectiveCursorOverlay.backdropHotspotY) ? effectiveCursorOverlay.backdropHotspotY : (effectiveCursorOverlay.backdropHeight ?? 0) / 2;
+                videoFilters.push(`[${cursorBackdropInputIdx}:v]format=rgba,scale=${effectiveCursorOverlay.backdropWidth}:${effectiveCursorOverlay.backdropHeight}${backdropBaseLabel}`);
+                videoFilters.push(`${videoOut}${backdropBaseLabel}overlay=x='max(0\\,min(W-w\\,W*(${cursorXExpr})-${backdropHotspotX.toFixed(2)}))':y='max(0\\,min(H-h\\,H*(${cursorYExpr})-${backdropHotspotY.toFixed(2)}))':eval=frame:enable='${cursorEnableExpr}':shortest=1:eof_action=endall:format=auto${backdropNextLabel}`);
                 videoOut = backdropNextLabel;
             }
-            const cursorBaseLabel = `[cursorbase]`;
-            const cursorNextLabel = `[cursorfx]`;
-            const cursorHotspotX = Number.isFinite(cursorOverlay.cursorHotspotX) ? cursorOverlay.cursorHotspotX : cursorOverlay.cursorWidth / 2;
-            const cursorHotspotY = Number.isFinite(cursorOverlay.cursorHotspotY) ? cursorOverlay.cursorHotspotY : cursorOverlay.cursorHeight / 2;
-            videoFilters.push(`[${cursorInputIdx}:v]format=rgba,scale=${cursorOverlay.cursorWidth}:${cursorOverlay.cursorHeight}${cursorBaseLabel}`);
-            videoFilters.push(`${videoOut}${cursorBaseLabel}overlay=x='max(0\\,min(W-w\\,W*(${cursorXExpr})-${cursorHotspotX.toFixed(2)}))':y='max(0\\,min(H-h\\,H*(${cursorYExpr})-${cursorHotspotY.toFixed(2)}))':eval=frame:enable='between(t\\,0\\,${exportDuration.toFixed(3)})'${cursorNextLabel}`);
-            videoOut = cursorNextLabel;
+            // Disable drawing the custom cursor SVG pointer to avoid the "double cursor" issue (since the OS
+            // pointer is often already captured). We keep only the backdrop halo/glow and the click ripples.
+            const renderSyntheticPointer = false;
+            if (renderSyntheticPointer && cursorInputIdx !== -1 && (effectiveCursorOverlay.cursorWidth ?? 0) > 0 && (effectiveCursorOverlay.cursorHeight ?? 0) > 0) {
+                const cursorBaseLabel = `[cursorbase]`;
+                const cursorNextLabel = `[cursorfx]`;
+                const cursorHotspotX = Number.isFinite(effectiveCursorOverlay.cursorHotspotX) ? effectiveCursorOverlay.cursorHotspotX : (effectiveCursorOverlay.cursorWidth ?? 0) / 2;
+                const cursorHotspotY = Number.isFinite(effectiveCursorOverlay.cursorHotspotY) ? effectiveCursorOverlay.cursorHotspotY : (effectiveCursorOverlay.cursorHeight ?? 0) / 2;
+                videoFilters.push(`[${cursorInputIdx}:v]format=rgba,scale=${effectiveCursorOverlay.cursorWidth}:${effectiveCursorOverlay.cursorHeight}${cursorBaseLabel}`);
+                videoFilters.push(`${videoOut}${cursorBaseLabel}overlay=x='max(0\\,min(W-w\\,W*(${cursorXExpr})-${cursorHotspotX.toFixed(2)}))':y='max(0\\,min(H-h\\,H*(${cursorYExpr})-${cursorHotspotY.toFixed(2)}))':eval=frame:enable='${cursorEnableExpr}':shortest=1:eof_action=endall:format=auto${cursorNextLabel}`);
+                videoOut = cursorNextLabel;
+            }
 
-            if (rippleInputIdx !== -1 && cursorOverlay.clicks.length > 0 && (cursorOverlay.rippleSize ?? 0) > 0) {
-                const rippleLabels = cursorOverlay.clicks.map((_, index) => `[ripple${index}]`).join('');
-                videoFilters.push(`[${rippleInputIdx}:v]format=rgba,split=${cursorOverlay.clicks.length}${rippleLabels}`);
+            if (rippleInputIdx !== -1 && effectiveCursorOverlay.clicks.length > 0 && (effectiveCursorOverlay.rippleSize ?? 0) > 0) {
+                const rippleLabels = effectiveCursorOverlay.clicks.map((_, index) => `[ripple${index}]`).join('');
+                videoFilters.push(`[${rippleInputIdx}:v]format=rgba,split=${effectiveCursorOverlay.clicks.length}${rippleLabels}`);
 
-                cursorOverlay.clicks.forEach((click, index) => {
+                effectiveCursorOverlay.clicks.forEach((click, index) => {
                     const start = click.time.toFixed(3);
                     const end = (click.time + 0.55).toFixed(3);
                     const progress = `max(0\\,min(1\\,(t-${start})/0.55))`;
-                    const scaleExpr = `${cursorOverlay.rippleSize}*(0.4+2.4*${progress})`;
+                    const scaleExpr = `${effectiveCursorOverlay.rippleSize}*(0.4+2.4*${progress})`;
                     const scaledLabel = `[ripplescale${index}]`;
                     const fadedLabel = `[ripplefade${index}]`;
                     const nextLabel = `[ripplefx${index}]`;
@@ -761,7 +929,7 @@ export class VideoRenderer {
                     const yCoord = ff(clamp01(click.y / 100), 6);
                     videoFilters.push(`[ripple${index}]scale=w='${scaleExpr}':h='${scaleExpr}':eval=frame${scaledLabel}`);
                     videoFilters.push(`${scaledLabel}format=rgba,fade=t=out:st=${start}:d=0.55:alpha=1${fadedLabel}`);
-                    videoFilters.push(`${videoOut}${fadedLabel}overlay=x='max(0\\,min(W-w\\,W*${xCoord}-w/2))':y='max(0\\,min(H-h\\,H*${yCoord}-h/2))':eval=frame:enable='between(t\\,${start}\\,${end})'${nextLabel}`);
+                    videoFilters.push(`${videoOut}${fadedLabel}overlay=x='max(0\\,min(W-w\\,W*${xCoord}-w/2))':y='max(0\\,min(H-h\\,H*${yCoord}-h/2))':eval=frame:enable='between(t\\,${start}\\,${end})':shortest=1:eof_action=endall:format=auto${nextLabel}`);
                     videoOut = nextLabel;
                 });
             }
@@ -855,13 +1023,11 @@ export class VideoRenderer {
                 const focusYExpr = motions.reduceRight((fallback, motion) => `if(${motion.enable}\,${motion.focusY}\,${fallback})`, '0.5');
                 const centerExpr = motions.reduceRight((fallback, motion) => `if(${motion.enable}\,${motion.center}\,${fallback})`, '0');
                 const scaledLabel = `[fxzsc${effectIdx}]`;
-                const bgLabel = `[fxzbg${effectIdx}]`;
                 const nextLabel = `[fx${effectIdx}]`;
-                const overlayXExpr = `(-((w-${effectW})*${focusXExpr})+(${effectW.toFixed(2)}*(0.5-(${focusXExpr}))*${centerExpr}))`;
-                const overlayYExpr = `(-((h-${effectH})*${focusYExpr})+(${effectH.toFixed(2)}*(0.5-(${focusYExpr}))*${centerExpr}))`;
+                const cropXExpr = `max(0\\,min(iw-${effectW}\\,((iw-${effectW})*${focusXExpr})-(${effectW.toFixed(2)}*(0.5-(${focusXExpr}))*${centerExpr})))`;
+                const cropYExpr = `max(0\\,min(ih-${effectH}\\,((ih-${effectH})*${focusYExpr})-(${effectH.toFixed(2)}*(0.5-(${focusYExpr}))*${centerExpr})))`;
                 videoFilters.push(`${videoOut}format=rgba,scale=w='iw*${scaleExpr}':h='ih*${scaleExpr}':eval=frame:flags=lanczos${scaledLabel}`);
-                pushBackgroundCanvas(bgLabel, effectW, effectH, hasFrame ? 'transparent' : 'styled');
-                videoFilters.push(`${bgLabel}${scaledLabel}overlay=x='${overlayXExpr}':y='${overlayYExpr}':eval=frame:shortest=1:eof_action=endall:format=auto${nextLabel}`);
+                videoFilters.push(`${scaledLabel}crop=w=${effectW}:h=${effectH}:x='${cropXExpr}':y='${cropYExpr}'${nextLabel}`);
                 videoOut = nextLabel;
                 effectIdx++;
             }
@@ -1007,6 +1173,68 @@ export class VideoRenderer {
         }
 
         // 5. Finalize Padding/Overlay (Background/Solid Color)
+        if (textImageInputs.length > 0) {
+            textImageInputs.forEach((overlay, i) => {
+                const inputIdx = textImageInputStartIdx + i;
+                const scaledLabel = `[textimg${i}]`;
+                const nextLabel = `[textimgfx${i}]`;
+                const start = overlay.startTime.toFixed(3);
+                const end = (overlay.startTime + overlay.duration).toFixed(3);
+                videoFilters.push(`[${inputIdx}:v]format=rgba,scale=${effectW}:${effectH}${scaledLabel}`);
+                videoFilters.push(`${videoOut}${scaledLabel}overlay=0:0:enable='between(t\\,${start}\\,${end})':shortest=1:eof_action=endall:format=auto${nextLabel}`);
+                videoOut = nextLabel;
+            });
+        }
+
+        if (drawTextOverlays.length > 0) {
+            drawTextOverlays.forEach((tov, i) => {
+                const start = tov.startTime.toFixed(3);
+                const end = (tov.startTime + tov.duration).toFixed(3);
+                const escapedText = (tov.text || '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\\/g, '\\\\')
+                    .replace(/\n/g, '\\n')
+                    .replace(/,/g, '\\,')
+                    .replace(/:/g, '\\:')
+                    .replace(/'/g, "'\\''")
+                    .replace(/%/g, '\\%');
+
+                const fontColor = normalizeFfmpegColor(tov.color, 'white');
+                const fontSize = `${Math.max(10, Math.round(tov.fontSize || 40))}`;
+                let drawtext = `drawtext=text='${escapedText}':fontsize=${fontSize}:fontcolor=${fontColor}:x=(w*${(tov.x / 100).toFixed(4)})-text_w/2:y=(h*${(tov.y / 100).toFixed(4)})-text_h/2:enable='between(t\\,${start}\\,${end})'`;
+
+                if (tov.backgroundColor) {
+                    const boxColor = normalizeFfmpegColor(tov.backgroundColor, 'black').replace(/@.*$/, '');
+                    const opacity = tov.backgroundOpacity ?? 0.8;
+                    const bPadding = tov.padding ?? 5;
+                    drawtext += `:box=1:boxcolor=${boxColor}@${opacity.toFixed(2)}:boxborderw=${bPadding}`;
+                }
+
+                if ((tov.borderWidth ?? 0) > 0) {
+                    const borderWidth = Math.max(1, Math.round(tov.borderWidth ?? 0));
+                    const borderColor = normalizeFfmpegColor(tov.borderColor, '#020617');
+                    drawtext += `:borderw=${borderWidth}:bordercolor=${borderColor}`;
+                }
+
+                if (tov.shadowColor) {
+                    const sColor = normalizeFfmpegColor(tov.shadowColor, 'black');
+                    const sx = tov.shadowOffsetX ?? 2;
+                    const sy = tov.shadowOffsetY ?? 2;
+                    drawtext += `:shadowcolor=${sColor}:shadowx=${sx}:shadowy=${sy}`;
+                }
+
+                const fontPart = process.platform === 'win32'
+                    ? `:fontfile='C\\:/Windows/Fonts/${tov.fontWeight === 'bold' ? 'arialbd.ttf' : 'arial.ttf'}'`
+                    : '';
+                drawtext += fontPart;
+
+                const nextLabel = `[txt${i}]`;
+                videoFilters.push(`${videoOut}${drawtext}${nextLabel}`);
+                videoOut = nextLabel;
+            });
+        }
+
         if (hasFrame) {
             const padLabel = `[finalFrame]`;
             const bgLabel = `[framebg]`;
@@ -1059,60 +1287,11 @@ export class VideoRenderer {
             audioOut = eqLabel;
         }
 
-        const exportDurationLabel = exportDuration.toFixed(3);
         if (audioOut) {
             const audioTrimLabel = '[afinaltrim]';
             audioFilters.push(`${audioOut}atrim=duration=${exportDurationLabel},asetpts=PTS-STARTPTS${audioTrimLabel}`);
             audioOut = audioTrimLabel;
         }
-
-
-
-        // Apply Text Overlays before final scaling/watermark
-        if (textOverlays && textOverlays.length > 0) {
-            textOverlays.forEach((tov, i) => {
-                const start = tov.startTime.toFixed(3);
-                const end = (tov.startTime + tov.duration).toFixed(3);
-
-                // Escape special characters in text for FFmpeg
-                // Fixed escaping for single quotes in drawtext: replace ' with '\''
-                const escapedText = tov.text
-                    .replace(/\\/g, '\\\\')
-                    .replace(/:/g, '\\:')
-                    .replace(/'/g, "'\\''")
-                    .replace(/%/g, '\\%');
-
-                const fontColor = normalizeFfmpegColor(tov.color, 'white');
-                // Font size as percentage of height
-                const fontSize = `${Math.max(10, Math.round(tov.fontSize || 40))}`;
-
-                let drawtext = `drawtext=text='${escapedText}':fontsize=${fontSize}:fontcolor=${fontColor}:x=(w*${(tov.x / 100).toFixed(4)})-text_w/2:y=(h*${(tov.y / 100).toFixed(4)})-text_h/2:enable='between(t\\,${start}\\,${end})'`;
-
-                if (tov.backgroundColor) {
-                    const boxColor = tov.backgroundColor.replace('#', '0x');
-                    const opacity = tov.backgroundOpacity ?? 0.8;
-                    const bPadding = tov.padding ?? 5; // in px for boxborderw
-                    drawtext += `:box=1:boxcolor=${boxColor}@${opacity.toFixed(2)}:boxborderw=${bPadding}`;
-                }
-
-                if (tov.shadowColor) {
-                    const sColor = tov.shadowColor.replace('#', '0x');
-                    const sx = tov.shadowOffsetX ?? 2;
-                    const sy = tov.shadowOffsetY ?? 2;
-                    drawtext += `:shadowcolor=${sColor}:shadowx=${sx}:shadowy=${sy}`;
-                }
-
-                const fontPart = process.platform === 'win32'
-                    ? `:fontfile='C\\:/Windows/Fonts/arial.ttf'`
-                    : '';
-                drawtext += fontPart;
-
-                const nextLabel = `[txt${i}]`;
-                videoFilters.push(`${videoOut}${drawtext}${nextLabel}`);
-                videoOut = nextLabel;
-            });
-        }
-
         if (annotationInputs.length > 0) {
             annotationInputs.forEach((overlay, i) => {
                 const inputIdx = annotationInputStartIdx + i;
@@ -1121,7 +1300,7 @@ export class VideoRenderer {
                 const start = overlay.startTime.toFixed(3);
                 const end = (overlay.startTime + overlay.duration).toFixed(3);
                 videoFilters.push(`[${inputIdx}:v]format=rgba,scale=${effectW}:${effectH}${scaledLabel}`);
-                videoFilters.push(`${videoOut}${scaledLabel}overlay=0:0:enable='between(t\\,${start}\\,${end})'${nextLabel}`);
+                videoFilters.push(`${videoOut}${scaledLabel}overlay=0:0:enable='between(t\\,${start}\\,${end})':shortest=1:eof_action=endall:format=auto${nextLabel}`);
                 videoOut = nextLabel;
             });
         }
@@ -1135,7 +1314,7 @@ export class VideoRenderer {
                 const end = (overlay.startTime + overlay.duration).toFixed(3);
                 if (overlay.renderMode === 'fullscreen') {
                     videoFilters.push(`[${inputIdx}:v]format=rgba,scale=${effectW}:${effectH}:force_original_aspect_ratio=decrease,pad=${effectW}:${effectH}:(ow-iw)/2:(oh-ih)/2:color=black${scaledLabel}`);
-                    videoFilters.push(`${videoOut}${scaledLabel}overlay=0:0:enable='between(t\\,${start}\\,${end})'${nextLabel}`);
+                    videoFilters.push(`${videoOut}${scaledLabel}overlay=0:0:enable='between(t\\,${start}\\,${end})':shortest=1:eof_action=endall:format=auto${nextLabel}`);
                     videoOut = nextLabel;
                     return;
                 }
@@ -1145,19 +1324,9 @@ export class VideoRenderer {
                 const x = Math.max(0, Math.min(effectW - width, Math.round(effectW * clamp01(overlay.x))));
                 const y = Math.max(0, Math.min(effectH - height, Math.round(effectH * clamp01(overlay.y))));
                 videoFilters.push(`[${inputIdx}:v]format=rgba,scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black@0${scaledLabel}`);
-                videoFilters.push(`${videoOut}${scaledLabel}overlay=${x}:${y}:enable='between(t\\,${start}\\,${end})'${nextLabel}`);
+                videoFilters.push(`${videoOut}${scaledLabel}overlay=${x}:${y}:enable='between(t\\,${start}\\,${end})':shortest=1:eof_action=endall:format=auto${nextLabel}`);
                 videoOut = nextLabel;
             });
-        }
-
-        if (addWatermark) {
-            // Use explicit font on Windows to avoid "Cannot find a valid font" errors
-            const fontPart = process.platform === 'win32'
-                ? `:fontfile='C\\:/Windows/Fonts/arial.ttf'`
-                : '';
-            const drawtext = `drawtext=text='Made with SnipFocus':fontsize=min(h\\,w)/28:fontcolor=white@0.4:x=w-text_w-24:y=h-text_h-20${fontPart}`;
-            videoFilters.push(`${videoOut}${drawtext}[outwm]`);
-            videoOut = '[outwm]';
         }
 
         // Color Grading applied directly to the video out
@@ -1174,6 +1343,32 @@ export class VideoRenderer {
                 videoFilters.push(`${videoOut}eq=${eqParams}[outcg]`);
                 videoOut = '[outcg]';
             }
+        }
+
+        if (addWatermark) {
+            const shortEdge = Math.max(240, Math.min(effectW, effectH));
+            const rightMargin = Math.max(18, Math.round(shortEdge * 0.022));
+            const bottomMargin = Math.max(14, Math.round(shortEdge * 0.018));
+            const websiteFontSize = Math.max(12, Math.min(22, Math.round(shortEdge / 58)));
+            const websiteGap = Math.max(6, Math.round(websiteFontSize * 0.42));
+            const logoWidth = Math.max(76, Math.round(shortEdge * 0.11));
+            let watermarkOut = videoOut;
+
+            if (watermarkInputIdx !== -1) {
+                const scaledLabel = '[wmbrandscale]';
+                const nextLabel = '[wmbrandout]';
+                const logoBottomOffset = bottomMargin + websiteFontSize + websiteGap;
+                videoFilters.push(`[${watermarkInputIdx}:v]format=rgba,scale=${logoWidth}:-1:flags=lanczos,colorchannelmixer=aa=0.76${scaledLabel}`);
+                videoFilters.push(`${watermarkOut}${scaledLabel}overlay=x='W-w-${rightMargin}':y='H-h-${logoBottomOffset}':shortest=1:eof_action=endall:format=auto${nextLabel}`);
+                watermarkOut = nextLabel;
+            }
+
+            const fontPart = process.platform === 'win32'
+                ? `:fontfile='C\\:/Windows/Fonts/arial.ttf'`
+                : '';
+            const drawtext = `drawtext=text='ageofscreen.com':fontsize=${websiteFontSize}:fontcolor=white@0.72:x=w-text_w-${rightMargin}:y=h-text_h-${bottomMargin}:shadowcolor=black@0.35:shadowx=0:shadowy=1${fontPart}`;
+            videoFilters.push(`${watermarkOut}${drawtext}[outwm]`);
+            videoOut = '[outwm]';
         }
 
         const videoTrimLabel = '[vfinaltrim]';
@@ -1221,21 +1416,111 @@ export class VideoRenderer {
             ...encodeTail,
         ];
 
-        const runFfmpeg = (runArgs: string[]) => new Promise<{ code: number; stderr: string }>((resolve, reject) => {
+        const runFfmpeg = (runArgs: string[]) => new Promise<{ code: number; stderr: string; stalled: boolean }>((resolve, reject) => {
             const proc = spawn(ffmpegPath!, runArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
             let stderr = '';
+            let stalled = false;
+            let settled = false;
+            let forceResolveTimer: NodeJS.Timeout | null = null;
+            const startedAt = Date.now();
+            let lastProgressAt = startedAt;
+            let lastProgressSeconds = -1;
+
+            const finish = (result: { code: number; stderr: string; stalled: boolean }) => {
+                if (settled) return;
+                settled = true;
+                clearInterval(progressWatchdog);
+                if (forceResolveTimer) {
+                    clearTimeout(forceResolveTimer);
+                }
+                resolve(result);
+            };
+
+            const terminateProc = () => {
+                if (proc.killed) return;
+                if (process.platform === 'win32' && proc.pid) {
+                    try {
+                        const killer = spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f'], {
+                            stdio: 'ignore',
+                            windowsHide: true,
+                        });
+                        killer.on('error', () => {
+                            try {
+                                proc.kill();
+                            } catch {
+                                // Ignore secondary kill errors.
+                            }
+                        });
+                    } catch {
+                        try {
+                            proc.kill();
+                        } catch {
+                            // Ignore secondary kill errors.
+                        }
+                    }
+                    return;
+                }
+
+                try {
+                    proc.kill('SIGKILL');
+                } catch {
+                    // Ignore secondary kill errors.
+                }
+            };
+
+            const progressWatchdog = setInterval(() => {
+                if (settled || stalled) return;
+                const now = Date.now();
+                const timeoutMs = lastProgressSeconds >= 0
+                    ? FFMPEG_PROGRESS_STALL_TIMEOUT_MS
+                    : FFMPEG_INITIAL_PROGRESS_TIMEOUT_MS;
+                if ((now - lastProgressAt) < timeoutMs) return;
+
+                stalled = true;
+                const idleSeconds = Math.round((now - lastProgressAt) / 1000);
+                const stallMessage = `\n${FFMPEG_STALL_MARKER}: no progress for ${idleSeconds}s\n`;
+                stderr += stallMessage;
+                console.error(`${FFMPEG_STALL_MARKER}; terminating encode`, {
+                    idleSeconds,
+                    lastProgressSeconds,
+                });
+                terminateProc();
+                forceResolveTimer = setTimeout(() => {
+                    finish({ code: -1, stderr, stalled: true });
+                }, 5_000);
+            }, FFMPEG_PROGRESS_CHECK_INTERVAL_MS);
 
             proc.stderr.on('data', (data: Buffer) => {
                 const line = data.toString();
                 stderr += line;
                 if (line.includes('time=')) {
                     const match = line.match(/time=(\d+:\d+:\d+\.\d+)/);
-                    if (match) console.log('[VideoRenderer] Progress:', match[1]);
+                    if (match) {
+                        const progressSeconds = parseFfmpegTimestampSeconds(match[1]);
+                        if (Number.isFinite(progressSeconds) && progressSeconds > (lastProgressSeconds + 0.001)) {
+                            lastProgressSeconds = progressSeconds;
+                            lastProgressAt = Date.now();
+                            if (typeof onProgress === 'function' && exportDuration > 0) {
+                                onProgress(
+                                    Math.max(0, Math.min(1, progressSeconds / exportDuration)),
+                                    progressSeconds,
+                                    exportDuration,
+                                );
+                            }
+                        }
+                        console.log('[VideoRenderer] Progress:', match[1]);
+                    }
                 }
             });
 
-            proc.on('close', (code: number) => resolve({ code, stderr }));
-            proc.on('error', (err: Error) => reject(err));
+            proc.on('close', (code: number) => finish({ code: stalled ? -1 : code, stderr, stalled }));
+            proc.on('error', (err: Error) => {
+                clearInterval(progressWatchdog);
+                if (forceResolveTimer) {
+                    clearTimeout(forceResolveTimer);
+                }
+                reject(err);
+            });
         });
 
         console.log('[VideoRenderer] Export config:', {
@@ -1252,13 +1537,9 @@ export class VideoRenderer {
 
         return new Promise((resolve, reject) => {
             runFfmpeg(primaryArgs)
-                .then(async ({ code, stderr }) => {
+                .then(async ({ code, stderr, stalled }) => {
                     if (code === 0) {
-                        this.lastRenderInfo = {
-                            requestedEffectTypes: requestedEffects.map((fx) => fx.type),
-                            exportedEffectTypes: effects.map((fx) => fx.type),
-                            fallbackMode: 'none',
-                        };
+                        this.lastRenderInfo = buildRenderInfo('none');
                         perf.end({ outputPath });
                         const stat = fs.statSync(outputPath);
                         console.log('[VideoRenderer] Export complete:', outputPath, `(${(stat.size / 1024 / 1024).toFixed(2)} MB)`);
@@ -1272,11 +1553,7 @@ export class VideoRenderer {
                         console.warn('[VideoRenderer] Audio stream failed during export; retrying without audio track');
                         const retry = await runFfmpeg(noAudioFallbackArgs);
                         if (retry.code === 0) {
-                            this.lastRenderInfo = {
-                                requestedEffectTypes: requestedEffects.map((fx) => fx.type),
-                                exportedEffectTypes: effects.map((fx) => fx.type),
-                                fallbackMode: 'none',
-                            };
+                            this.lastRenderInfo = buildRenderInfo('none');
                             perf.end({ outputPath, audioFallback: true });
                             console.log('[VideoRenderer] Export complete without audio fallback:', outputPath);
                             cleanupTempOverlays();
@@ -1291,7 +1568,97 @@ export class VideoRenderer {
                         return;
                     }
 
-                    const effectGraphFailure = effects.length > 0 && /Invalid argument|Error while filtering|Undefined constant|missing \(/i.test(stderr);
+                    const cursorGraphFailure = !disableCursorOverlay
+                        && !!effectiveCursorOverlay?.track?.length
+                        && (stalled || /overlay|Invalid argument|Error while filtering|Undefined constant|missing \(|Failed to configure output pad|Error reinitializing filters|No such filter/i.test(stderr));
+                    if (cursorGraphFailure) {
+                        console.warn('[VideoRenderer] Cursor overlay failed during export; retrying without cursor overlay');
+                        try {
+                            const fallbackPath = await this.processVideo(
+                                inputPath,
+                                outputPath,
+                                segments,
+                                crop,
+                                backgroundColor,
+                                videoPadding,
+                                audioSegments,
+                                addWatermark,
+                                smartEffects,
+                                quality,
+                                transitionType,
+                                textOverlays,
+                                annotationImageOverlays,
+                                imageOverlays,
+                                imageClips,
+                                clipTransitions,
+                                cursorOverlay,
+                                colorGrade,
+                                premiumVoice,
+                                { forceCutTransitions, disableCursorOverlay: true, onProgress }
+                            );
+                            const retryInfo = this.getLastRenderInfo();
+                            this.lastRenderInfo = {
+                                requestedEffectTypes: requestedEffects.map((fx) => fx.type),
+                                exportedEffectTypes: retryInfo.exportedEffectTypes,
+                                fallbackMode: retryInfo.fallbackMode,
+                                transitionFallbackMode: retryInfo.transitionFallbackMode,
+                                cursorFallbackMode: 'disabled',
+                            };
+                            perf.end({ outputPath, cursorFallback: true, stalled });
+                            cleanupTempOverlays();
+                            resolve(fallbackPath);
+                            return;
+                        } catch (fallbackErr) {
+                            console.error('[VideoRenderer] Cursor overlay fallback failed:', fallbackErr);
+                        }
+                    }
+
+                    const transitionFailure = canRetryWithCutTransitions
+                        && (stalled || /xfade|acrossfade|concat|Error while filtering|Failed to configure output pad|non monotonically increasing dts|Error reinitializing filters/i.test(stderr));
+                    if (transitionFailure) {
+                        console.warn('[VideoRenderer] Timeline transition failed during export; retrying with cut transitions only');
+                        try {
+                            const fallbackPath = await this.processVideo(
+                                inputPath,
+                                outputPath,
+                                segments,
+                                crop,
+                                backgroundColor,
+                                videoPadding,
+                                audioSegments,
+                                addWatermark,
+                                smartEffects,
+                                quality,
+                                transitionType,
+                                textOverlays,
+                                annotationImageOverlays,
+                                imageOverlays,
+                                imageClips,
+                                clipTransitions,
+                                cursorOverlay,
+                                colorGrade,
+                                premiumVoice,
+                                { forceCutTransitions: true, onProgress }
+                            );
+                            const retryInfo = this.getLastRenderInfo();
+                            this.lastRenderInfo = {
+                                requestedEffectTypes: requestedEffects.map((fx) => fx.type),
+                                exportedEffectTypes: retryInfo.exportedEffectTypes,
+                                fallbackMode: retryInfo.fallbackMode,
+                                transitionFallbackMode: 'cut',
+                                cursorFallbackMode: retryInfo.cursorFallbackMode,
+                            };
+                            perf.end({ outputPath, transitionFallback: true, stalled });
+                            cleanupTempOverlays();
+                            resolve(fallbackPath);
+                            return;
+                        } catch (fallbackErr) {
+                            console.error('[VideoRenderer] Cut-transition fallback failed:', fallbackErr);
+                        }
+                    }
+
+                    const effectGraphFailure = effects.length > 0
+                        && (stalled || /Invalid argument|Error while filtering|Undefined constant|missing \(|Failed to configure output pad|Error reinitializing filters|Error applying option|Option not found/i.test(stderr));
                     if (effectGraphFailure) {
                         console.error('[VideoRenderer] Smart effects stderr:', stderr.substring(Math.max(0, stderr.length - 1200)));
                         const fallbackEffects = requestedEffects.filter((fx) => RELIABLE_FALLBACK_EFFECT_TYPES.has(fx.type));
@@ -1318,12 +1685,16 @@ export class VideoRenderer {
                                     clipTransitions,
                                     cursorOverlay,
                                     colorGrade,
-                                    premiumVoice
+                                    premiumVoice,
+                                    { forceCutTransitions, onProgress }
                                 );
+                                const retryInfo = this.getLastRenderInfo();
                                 this.lastRenderInfo = {
                                     requestedEffectTypes: requestedEffects.map((fx) => fx.type),
-                                    exportedEffectTypes: fallbackEffects.map((fx) => fx.type),
-                                    fallbackMode: 'reliable_subset',
+                                    exportedEffectTypes: retryInfo.exportedEffectTypes,
+                                    fallbackMode: retryInfo.fallbackMode === 'none' ? 'reliable_subset' : retryInfo.fallbackMode,
+                                    transitionFallbackMode: retryInfo.transitionFallbackMode,
+                                    cursorFallbackMode: retryInfo.cursorFallbackMode,
                                 };
                                 perf.end({ outputPath, effectsFallback: true });
                                 cleanupTempOverlays();
@@ -1353,12 +1724,18 @@ export class VideoRenderer {
                                 imageOverlays,
                                 imageClips,
                                 clipTransitions,
-                                cursorOverlay
+                                cursorOverlay,
+                                colorGrade,
+                                premiumVoice,
+                                { forceCutTransitions, onProgress }
                             );
+                            const retryInfo = this.getLastRenderInfo();
                             this.lastRenderInfo = {
                                 requestedEffectTypes: requestedEffects.map((fx) => fx.type),
-                                exportedEffectTypes: [],
-                                fallbackMode: 'no_effects',
+                                exportedEffectTypes: retryInfo.exportedEffectTypes,
+                                fallbackMode: retryInfo.fallbackMode === 'none' ? 'no_effects' : retryInfo.fallbackMode,
+                                transitionFallbackMode: retryInfo.transitionFallbackMode,
+                                cursorFallbackMode: retryInfo.cursorFallbackMode,
                             };
                             perf.end({ outputPath, effectsFallback: true });
                             cleanupTempOverlays();
@@ -1374,7 +1751,13 @@ export class VideoRenderer {
                     console.error('[VideoRenderer] stderr (last 800):', stderr.substring(stderr.length - 800));
                     // Write full stderr to temp file for debugging
                     try {
-                        const logPath = path.join(getSnipFocusTempDir(), `snipfocus-ffmpeg-error-${Date.now()}.log`);
+                        const logPath = path.join(getageofscreenTempDir(), `ageofscreen-ffmpeg-error-${Date.now()}.log`);
+                        const fullFilterScript = fs.existsSync(allFiltersScriptPath)
+                            ? fs.readFileSync(allFiltersScriptPath, 'utf8')
+                            : null;
+                        const videoOnlyFilterScript = fs.existsSync(videoOnlyFiltersScriptPath)
+                            ? fs.readFileSync(videoOnlyFiltersScriptPath, 'utf8')
+                            : null;
                         const meta = {
                             code,
                             source: { path: inputPath, width: sourceW, height: sourceH, hasAudio },
@@ -1382,11 +1765,16 @@ export class VideoRenderer {
                             segments,
                             effects: requestedEffects,
                             exportedEffects: effects,
-                            skippedEffects: skippedEffects.map((fx) => fx.type)
+                            skippedEffects: skippedEffects.map((fx) => fx.type),
+                            filterScriptPath: allFiltersScriptPath,
+                            videoOnlyFilterScriptPath: videoOnlyFiltersScriptPath,
                         };
-                        fs.writeFileSync(logPath, `Exit code: ${code}\n\nMeta:\n${JSON.stringify(meta, null, 2)}\n\nFull args:\n${JSON.stringify(primaryArgs, null, 2)}\n\nFull stderr:\n${stderr}`);
+                        fs.writeFileSync(
+                            logPath,
+                            `Exit code: ${code}\n\nMeta:\n${JSON.stringify(meta, null, 2)}\n\nFull args:\n${JSON.stringify(primaryArgs, null, 2)}\n\nFull filter script:\n${fullFilterScript ?? '[missing]'}\n\nVideo-only fallback filter script:\n${videoOnlyFilterScript ?? '[missing]'}\n\nFull stderr:\n${stderr}`,
+                        );
                         console.error('[VideoRenderer] Full error log written to:', logPath);
-                    } catch (_e) { /* ignore logging failure */ }
+                    } catch { /* ignore logging failure */ }
                     cleanupTempOverlays();
                     reject(new Error(`FFmpeg exited with code ${code}: ${stderr.substring(stderr.length - 400)}`));
                 })

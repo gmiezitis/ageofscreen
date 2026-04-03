@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' file: blob: data: snipfocus-media:; media-src 'self' file: blob: data: snipfocus-media:; font-src 'self' data:; connect-src 'self';" />
+        content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' file: blob: data: ageofscreen-media:; media-src 'self' file: blob: data: ageofscreen-media:; font-src 'self' data:; connect-src 'self';" />
     <title>Trigger</title>
     <style>
         /* Basic reset and ensure transparency */
@@ -22,14 +22,34 @@
         #trigger-line {
             position: absolute;
             top: 0;
-            left: 0;
-            width: 100%;
-            height: 1px;
-            background: rgba(0, 0, 0, 0.2);
-            box-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
-            backdrop-filter: blur(2px);
+            left: 50%;
+            width: 96%;
+            height: 4px;
+            transform: translateX(-50%);
+            background: transparent;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: opacity 0.12s ease, transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+            will-change: opacity, transform;
+        }
+
+        #trigger-line::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 68%;
+            height: 1px;
+            transform: translateX(-50%);
+            border-radius: 999px;
+            background: rgba(0, 0, 0, 0.2);
+            box-shadow: 0 1px 0 rgba(255, 255, 255, 0.36);
+            backdrop-filter: blur(1.5px);
+            pointer-events: none;
+            opacity: 0.94;
+        }
+
+        #trigger-line:hover::before {
+            opacity: 1;
         }
     </style>
 </head>

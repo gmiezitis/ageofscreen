@@ -1,5 +1,5 @@
 /**
- * SnipFocus Design System - Spacing
+ * ageofscreen Design System - Spacing
  * 4px base grid system
  */
 

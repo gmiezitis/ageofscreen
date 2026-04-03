@@ -1,10 +1,10 @@
-# SnipFocus Certification Notes Template
+# ageofscreen Certification Notes Template
 
 Use this text in Partner Center "notes for certification" after updating package versions and test evidence.
 
 ## Suggested notes
 
-SnipFocus is a local-first desktop capture and editing application. Core flows are:
+ageofscreen is a local-first desktop capture and editing application. Core flows are:
 
 - fullscreen recording
 - window recording
