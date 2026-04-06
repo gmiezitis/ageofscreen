@@ -78,6 +78,16 @@ export const resolveExportFrameStyle = ({
     backgroundColor,
     videoPadding,
 }: ExportFrameStyleInput): ExportFrameStyleOutput => {
+    const isOriginalPlatform = selectedPlatform === 'original';
+    const isNeutralBackground = isNeutralEdgeToEdgeBackground(backgroundColor);
+
+    if (isOriginalPlatform && isNeutralBackground) {
+        return {
+            backgroundColor: 'transparent',
+            videoPadding: 0,
+        };
+    }
+
     const safePadding = Math.max(0, Math.round(videoPadding || 0));
     const safeBackgroundColor = backgroundColor?.trim() || '#000000';
 

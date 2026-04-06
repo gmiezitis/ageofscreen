@@ -60,9 +60,9 @@ run('media paths round-trip through the app media protocol', () => {
     assert.equal(fromMediaFileUrl(mediaUrl).replace(/\\/g, '/'), physicalPath.replace(/\\/g, '/'));
 });
 
-run('print-screen menu open suppresses sleep only for a short grace window', () => {
+run('manual menu open suppresses sleep only for a short grace window', () => {
     const openedAt = 1_000;
-    const suppressedUntil = getMenuSleepSuppressedUntil({ reason: 'print-screen', openedAt });
+    const suppressedUntil = getMenuSleepSuppressedUntil({ reason: 'manual', openedAt } as any);
 
     assert.equal(suppressedUntil, openedAt + PRINT_SCREEN_SLEEP_GRACE_MS);
     assert.equal(isMenuSleepSuppressed(suppressedUntil, openedAt + 120), true);
@@ -215,9 +215,9 @@ run('cursor motion ranges ignore the synthetic start sample and stay active afte
 
 run('getInterpolatedValue interpolates correctly when keyframes are unsorted', () => {
     const keyframes = [
-        { time: 2, value: 20 },
-        { time: 0, value: 0 },
-        { time: 1, value: 10 },
+        { id: '1', time: 2, value: 20 },
+        { id: '2', time: 0, value: 0 },
+        { id: '3', time: 1, value: 10 },
     ];
 
     assert.equal(getInterpolatedValue(keyframes, 0.5, -1), 5);

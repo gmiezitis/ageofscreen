@@ -80,7 +80,11 @@ export const normalizeCursorHighlightSettings = (
         ...BASE_CURSOR_HIGHLIGHT_SETTINGS,
         ...settings,
         enabled: Boolean(settings?.enabled ?? BASE_CURSOR_HIGHLIGHT_SETTINGS.enabled),
-        shape: BASE_CURSOR_HIGHLIGHT_SETTINGS.shape,
+        shape: (settings?.shape as any) === 'rounded_square'
+            ? 'circle'
+            : (settings?.shape && CURSOR_HIGHLIGHT_SHAPES.includes(settings.shape as any)
+                ? (settings.shape as any)
+                : BASE_CURSOR_HIGHLIGHT_SETTINGS.shape),
         color: typeof settings?.color === 'string' && settings.color.trim().length > 0
             ? settings.color
             : BASE_CURSOR_HIGHLIGHT_SETTINGS.color,
@@ -94,8 +98,10 @@ export const normalizeCursorHighlightSettings = (
                 ? Number(settings?.opacity)
                 : BASE_CURSOR_HIGHLIGHT_SETTINGS.opacity,
         ),
-        motionOnly: false,
-        motionHoldSeconds: BASE_CURSOR_HIGHLIGHT_SETTINGS.motionHoldSeconds,
+        motionOnly: Boolean(settings?.motionOnly ?? BASE_CURSOR_HIGHLIGHT_SETTINGS.motionOnly),
+        motionHoldSeconds: clampCursorHighlightMotionHoldSeconds(
+            settings?.motionHoldSeconds ?? BASE_CURSOR_HIGHLIGHT_SETTINGS.motionHoldSeconds,
+        ),
     };
 };
 
