@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Lightbulb, Circle, Square, LayoutTemplate, Heart, Hexagon, Diamond, Settings2, Sparkles } from 'lucide-react';
 import { FEATURES } from '../config/features';
-import { CameraShape, getCameraDimensionsForWidth, getCameraShapeStyle, normalizeCameraShape } from '../shared/cameraShapes';
+import { CameraShape } from '../shared/cameraShapes';
 
 import styles from './RecordingSetup.module.css';
 import { PreviewPane } from './RecordingSetup/PreviewPane';

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { 
-  Clock, Target, TrendingUp, Calendar, Shield, Trash2, 
-  Download, Eye, EyeOff, ChevronDown, AlertTriangle, Check
+  Target, TrendingUp, Calendar, Shield, Trash2, 
+  Download, Eye, AlertTriangle, Check
 } from 'lucide-react';
 import FocusActivityTracker, { FocusSessionLog } from '../services/focusActivityTracker';
 import styles from './FocusAnalytics.module.css';

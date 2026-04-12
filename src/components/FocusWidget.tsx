@@ -34,7 +34,6 @@ const FocusWidget: React.FC<FocusWidgetProps> = ({
   onMouseLeave,
 }) => {
   const [view, setView] = useState<FocusView>('setup');
-  const [sessionConfig, setSessionConfig] = useState<FocusSessionConfig | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [position, setPosition] = useState<Position>(() => {
@@ -59,7 +58,6 @@ const FocusWidget: React.FC<FocusWidgetProps> = ({
 
   const handleStartSession = useCallback((config: FocusSessionConfig) => {
     const newSessionId = `focus-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    setSessionConfig(config);
     setSessionId(newSessionId);
     setIsSessionActive(true);
 
@@ -112,7 +110,6 @@ const FocusWidget: React.FC<FocusWidgetProps> = ({
     if (sessionId) {
       activityTracker.stopSession();
     }
-    setSessionConfig(null);
     setSessionId(null);
     setIsSessionActive(false);
   }, [sessionId, activityTracker, electronAPI]);

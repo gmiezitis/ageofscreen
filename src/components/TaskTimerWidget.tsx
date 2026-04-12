@@ -290,8 +290,6 @@ const TaskTimerWidget: React.FC<TaskTimerWidgetProps> = ({
   const progressRatio = secondsIntoInterval / intervalSeconds;
 
   const ringColor = isClosingWindow ? '#ff6b6b' : '#2de2ff';
-  const remainingLabel =
-    secondsRemaining <= 0 ? '00:00' : formatTime(secondsRemaining);
 
   const circumference = 2 * Math.PI * 19;
   const dashOffset = circumference * (1 - progressRatio);

@@ -10,7 +10,6 @@ import type { WindowSource } from "../types";
 
 // Placeholder UI component for the capture window
 const CaptureUI: React.FC = () => {
-    const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
     const [captureMode, setCaptureMode] = useState<"region" | "window">("region");
     const [windowSources, setWindowSources] = useState<WindowSource[]>([]);
     const [isSelecting, setIsSelecting] = useState(false);
@@ -58,7 +57,7 @@ const CaptureUI: React.FC = () => {
         setEndPoint({ x: event.clientX, y: event.clientY });
     };
 
-    const handleMouseUp = (event: React.MouseEvent<HTMLDivElement>) => {
+    const handleMouseUp = (_event: React.MouseEvent<HTMLDivElement>) => {
         if (!isSelecting || captureMode === "window") return;
         setIsSelecting(false);
         const bounds = getSelectionBounds();
@@ -87,9 +86,8 @@ const CaptureUI: React.FC = () => {
 
     // --- Receive Screenshot Data via IPC ---
     useEffect(() => {
-        const handleData = (event: any, dataUrl: string) => {
+        const handleData = (_event: any, _dataUrl: string) => {
             console.log("Received screenshot data via IPC.");
-            setScreenshotUrl(dataUrl);
         };
         const cleanup = (window as any).captureAPI.onScreenshotData(handleData);
         return cleanup;
@@ -97,7 +95,7 @@ const CaptureUI: React.FC = () => {
 
     // --- NEW: Receive Capture Mode and Sources ---
     useEffect(() => {
-        const handleMode = async (event: any, mode: "region" | "window") => {
+        const handleMode = async (_event: any, mode: "region" | "window") => {
             console.log(`[CaptureUI] Capture mode set to: ${mode}`);
             setCaptureMode(mode);
             if (mode === "window") {
