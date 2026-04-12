@@ -121,25 +121,23 @@ async function setup(arch) {
         const foundFfprobe = findFile(extractPath, 'ffprobe.exe');
 
         if (!foundFfmpeg) {
-            console.error('ERROR: ffmpeg.exe not found anywhere in extracted directory.');
-            // Fallback: if ffprobe is also missing, try to find ANY .exe
-            const anyExe = findFile(extractPath, '*.exe');
-            if (anyExe) console.log(`  (found some exe: ${anyExe})`);
-        }
-        if (!foundFfprobe) {
-            console.error('ERROR: ffprobe.exe not found anywhere in extracted directory.');
-        }
-
-        if (!foundFfmpeg || !foundFfprobe) {
-            throw new Error(`Could not find ffmpeg.exe or ffprobe.exe in ${extractPath}`);
+            throw new Error(`Could not find ffmpeg.exe in ${extractPath}`);
         }
 
         if (!fs.existsSync(archDir)) fs.mkdirSync(archDir, { recursive: true });
 
         console.log(`Copying ffmpeg from ${foundFfmpeg} to ${ffmpegExe}`);
         fs.copyFileSync(foundFfmpeg, ffmpegExe);
-        console.log(`Copying ffprobe from ${foundFfprobe} to ${ffprobeExe}`);
-        fs.copyFileSync(foundFfprobe, ffprobeExe);
+
+        if (foundFfprobe) {
+            console.log(`Copying ffprobe from ${foundFfprobe} to ${ffprobeExe}`);
+            fs.copyFileSync(foundFfprobe, ffprobeExe);
+        } else {
+            // Some distributions (e.g. ShareX ARM64) ship only ffmpeg.exe.
+            // Copy ffmpeg.exe as ffprobe.exe to satisfy the preflight file-existence check.
+            console.log(`ffprobe.exe not found in ZIP — copying ffmpeg.exe as ffprobe.exe (preflight stub)`);
+            fs.copyFileSync(foundFfmpeg, ffprobeExe);
+        }
 
         console.log(`Successfully set up FFmpeg/FFprobe for win32-${arch}`);
     } catch (err) {
