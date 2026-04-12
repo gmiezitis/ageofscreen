@@ -19,8 +19,6 @@ const CONFIG = {
 function downloadFile(url, dest) {
     console.log(`Downloading ${url} to ${dest}...`);
     try {
-        // Use curl -L to follow redirects automatically. 
-        // We use -f to fail on HTTP errors.
         execSync(`curl -L -f -o "${dest}" "${url}"`, { stdio: 'inherit' });
     } catch (err) {
         throw new Error(`Failed to download ${url}: ${err.message}`);
@@ -33,22 +31,52 @@ function extractZip(zipPath, outDir) {
     }
     console.log(`Extracting ${zipPath} to ${outDir}...`);
     try {
-        execSync(`powershell.exe -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${outDir}' -Force"`);
+        execSync(`powershell.exe -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${outDir}' -Force"`, {
+            stdio: 'inherit',
+            timeout: 120000,
+        });
     } catch (err) {
         throw new Error(`Failed to extract ${zipPath}: ${err.message}`);
     }
 }
 
-function findFile(dir, fileName) {
-    const files = fs.readdirSync(dir);
-    for (const file of files) {
-        const fullPath = path.join(dir, file);
-        if (fs.statSync(fullPath).isDirectory()) {
-            const found = findFile(fullPath, fileName);
-            if (found) return found;
-        } else if (file.toLowerCase() === fileName.toLowerCase()) {
-            return fullPath;
+/** Recursively list all files in a directory (for debug logging) */
+function listAllFiles(dir, prefix = '') {
+    const entries = [];
+    try {
+        const items = fs.readdirSync(dir);
+        for (const item of items) {
+            const fullPath = path.join(dir, item);
+            const relativePath = prefix ? `${prefix}/${item}` : item;
+            const stat = fs.statSync(fullPath);
+            if (stat.isDirectory()) {
+                entries.push(`[DIR]  ${relativePath}`);
+                entries.push(...listAllFiles(fullPath, relativePath));
+            } else {
+                entries.push(`[FILE] ${relativePath} (${stat.size} bytes)`);
+            }
         }
+    } catch (e) {
+        entries.push(`[ERROR] Could not read ${dir}: ${e.message}`);
+    }
+    return entries;
+}
+
+function findFile(dir, fileName) {
+    try {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+            const fullPath = path.join(dir, file);
+            const stat = fs.statSync(fullPath);
+            if (stat.isDirectory()) {
+                const found = findFile(fullPath, fileName);
+                if (found) return found;
+            } else if (file.toLowerCase() === fileName.toLowerCase()) {
+                return fullPath;
+            }
+        }
+    } catch (e) {
+        // Skip unreadable dirs
     }
     return null;
 }
@@ -76,19 +104,41 @@ async function setup(arch) {
 
     try {
         downloadFile(config.url, zipPath);
+
+        // Verify the downloaded file exists and has size
+        const zipStat = fs.statSync(zipPath);
+        console.log(`Downloaded ZIP size: ${zipStat.size} bytes`);
+
         extractZip(zipPath, extractPath);
+
+        // Debug: list everything that was extracted
+        console.log(`\n--- Contents of ${extractPath} ---`);
+        const allFiles = listAllFiles(extractPath);
+        allFiles.forEach(f => console.log(`  ${f}`));
+        console.log(`--- End of listing (${allFiles.length} entries) ---\n`);
 
         const foundFfmpeg = findFile(extractPath, 'ffmpeg.exe');
         const foundFfprobe = findFile(extractPath, 'ffprobe.exe');
-        
+
+        if (!foundFfmpeg) {
+            console.error('ERROR: ffmpeg.exe not found anywhere in extracted directory.');
+            // Fallback: if ffprobe is also missing, try to find ANY .exe
+            const anyExe = findFile(extractPath, '*.exe');
+            if (anyExe) console.log(`  (found some exe: ${anyExe})`);
+        }
+        if (!foundFfprobe) {
+            console.error('ERROR: ffprobe.exe not found anywhere in extracted directory.');
+        }
+
         if (!foundFfmpeg || !foundFfprobe) {
             throw new Error(`Could not find ffmpeg.exe or ffprobe.exe in ${extractPath}`);
         }
 
         if (!fs.existsSync(archDir)) fs.mkdirSync(archDir, { recursive: true });
 
-        console.log(`Copying binaries to ${archDir}...`);
+        console.log(`Copying ffmpeg from ${foundFfmpeg} to ${ffmpegExe}`);
         fs.copyFileSync(foundFfmpeg, ffmpegExe);
+        console.log(`Copying ffprobe from ${foundFfprobe} to ${ffprobeExe}`);
         fs.copyFileSync(foundFfprobe, ffprobeExe);
 
         console.log(`Successfully set up FFmpeg/FFprobe for win32-${arch}`);
