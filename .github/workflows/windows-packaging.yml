@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Setup FFmpeg
+        run: node scripts/setup-ffmpeg.js --arch=${{ matrix.arch }}
+
       - name: Lint
         run: npm run lint
 
