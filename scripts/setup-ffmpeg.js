@@ -8,24 +8,14 @@ const FFMPEG_ROOT = path.join(REPO_ROOT, 'resources', 'ffmpeg');
 
 const CONFIG = {
     x64: {
+        // Gyan.dev stable release
         url: 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',
-        zipName: 'ffmpeg-x64.zip',
-        binPath: (extractedDir) => {
-            // Gyan.dev structure is typically ffmpeg-7.1-essentials_build/bin/ffmpeg.exe
-            const dirs = fs.readdirSync(extractedDir).filter(f => fs.statSync(path.join(extractedDir, f)).isDirectory());
-            const buildDir = dirs.find(d => d.startsWith('ffmpeg-'));
-            return path.join(extractedDir, buildDir, 'bin');
-        }
+        zipName: 'ffmpeg-x64.zip'
     },
     arm64: {
-        url: 'https://github.com/icedterminal/ffmpeg-windows-arm64/releases/download/7.1/ffmpeg-7.1-windows-arm64-essentials.zip',
-        zipName: 'ffmpeg-arm64.zip',
-        binPath: (extractedDir) => {
-            // icedterminal structure is typically ffmpeg-7.1-windows-arm64-essentials/bin/ffmpeg.exe
-            const dirs = fs.readdirSync(extractedDir).filter(f => fs.statSync(path.join(extractedDir, f)).isDirectory());
-            const buildDir = dirs.find(d => d.startsWith('ffmpeg-'));
-            return path.join(extractedDir, buildDir, 'bin');
-        }
+        // ShareX provides high-quality, stable ARM64 binaries
+        url: 'https://github.com/ShareX/FFmpeg/releases/download/v8.0/ffmpeg-8.0-win-arm64.zip',
+        zipName: 'ffmpeg-arm64.zip'
     }
 };
 
@@ -33,7 +23,7 @@ async function downloadFile(url, dest) {
     return new Promise((resolve, reject) => {
         const options = {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         };
         https.get(url, options, (response) => {
@@ -69,8 +59,24 @@ function extractZip(zipPath, outDir) {
         fs.mkdirSync(outDir, { recursive: true });
     }
     console.log(`Extracting ${zipPath} to ${outDir}...`);
-    // Use PowerShell's Expand-Archive which is available on all modern Windows machines
     execSync(`powershell.exe -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${outDir}' -Force"`);
+}
+
+/**
+ * Recursively find a file by name in a directory
+ */
+function findFile(dir, fileName) {
+    const files = fs.readdirSync(dir);
+    for (const file of files) {
+        const fullPath = path.join(dir, file);
+        if (fs.statSync(fullPath).isDirectory()) {
+            const found = findFile(fullPath, fileName);
+            if (found) return found;
+        } else if (file.toLowerCase() === fileName.toLowerCase()) {
+            return fullPath;
+        }
+    }
+    return null;
 }
 
 async function setup(arch) {
@@ -95,25 +101,29 @@ async function setup(arch) {
     const extractPath = path.join(tempDir, `extracted-${arch}`);
 
     try {
-        console.log(`Downloading FFmpeg for win32-${arch}...`);
+        console.log(`Downloading FFmpeg for win32-${arch} from ${config.url}`);
         await downloadFile(config.url, zipPath);
         
         extractZip(zipPath, extractPath);
 
-        const binDir = config.binPath(extractPath);
+        const foundFfmpeg = findFile(extractPath, 'ffmpeg.exe');
+        const foundFfprobe = findFile(extractPath, 'ffprobe.exe');
         
+        if (!foundFfmpeg || !foundFfprobe) {
+            throw new Error(`Could not find ffmpeg.exe or ffprobe.exe inside the downloaded archive for ${arch}`);
+        }
+
         if (!fs.existsSync(archDir)) fs.mkdirSync(archDir, { recursive: true });
 
         console.log(`Copying binaries to ${archDir}...`);
-        fs.copyFileSync(path.join(binDir, 'ffmpeg.exe'), ffmpegExe);
-        fs.copyFileSync(path.join(binDir, 'ffprobe.exe'), ffprobeExe);
+        fs.copyFileSync(foundFfmpeg, ffmpegExe);
+        fs.copyFileSync(foundFfprobe, ffprobeExe);
 
-        console.log(`Successfully set up FFmpeg for win32-${arch}`);
+        console.log(`Successfully set up FFmpeg/FFprobe for win32-${arch}`);
     } catch (err) {
         console.error(`Error setting up FFmpeg for ${arch}:`, err);
         process.exit(1);
     } finally {
-        // Cleanup temp files
         if (fs.existsSync(tempDir)) {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
