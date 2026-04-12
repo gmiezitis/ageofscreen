@@ -10,6 +10,8 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      GYP_MSVS_VERSION: 2022
     strategy:
       fail-fast: false
       matrix:

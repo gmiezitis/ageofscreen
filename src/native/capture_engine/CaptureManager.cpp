@@ -1,6 +1,7 @@
 #include "CaptureManager.hpp"
 #include <iostream>
 #include <string>
+#include <cstdint>
 
 CaptureManager::CaptureManager(Napi::Env env) : _env(env) {
     InitializeD3D();
