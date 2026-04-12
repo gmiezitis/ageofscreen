@@ -581,7 +581,7 @@ let recordingWidget: BrowserWindow | null = null;
 let teleprompterWindow: BrowserWindow | null = null;
 let drawingOverlayWindow: BrowserWindow | null = null;
 let videoEditorWindow: BrowserWindow | null = null;
-let tray: Tray | null = null;
+let _tray: Tray | null = null;
 let wasWebcamVisibleBeforeDrawing = false;
 let shouldRestoreEditorAfterCaptureCancel = false;
 let isCaptureSessionActive = false;
@@ -691,8 +691,8 @@ let latestAgentVideoPath: string | null = null;
 let pendingVideoDeliveryInFlight = false;
 let recordingCursorReplacementSafe = false;
 let agentAutoRecordingRequested = false;
-let latestCaptureHealth: { droppedFrames: number; bufferErrors: number; effectiveFps: number | null; status: string } | null = null;
-let latestSourceStatus: { screen: boolean; camera: boolean; mic: boolean } | null = null;
+let _latestCaptureHealth: { droppedFrames: number; bufferErrors: number; effectiveFps: number | null; status: string } | null = null;
+let _latestSourceStatus: { screen: boolean; camera: boolean; mic: boolean } | null = null;
 
 const DEFAULT_AGENT_RECORDING_REQUEST: AgentRecordingRequest = {
     recordingMode: "fullscreen",
@@ -889,7 +889,7 @@ const createEditorWindow = (initialDataUrl?: string) => {
     }
 
     const primaryDisplay = screen.getPrimaryDisplay();
-    const { width, height } = primaryDisplay.workAreaSize;
+    const { width: _width, height: _height } = primaryDisplay.workAreaSize;
 
     editorWindow = new BrowserWindow({
         width: 1200,
@@ -1139,7 +1139,7 @@ const createMenuWindow = (
     }
 
     const primaryDisplay = screen.getPrimaryDisplay();
-    const { width: screenWidth, height: screenHeight } = primaryDisplay.size;
+    const { width: screenWidth, height: _screenHeight } = primaryDisplay.size;
     const centerX = Math.round((screenWidth - HUB_WIDTH) / 2);
 
     menuWindow = new BrowserWindow({
@@ -1301,7 +1301,7 @@ const createFocusWindow = (payload: any) => {
     }
 
     const primaryDisplay = screen.getPrimaryDisplay();
-    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+    const { width: screenWidth, height: _screenHeight } = primaryDisplay.workAreaSize;
 
     focusWindow = new BrowserWindow({
         width: 240,
@@ -1533,7 +1533,7 @@ const showRecordingWidget = (config?: {
 
                 if (zoomToMouseActive) {
                     // Create zoom overlay window
-                    const cursorPoint = screen.getCursorScreenPoint();
+                    const _cursorPoint = screen.getCursorScreenPoint();
                     const primaryDisplay = screen.getPrimaryDisplay();
                     const { width, height } = primaryDisplay.size;
 
@@ -1717,7 +1717,7 @@ const hideRecordingWidget = () => {
         ['Escape', 'Alt+1', 'Alt+2', 'Alt+3', 'Alt+Shift+2'].forEach((acc) => {
             if (globalShortcut.isRegistered(acc)) globalShortcut.unregister(acc);
         });
-    } catch (err) {
+    } catch (_err) {
         // ignore
     }
 
@@ -1852,7 +1852,7 @@ const startMouseTracking = (bounds?: { x: number; y: number; width: number; heig
                         }
                     }
                 }
-            } catch (err) {
+            } catch (_err) {
                 // Silently handle - avoid flooding logs during recording
                 console.debug('[ageofscreen] Background OCR skipped/failed');
             }
@@ -3108,14 +3108,14 @@ const registerIpcHandlers = () => {
     });
 
     ipcMain.on("capture-health-update", (_event, metrics: { droppedFrames: number; bufferErrors: number; effectiveFps: number | null; status: string }) => {
-        latestCaptureHealth = metrics;
+        _latestCaptureHealth = metrics;
         if (recordingWidget && !recordingWidget.isDestroyed()) {
             recordingWidget.webContents.send('capture-health', metrics);
         }
     });
 
     ipcMain.on("send-source-status", (_event, status: { screen: boolean; camera: boolean; mic: boolean }) => {
-        latestSourceStatus = status;
+        _latestSourceStatus = status;
         if (recordingWidget && !recordingWidget.isDestroyed()) {
             recordingWidget.webContents.send('source-status', status);
         }

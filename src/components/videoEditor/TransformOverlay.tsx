@@ -18,7 +18,7 @@ interface TransformOverlayProps {
 export const TransformOverlay: React.FC<TransformOverlayProps> = ({
     transform,
     setTransform,
-    _containerSize,
+    containerSize: _,
     isActive
 }) => {
     if (!isActive) return null;
