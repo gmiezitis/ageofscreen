@@ -7,8 +7,14 @@ import type { EntitlementState } from '../shared/licensing';
 import { buildCursorHighlightOverlayData, buildCursorTimedTrack, FOLLOW_CURSOR_TRACK_MAX_POINTS } from './cursorStyling';
 import { DEFAULT_ZOOM_INTENSITY, getEffectIntensity } from './effectIntensity';
 import { getTimelineDuration as getTimelineDurationFromItems } from './timelineClips';
-import { getPreviewOverlayFrameSize, getRenderedVideoFrameSize, resolveExportFrameStyle, scaleTextOverlayForExport } from './exportOverlayMath';
+import { getPreviewOverlayFrameSize, getRenderedVideoFrameSize, resolveExportOutputFrameSize, resolveRenderExportFrameStyle, scaleTextOverlayForExport } from './exportOverlayMath';
 import { renderTextOverlayToDataUrl } from './textOverlayRendering';
+import {
+    buildVisualTimelineSceneItems,
+    closeVisualGapsInTimelineScene,
+    mapDisplayTimeAfterCrossfadeCompaction,
+    remapTimedRangeAfterCrossfadeCompaction,
+} from './timelineScene';
 import {
     applyKeepRangesToSegments,
     AUTO_POLISH_BACKGROUND,
@@ -100,6 +106,9 @@ export function useEditorExport(
             return merged;
         }, []);
     };
+    const isTimeWithinRanges = (time: number, ranges: Array<{ startTime: number; endTime: number }>) => (
+        ranges.some((range) => time >= range.startTime && time <= range.endTime)
+    );
     const getOverlayEditorFrameSize = () => {
         const previewContainerWidth = Math.round(state.threeContainerRef?.current?.clientWidth || 0);
         const previewContainerHeight = Math.round(state.threeContainerRef?.current?.clientHeight || 0);
@@ -270,15 +279,95 @@ export function useEditorExport(
             if (exportSegments.length === 0 && duration > 0) {
                 exportSegments = [{ id: 'segment-0', startSeconds: 0, endSeconds: duration, timelineStart: 0 }];
             }
-            const exportDuration = getTimelineDurationFromItems(segments, imageClips);
+            const packedScene = closeVisualGapsInTimelineScene({
+                segments,
+                imageClips,
+                audioSegments: state.audioSegments,
+                smartEffects,
+                overlayImages,
+                textOverlays,
+                annotationOverlays,
+            });
+            const exportTransitionType = (state.transitionType || 'cut') as TransitionType;
+            const packedVisualItems = buildVisualTimelineSceneItems(packedScene.segments, packedScene.imageClips);
+            const remapExportTime = (time: number) => mapDisplayTimeAfterCrossfadeCompaction(
+                packedVisualItems,
+                state.clipTransitions || [],
+                exportTransitionType,
+                time,
+            );
+            const remapExportRange = (startTime: number, itemDuration: number) => remapTimedRangeAfterCrossfadeCompaction(
+                packedVisualItems,
+                state.clipTransitions || [],
+                exportTransitionType,
+                startTime,
+                itemDuration,
+            );
+            const packedSmartEffectsById = new Map(
+                packedScene.smartEffects.map((effect: SmartEffect) => [effect.id, effect]),
+            );
+            const packedSmartEffects = smartEffects.map((effect: SmartEffect) => {
+                const packedEffect = packedSmartEffectsById.get(effect.id);
+                const effectOnPackedTimeline = packedEffect
+                    ? { ...effect, startTime: packedEffect.startTime, duration: packedEffect.duration }
+                    : effect;
+                return {
+                    ...effectOnPackedTimeline,
+                    ...remapExportRange(effectOnPackedTimeline.startTime, effectOnPackedTimeline.duration),
+                };
+            });
+            const exportAudioSegments = packedScene.audioSegments.map((segment: any) => ({
+                ...segment,
+                ...remapExportRange(segment.startTime, segment.duration),
+            }));
+            const exportOverlayImages = packedScene.overlayImages.map((overlay: any) => ({
+                ...overlay,
+                ...remapExportRange(overlay.startTime, overlay.duration),
+            }));
+            const exportTextOverlays = packedScene.textOverlays.map((overlay: any) => ({
+                ...overlay,
+                ...remapExportRange(overlay.startTime, overlay.duration),
+            }));
+            const exportAnnotationOverlays = packedScene.annotationOverlays.map((annotation: any) => {
+                if (typeof annotation.startTime !== 'number') {
+                    return annotation;
+                }
+                return typeof annotation.duration === 'number'
+                    ? {
+                        ...annotation,
+                        startTime: remapExportTime(annotation.startTime),
+                        duration: remapExportRange(annotation.startTime, annotation.duration).duration,
+                    }
+                    : {
+                        ...annotation,
+                        startTime: remapExportTime(annotation.startTime),
+                    };
+            });
+            exportSegments = packedScene.segments.map((segment: Segment) => ({
+                id: segment.id,
+                startSeconds: segment.startTime,
+                endSeconds: segment.endTime,
+                timelineStart: segment.timelineStart,
+            }));
+            if (exportSegments.length === 0 && duration > 0) {
+                exportSegments = [{ id: 'segment-0', startSeconds: 0, endSeconds: duration, timelineStart: 0 }];
+            }
+            const packedExportDuration = getTimelineDurationFromItems(packedScene.segments, packedScene.imageClips);
+            const exportDuration = packedExportDuration > 0
+                ? remapExportTime(packedExportDuration)
+                : Math.max(0, getTimelineDurationFromItems(segments, imageClips) || duration || 0);
             const overlayEditorFrameSize = getOverlayEditorFrameSize();
             const renderedVideoFrameSize = getRenderedVideoExportFrameSize();
-            const exportFrameStyle = resolveExportFrameStyle({
+            const exportFrameStyle = resolveRenderExportFrameStyle({
                 selectedPlatform: state.selectedPlatform,
                 backgroundColor: state.backgroundColor,
                 videoPadding: state.videoPadding,
             });
-            const scaledTextOverlays = textOverlays.map((t: any) => (
+            const exportOutputFrameSize = resolveExportOutputFrameSize({
+                selectedPlatform: state.selectedPlatform,
+                sourceFrameSize: renderedVideoFrameSize,
+            });
+            const scaledTextOverlays = exportTextOverlays.map((t: any) => (
                 scaleTextOverlayForExport(
                     {
                         text: t.text,
@@ -312,14 +401,14 @@ export function useEditorExport(
                 renderedVideoFrameSize,
             );
             const annotationImageOverlays = buildAnnotationImageOverlays(
-                annotationOverlays,
+                exportAnnotationOverlays,
                 annotationCanvasSize,
                 exportDuration,
             );
-            const imageOverlaysForExport = buildImageOverlays(overlayImages);
+            const imageOverlaysForExport = buildImageOverlays(exportOverlayImages);
             const cursorHighlightSettings = normalizeCursorHighlightSettings(state.cursorHighlight);
             const zoomCursorHighlightDisabledRanges = mergeTimeRanges(
-                smartEffects
+                packedSmartEffects
                     .filter((effect: SmartEffect) => effect.type === 'zoom' && effect.duration > 0)
                     .map((effect: SmartEffect) => ({
                         startTime: Math.min(exportDuration, Math.max(0, effect.startTime)),
@@ -343,6 +432,7 @@ export function useEditorExport(
             const cursorOverlay = baseCursorOverlay
                 ? {
                     ...baseCursorOverlay,
+                    clicks: (baseCursorOverlay.clicks || []).filter((click) => !isTimeWithinRanges(click.time, cursorHighlightDisabledRanges)),
                     disabledRanges: cursorHighlightDisabledRanges.length > 0 ? cursorHighlightDisabledRanges : undefined,
                 }
                 : null;
@@ -366,11 +456,13 @@ export function useEditorExport(
                 segments: exportSegments,
                 platform: state.selectedPlatform,
                 aspectRatio: null as number | null,
+                outputWidth: exportOutputFrameSize?.width ?? null,
+                outputHeight: exportOutputFrameSize?.height ?? null,
                 crop: state.crop.appliedCrop,
                 quality: (state.exportQuality || 'high') as ExportQuality,
                 backgroundColor: exportFrameStyle.backgroundColor,
                 videoPadding: exportFrameStyle.videoPadding,
-                audioSegments: state.audioSegments.map((a: any) => ({
+                audioSegments: exportAudioSegments.map((a: any) => ({
                     file: a.file,
                     startTime: a.startTime,
                     duration: a.duration,
@@ -378,7 +470,7 @@ export function useEditorExport(
                 })),
                 textOverlays: textImageOverlays as unknown as TextOverlay[],
                 imageOverlays: imageOverlaysForExport,
-                imageClips: imageClips.map((clip: any) => ({
+                imageClips: packedScene.imageClips.map((clip: any) => ({
                     id: clip.id,
                     file: clip.file,
                     startTime: clip.startTime,
@@ -390,7 +482,7 @@ export function useEditorExport(
                     type: transition.type,
                 })),
                 annotationImageOverlays,
-                smartEffects: smartEffects.map((e: SmartEffect) => ({
+                smartEffects: packedSmartEffects.map((e: SmartEffect) => ({
                     type: e.type,
                     startTime: e.startTime,
                     duration: e.duration,
@@ -403,7 +495,7 @@ export function useEditorExport(
                     tiltDirection: e.tiltDirection ?? 'orbital',
                     tiltSnap: e.tiltSnap ?? 50,
                 })),
-                transitionType: (state.transitionType || 'cut') as TransitionType,
+                transitionType: exportTransitionType,
                 cursorOverlay,
                 colorGrade: state.colorGrade || 'none',
                 premiumVoice: premiumVoiceEnabled,

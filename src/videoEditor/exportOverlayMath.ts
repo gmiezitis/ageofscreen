@@ -24,6 +24,13 @@ type ExportFrameStyleOutput = {
     videoPadding: number;
 };
 
+type ExportRenderFrameStyleInput = ExportFrameStyleInput;
+
+type ExportOutputFrameSizeInput = {
+    selectedPlatform?: string | null;
+    sourceFrameSize?: FrameSize | null;
+};
+
 type ContainerFrameSize = {
     width: number;
     height: number;
@@ -50,6 +57,33 @@ const isNeutralEdgeToEdgeBackground = (value: string | null | undefined): boolea
         || normalized === '#0f172a'
         || normalized === '#111827'
     );
+};
+
+export const resolveRenderExportFrameStyle = ({
+    selectedPlatform,
+    backgroundColor,
+    videoPadding,
+}: ExportRenderFrameStyleInput): ExportFrameStyleOutput => {
+    const baseStyle = resolveExportFrameStyle({
+        selectedPlatform,
+        backgroundColor,
+        videoPadding,
+    });
+
+    // "Original" exports should stay source-accurate when the user hasn't
+    // intentionally styled a frame and is still on the default black/4% setup.
+    if (
+        selectedPlatform === 'original'
+        && isNeutralEdgeToEdgeBackground(backgroundColor)
+        && Math.max(0, Math.round(videoPadding || 0)) <= 4
+    ) {
+        return {
+            backgroundColor: 'transparent',
+            videoPadding: 0,
+        };
+    }
+
+    return baseStyle;
 };
 
 export const getRenderedVideoFrameSize = (
@@ -80,20 +114,46 @@ export const resolveExportFrameStyle = ({
 }: ExportFrameStyleInput): ExportFrameStyleOutput => {
     const isOriginalPlatform = selectedPlatform === 'original';
     const isNeutralBackground = isNeutralEdgeToEdgeBackground(backgroundColor);
+    const safePadding = Math.max(0, Math.round(videoPadding || 0));
 
-    if (isOriginalPlatform && isNeutralBackground) {
+    if (isOriginalPlatform && isNeutralBackground && safePadding === 0) {
         return {
             backgroundColor: 'transparent',
             videoPadding: 0,
         };
     }
 
-    const safePadding = Math.max(0, Math.round(videoPadding || 0));
     const safeBackgroundColor = backgroundColor?.trim() || '#000000';
 
     return {
         backgroundColor: safeBackgroundColor,
         videoPadding: safePadding,
+    };
+};
+
+export const resolveExportOutputFrameSize = ({
+    selectedPlatform,
+    sourceFrameSize,
+}: ExportOutputFrameSizeInput): FrameSize | null => {
+    if (selectedPlatform === 'landscape') {
+        return { width: 1920, height: 1080 };
+    }
+
+    if (selectedPlatform === 'square') {
+        return { width: 1080, height: 1080 };
+    }
+
+    if (selectedPlatform === 'vertical') {
+        return { width: 1080, height: 1920 };
+    }
+
+    if (!sourceFrameSize || sourceFrameSize.width <= 0 || sourceFrameSize.height <= 0) {
+        return null;
+    }
+
+    return {
+        width: clampDimension(sourceFrameSize.width, 1),
+        height: clampDimension(sourceFrameSize.height, 1),
     };
 };
 

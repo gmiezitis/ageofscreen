@@ -22,6 +22,9 @@ export interface TimelineSceneCollections {
 export const getClipTransitionKey = (fromItemId: string, toItemId: string) => `${fromItemId}::${toItemId}`;
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+export const VISUAL_TRANSITION_PREFERRED_DURATION = 0.24;
+export const VISUAL_TRANSITION_MIN_DURATION = 0.06;
+export const VISUAL_TRANSITION_GAP_TOLERANCE = 0.04;
 
 export const resolveClipTransitionType = (
     clipTransitions: ClipTransition[],
@@ -100,6 +103,15 @@ export interface ActivePreviewTransition {
     duration: number;
     progress: number;
     blackOverlayOpacity: number;
+}
+
+export interface ResolvedTimelineTransition {
+    fromItemId: string;
+    toItemId: string;
+    type: TransitionType;
+    requestedType: TransitionType;
+    duration: number;
+    boundaryTime: number;
 }
 
 const sortSegmentsByTimeline = (segments: Segment[]) => (
@@ -194,7 +206,7 @@ export const getActivePreviewTransition = (
     clipTransitions: ClipTransition[],
     fallbackType: TransitionType,
     displayTime: number,
-    preferredDuration = 0.24,
+    preferredDuration = VISUAL_TRANSITION_PREFERRED_DURATION,
 ): ActivePreviewTransition | null => {
     if (!Number.isFinite(displayTime) || items.length < 2) {
         return null;
@@ -254,6 +266,89 @@ export const getActivePreviewTransition = (
     }
 
     return null;
+};
+
+export const buildResolvedTimelineTransitions = (
+    items: VisualSceneItem[],
+    clipTransitions: ClipTransition[],
+    fallbackType: TransitionType,
+    preferredDuration = VISUAL_TRANSITION_PREFERRED_DURATION,
+): ResolvedTimelineTransition[] => items.slice(0, -1).map((item, index) => {
+    const nextItem = items[index + 1];
+    const requestedType = resolveClipTransitionType(
+        clipTransitions,
+        item.id,
+        nextItem.id,
+        fallbackType,
+    );
+    const gap = nextItem.startTime - item.endTime;
+    const duration = Math.min(
+        preferredDuration,
+        Math.max(TIMELINE_EPSILON, item.duration * 0.5),
+        Math.max(TIMELINE_EPSILON, nextItem.duration * 0.5),
+    );
+    const canApplyTransition = Math.abs(gap) <= VISUAL_TRANSITION_GAP_TOLERANCE
+        && requestedType !== 'cut'
+        && duration >= VISUAL_TRANSITION_MIN_DURATION;
+
+    return {
+        fromItemId: item.id,
+        toItemId: nextItem.id,
+        type: canApplyTransition ? requestedType : 'cut',
+        requestedType,
+        duration: canApplyTransition ? duration : 0,
+        boundaryTime: nextItem.startTime,
+    };
+});
+
+export const mapDisplayTimeAfterCrossfadeCompaction = (
+    items: VisualSceneItem[],
+    clipTransitions: ClipTransition[],
+    fallbackType: TransitionType,
+    displayTime: number,
+    preferredDuration = VISUAL_TRANSITION_PREFERRED_DURATION,
+) => {
+    const compacted = buildResolvedTimelineTransitions(
+        items,
+        clipTransitions,
+        fallbackType,
+        preferredDuration,
+    ).reduce((time, transition) => (
+        transition.type === 'crossfade' && displayTime >= transition.boundaryTime - TIMELINE_EPSILON
+            ? time - transition.duration
+            : time
+    ), displayTime);
+
+    return Math.max(0, compacted);
+};
+
+export const remapTimedRangeAfterCrossfadeCompaction = (
+    items: VisualSceneItem[],
+    clipTransitions: ClipTransition[],
+    fallbackType: TransitionType,
+    startTime: number,
+    duration: number,
+    preferredDuration = VISUAL_TRANSITION_PREFERRED_DURATION,
+) => {
+    const remappedStart = mapDisplayTimeAfterCrossfadeCompaction(
+        items,
+        clipTransitions,
+        fallbackType,
+        startTime,
+        preferredDuration,
+    );
+    const remappedEnd = mapDisplayTimeAfterCrossfadeCompaction(
+        items,
+        clipTransitions,
+        fallbackType,
+        startTime + duration,
+        preferredDuration,
+    );
+
+    return {
+        startTime: remappedStart,
+        duration: Math.max(0, remappedEnd - remappedStart),
+    };
 };
 
 export const shiftTimelineSceneAfter = (
@@ -510,6 +605,29 @@ export const mapDisplayTimeAfterClosingVisualGaps = (
     return compressDisplayTime(displayTime, gaps);
 };
 
+export const remapTimedRangeAfterClosingVisualGaps = (
+    collections: TimelineSceneCollections,
+    startTime: number,
+    duration: number,
+) => {
+    const visualItems = buildVisualTimelineSceneItems(collections.segments, collections.imageClips);
+    const gaps = buildTimelineGaps(visualItems);
+    if (gaps.length === 0) {
+        return {
+            startTime: Math.max(0, startTime),
+            duration: Math.max(0, duration),
+        };
+    }
+
+    const remappedStart = compressDisplayTime(startTime, gaps);
+    const remappedEnd = compressDisplayTime(startTime + duration, gaps);
+
+    return {
+        startTime: remappedStart,
+        duration: Math.max(0, remappedEnd - remappedStart),
+    };
+};
+
 export const closeVisualGapsInTimelineScene = (
     collections: TimelineSceneCollections,
 ): TimelineSceneCollections => {
@@ -528,6 +646,15 @@ export const closeVisualGapsInTimelineScene = (
     }
 
     const mapDisplayTime = (time: number) => compressDisplayTime(time, gaps);
+    const remapTimedRange = (startTime: number, duration: number) => {
+        const remappedStart = mapDisplayTime(startTime);
+        const remappedEnd = mapDisplayTime(startTime + duration);
+
+        return {
+            startTime: remappedStart,
+            duration: Math.max(0, remappedEnd - remappedStart),
+        };
+    };
 
     return {
         segments: sortSegmentsByTimeline(
@@ -545,29 +672,45 @@ export const closeVisualGapsInTimelineScene = (
         audioSegments: sortItemsByStartTime(
             collections.audioSegments.map((segment) => ({
                 ...segment,
-                startTime: mapDisplayTime(segment.startTime),
+                ...remapTimedRange(segment.startTime, segment.duration),
             })),
         ),
         smartEffects: sortItemsByStartTime(
             collections.smartEffects.map((effect) => ({
                 ...effect,
-                startTime: mapDisplayTime(effect.startTime),
+                ...remapTimedRange(effect.startTime, effect.duration),
             })),
         ),
         overlayImages: sortItemsByStartTime(
             collections.overlayImages.map((overlay) => ({
                 ...overlay,
-                startTime: mapDisplayTime(overlay.startTime),
+                ...remapTimedRange(overlay.startTime, overlay.duration),
             })),
         ),
         textOverlays: sortItemsByStartTime(
             collections.textOverlays.map((overlay) => ({
                 ...overlay,
-                startTime: mapDisplayTime(overlay.startTime),
+                ...remapTimedRange(overlay.startTime, overlay.duration),
             })),
         ),
         annotationOverlays: sortAnnotationsByStartTime(
-            remapAnnotationOverlayTimes(collections.annotationOverlays, mapDisplayTime),
+            collections.annotationOverlays.map((annotation) => {
+                if (typeof annotation.startTime !== 'number') {
+                    return annotation;
+                }
+
+                if (typeof annotation.duration === 'number') {
+                    return {
+                        ...annotation,
+                        ...remapTimedRange(annotation.startTime, annotation.duration),
+                    };
+                }
+
+                return {
+                    ...annotation,
+                    startTime: mapDisplayTime(annotation.startTime),
+                };
+            }),
         ),
     };
 };

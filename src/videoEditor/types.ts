@@ -39,6 +39,7 @@ export interface CursorHighlightSettings {
     color: string;
     size: number;
     opacity: number;
+    smoothMotion: boolean;
     motionOnly: boolean;
     motionHoldSeconds: number;
 }
@@ -46,9 +47,10 @@ export interface CursorHighlightSettings {
 const BASE_CURSOR_HIGHLIGHT_SETTINGS: CursorHighlightSettings = {
     enabled: false,
     shape: 'glow',
-    color: '#f59e0b',
-    size: 2,
-    opacity: 0.46,
+    color: '#0f172a',
+    size: 4.5,
+    opacity: 0.34,
+    smoothMotion: true,
     motionOnly: false,
     motionHoldSeconds: CURSOR_HIGHLIGHT_DEFAULT_MOTION_HOLD_SECONDS,
 };
@@ -98,6 +100,7 @@ export const normalizeCursorHighlightSettings = (
                 ? Number(settings?.opacity)
                 : BASE_CURSOR_HIGHLIGHT_SETTINGS.opacity,
         ),
+        smoothMotion: Boolean(settings?.smoothMotion ?? BASE_CURSOR_HIGHLIGHT_SETTINGS.smoothMotion),
         motionOnly: Boolean(settings?.motionOnly ?? BASE_CURSOR_HIGHLIGHT_SETTINGS.motionOnly),
         motionHoldSeconds: clampCursorHighlightMotionHoldSeconds(
             settings?.motionHoldSeconds ?? BASE_CURSOR_HIGHLIGHT_SETTINGS.motionHoldSeconds,
@@ -229,4 +232,3 @@ export interface KeyframeData {
     rotate?: Keyframe[];
     backgroundColor?: string;
 }
-

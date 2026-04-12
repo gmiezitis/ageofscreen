@@ -87,21 +87,17 @@ const renderCursorHighlightPreview = (
     size = 18,
 ): React.ReactNode => {
     const safeOpacity = Math.max(0.18, Math.min(1, opacity));
-    const glowBoxShadow = [
-        `0 0 ${Math.max(8, Math.round(size * 0.7))}px ${color}44`,
-        `0 0 ${Math.max(14, Math.round(size * 1.1))}px ${color}22`,
-    ].join(', ');
 
     return (
         <div
             style={{
-                width: size,
-                height: size,
-                borderRadius: '50%',
-                background: `radial-gradient(circle at 38% 34%, rgba(255,255,255,0.62), ${color} ${Math.max(42, Math.round(safeOpacity * 100))}%, transparent 82%)`,
-                opacity: safeOpacity,
-                boxShadow: glowBoxShadow,
-                filter: 'saturate(1.05)',
+                width: Math.max(10, Math.round(size * 0.95)),
+                height: Math.max(8, Math.round(size * 0.72)),
+                borderRadius: '999px',
+                background: `radial-gradient(circle at 42% 38%, rgba(255,255,255,0.14), ${color} 40%, transparent 82%)`,
+                opacity: Math.max(0.34, safeOpacity),
+                boxShadow: `0 ${Math.max(2, Math.round(size * 0.16))}px ${Math.max(8, Math.round(size * 0.68))}px rgba(2,6,23,0.26)`,
+                transform: 'rotate(-18deg)',
             }}
         />
     );
@@ -276,9 +272,9 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                         disabled={cursorHighlightButtonDisabled}
                         title={cursorHighlightTitle}
                         style={{
-                            background: normalizedCursorHighlight.enabled || showCursorHighlight ? 'rgba(245,158,11,0.14)' : 'transparent',
-                            border: '1px solid ' + ((normalizedCursorHighlight.enabled || showCursorHighlight) ? 'rgba(245,158,11,0.36)' : 'transparent'),
-                            color: cursorHighlightButtonDisabled ? 'rgba(255,255,255,0.35)' : (normalizedCursorHighlight.enabled ? '#fbbf24' : 'var(--text-muted)'),
+                            background: normalizedCursorHighlight.enabled || showCursorHighlight ? 'rgba(15,23,42,0.34)' : 'transparent',
+                            border: '1px solid ' + ((normalizedCursorHighlight.enabled || showCursorHighlight) ? 'rgba(148,163,184,0.24)' : 'transparent'),
+                            color: cursorHighlightButtonDisabled ? 'rgba(255,255,255,0.35)' : (normalizedCursorHighlight.enabled ? '#e2e8f0' : 'var(--text-muted)'),
                             padding: '8px',
                             cursor: cursorHighlightButtonDisabled ? 'not-allowed' : 'pointer',
                             borderRadius: '8px',
@@ -299,11 +295,11 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                         </div>
                     </button>
                     {showCursorHighlight && (
-                        <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '8px', background: 'rgba(26,26,31,0.96)', backdropFilter: 'blur(28px)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'var(--shadow-lg)', padding: '10px', zIndex: 2147483647, width: '228px', display: 'grid', gap: '10px', WebkitAppRegion: 'no-drag' } as any}>
+                        <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '8px', background: 'rgba(26,26,31,0.96)', backdropFilter: 'blur(28px)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'var(--shadow-lg)', padding: '10px', zIndex: 2147483647, width: '248px', display: 'grid', gap: '10px', WebkitAppRegion: 'no-drag' } as any}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
                                 <div style={{ display: 'grid', gap: '3px' }}>
                                     <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cursor Highlight</div>
-                                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Soft glow around the recorded cursor.</div>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>Subtle macOS-style shadow on the recorded cursor only.</div>
                                 </div>
                                 <button
                                     type="button"
@@ -347,6 +343,32 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                                             <input type="range" min={CURSOR_HIGHLIGHT_MIN_OPACITY} max={CURSOR_HIGHLIGHT_MAX_OPACITY} step="0.01" value={normalizedCursorHighlight.opacity} onChange={(e) => updateCursorHighlight({ opacity: Number(e.target.value) })} />
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gap: '8px', padding: '10px', borderRadius: '10px', background: 'rgba(15,23,42,0.44)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                                    <div style={{ display: 'grid', gap: '3px' }}>
+                                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Smooth Motion</div>
+                                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>Keeps cursor movement softer in preview and export. Hidden automatically during zoom.</div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => updateCursorHighlight({ smoothMotion: !normalizedCursorHighlight.smoothMotion })}
+                                        style={{
+                                            border: '1px solid ' + (normalizedCursorHighlight.smoothMotion ? 'rgba(59,130,246,0.36)' : 'rgba(255,255,255,0.12)'),
+                                            background: normalizedCursorHighlight.smoothMotion ? 'rgba(59,130,246,0.16)' : 'rgba(255,255,255,0.05)',
+                                            color: normalizedCursorHighlight.smoothMotion ? '#93c5fd' : 'var(--text-primary)',
+                                            padding: '7px 11px',
+                                            borderRadius: '999px',
+                                            fontSize: '11px',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            flexShrink: 0,
+                                        }}
+                                    >
+                                        {normalizedCursorHighlight.smoothMotion ? 'On' : 'Off'}
+                                    </button>
                                 </div>
                             </div>
                         </div>

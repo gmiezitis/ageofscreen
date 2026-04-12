@@ -106,6 +106,7 @@ export const ZOOM_EASE_IN = 0.42;
 export const ZOOM_EASE_OUT = 0.82;
 export const ZOOM_MAX = 2;
 export const TILT_RANGE = 18; // max % shift at full tilt
+export const PREVIEW_ZOOM_CENTER_STRENGTH = 0.88;
 
 export const easeInOutCubic = (t: number): number =>
     t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -170,6 +171,31 @@ export const computeSafeFocusCoord = (coord: number, span: number): number => {
 export const computeFocusCenteringOffset = (coord: number): number => {
     const safeCoord = Math.max(0, Math.min(100, coord));
     return 50 - safeCoord;
+};
+
+export const computeZoomEdgeDamping = (x: number, y: number): number => {
+    const safeX = Math.max(0, Math.min(100, x));
+    const safeY = Math.max(0, Math.min(100, y));
+    const edgeSeverity = Math.max(Math.abs(safeX - 50) / 50, Math.abs(safeY - 50) / 50);
+    return 1 - 0.24 * Math.pow(edgeSeverity, 1.35);
+};
+
+export const computeZoomCropStartOffset = (
+    scaledSpan: number,
+    outputSpan: number,
+    focusRatio: number,
+    centerWeight: number,
+): number => {
+    const safeScaledSpan = Math.max(0, scaledSpan);
+    const safeOutputSpan = Math.max(0, outputSpan);
+    const safeFocus = Math.max(0, Math.min(1, focusRatio));
+    const safeCenterWeight = Math.max(0, Math.min(1, centerWeight));
+    const overflow = Math.max(0, safeScaledSpan - safeOutputSpan);
+
+    // Matching the preview requires keeping the transform-origin bias even before
+    // the focus-centering blend kicks in. Starting from a centered crop makes
+    // different zoom areas collapse toward the same exported region.
+    return overflow * safeFocus + safeOutputSpan * (safeFocus - 0.5) * safeCenterWeight;
 };
 
 /* ─── Gradient mapping (preview CSS ↔ FFmpeg solid fallback) ─── */

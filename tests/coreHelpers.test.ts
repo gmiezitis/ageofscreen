@@ -7,14 +7,15 @@ import { parseWindowHandleFromSourceId } from '../src/shared/windowBounds';
 import { PRINT_SCREEN_SLEEP_GRACE_MS, getMenuSleepSuppressedUntil, isMenuSleepSuppressed } from '../src/menu/menuLifecycle';
 import { applyKeepRangesToSegments, getBaseTimelineSegments, sourceTimeToTimelineTime, stripAutoPolishEffects } from '../src/videoEditor/autoPolishPlan';
 import { DEFAULT_ZOOM_INTENSITY, getDefaultEffectIntensity, getEffectIntensity } from '../src/videoEditor/effectIntensity';
-import { getPreviewOverlayFrameSize, getRenderedVideoFrameSize, resolveExportFrameStyle, scaleTextOverlayForExport } from '../src/videoEditor/exportOverlayMath';
-import { buildVisualTimelineSceneItems, closeVisualGapsInTimelineScene, getActivePreviewTransition, insertImageClipIntoTimelineScene, mapDisplayTimeAfterClosingVisualGaps, reorderVisualTimelineSceneItems, resolveClipTransitionType, upsertClipTransition } from '../src/videoEditor/timelineScene';
-import { getCursorHighlightAnchor } from '../src/videoEditor/cursorStyling';
+import { computeZoomCropStartOffset } from '../src/videoEditor/effectMath';
+import { getPreviewOverlayFrameSize, getRenderedVideoFrameSize, resolveExportFrameStyle, resolveExportOutputFrameSize, resolveRenderExportFrameStyle, scaleTextOverlayForExport } from '../src/videoEditor/exportOverlayMath';
+import { buildVisualTimelineSceneItems, closeVisualGapsInTimelineScene, getActivePreviewTransition, insertImageClipIntoTimelineScene, mapDisplayTimeAfterClosingVisualGaps, mapDisplayTimeAfterCrossfadeCompaction, remapTimedRangeAfterClosingVisualGaps, remapTimedRangeAfterCrossfadeCompaction, reorderVisualTimelineSceneItems, resolveClipTransitionType, upsertClipTransition } from '../src/videoEditor/timelineScene';
+import { getCursorHighlightAnchor, getCursorHighlightOverlayOpacity, getCursorHighlightPixelSize, resolveCursorHighlightPlaybackConfig } from '../src/videoEditor/cursorStyling';
 import { findImageClipAtDisplayTime, getDisplayTimeForVideoTime, getSeekTargetForDisplayTime, getSegmentThumbnailSampleTimes, resolvePlaybackStartTarget } from '../src/videoEditor/timelineClips';
 import { normalizeCursorHighlightSettings } from '../src/videoEditor/types';
 import { getPreviewCropForDisplay, isNoOpCrop, normalizeAppliedCrop } from '../src/videoEditor/useCrop';
 import { hasPendingEditorWork } from '../src/videoEditor/useEditorLibrary';
-import { buildCursorMotionActiveRanges, invertTimeRanges, isTimeWithinRanges, prepareCursorPreviewData, getPreviewCursorPoint, getInterpolatedValue, isCursorReplacementSafe } from '../src/videoEditor/utils';
+import { buildCursorMotionActiveRanges, invertTimeRanges, isTimeWithinRanges, prepareCursorPreviewData, getEffectStyle, getPreviewCursorPoint, getInterpolatedValue, isCursorReplacementSafe } from '../src/videoEditor/utils';
 
 const run = (name: string, fn: () => void) => {
     fn();
@@ -77,6 +78,37 @@ run('cursor replacement safety respects recorded suppression metadata', () => {
     assert.equal(isCursorReplacementSafe([{ type: 'meta' }]), false);
 });
 
+run('cursor playback config keeps smooth tracking without reintroducing a second cursor layer', () => {
+    const suppressed = resolveCursorHighlightPlaybackConfig([
+        { type: 'meta', nativeCursorSuppressed: true },
+        { type: 'move', x: 10, y: 10, t: 0 },
+    ] as any);
+    const direct = resolveCursorHighlightPlaybackConfig([
+        { type: 'meta', nativeCursorSuppressed: true },
+        { type: 'move', x: 10, y: 10, t: 0 },
+    ] as any, {
+        enabled: true,
+        smoothMotion: false,
+    });
+    const unsuppressed = resolveCursorHighlightPlaybackConfig([
+        { type: 'meta', nativeCursorSuppressed: false },
+        { type: 'move', x: 10, y: 10, t: 0 },
+    ] as any);
+    const legacy = resolveCursorHighlightPlaybackConfig([
+        { type: 'meta' },
+        { type: 'move', x: 10, y: 10, t: 0 },
+    ] as any);
+
+    assert.equal(suppressed.trackMode, 'smooth');
+    assert.equal(suppressed.nativeCursorSuppressed, true);
+    assert.equal(direct.trackMode, 'direct');
+    assert.equal(direct.nativeCursorSuppressed, true);
+    assert.equal(unsuppressed.trackMode, 'smooth');
+    assert.equal(unsuppressed.nativeCursorSuppressed, false);
+    assert.equal(legacy.trackMode, 'smooth');
+    assert.equal(legacy.nativeCursorSuppressed, false);
+});
+
 run('cursor highlight anchor biases the halo around the visible pointer body', () => {
     const anchor = getCursorHighlightAnchor(64);
 
@@ -91,6 +123,45 @@ run('cursor highlight settings keep new shapes and migrate legacy rounded shape'
     assert.equal(normalizeCursorHighlightSettings({ shape: 'arrow' as any }).shape, 'arrow');
     assert.equal(normalizeCursorHighlightSettings({ shape: 'text_cursor' as any }).shape, 'text_cursor');
     assert.equal(normalizeCursorHighlightSettings({ shape: 'rounded_square' as any }).shape, 'circle');
+});
+
+run('cursor highlight settings default to smooth motion and preserve explicit opt-out', () => {
+    assert.equal(normalizeCursorHighlightSettings().smoothMotion, true);
+    assert.equal(normalizeCursorHighlightSettings({ smoothMotion: false }).smoothMotion, false);
+});
+
+run('cursor highlight size and opacity controls map to visibly different overlay output', () => {
+    const frameSize = { width: 1920, height: 1080 };
+    const smaller = normalizeCursorHighlightSettings({ size: 1, opacity: 0.18 });
+    const larger = normalizeCursorHighlightSettings({ size: 8, opacity: 0.8 });
+
+    assert.ok(getCursorHighlightPixelSize(larger, frameSize) > getCursorHighlightPixelSize(smaller, frameSize));
+    assert.ok(getCursorHighlightOverlayOpacity(larger) > getCursorHighlightOverlayOpacity(smaller));
+});
+
+run('zoom precedence follows editor effect order when overlaps exist', () => {
+    const leftZoom = {
+        id: 'zoom-left',
+        type: 'zoom',
+        label: 'Left',
+        startTime: 0,
+        duration: 2,
+        zoomArea: { x: 0, y: 30, width: 20, height: 20 },
+    } as any;
+    const rightZoom = {
+        id: 'zoom-right',
+        type: 'zoom',
+        label: 'Right',
+        startTime: 0,
+        duration: 2,
+        zoomArea: { x: 80, y: 30, width: 20, height: 20 },
+    } as any;
+
+    const leftThenRight = getEffectStyle([leftZoom, rightZoom], 1);
+    const rightThenLeft = getEffectStyle([rightZoom, leftZoom], 1);
+
+    assert.equal(leftThenRight.contentStyle.transformOrigin, '90% 40%');
+    assert.equal(rightThenLeft.contentStyle.transformOrigin, '10% 40%');
 });
 
 run('export overlay helpers scale text styling into the real render frame', () => {
@@ -129,14 +200,14 @@ run('export overlay helpers scale text styling into the real render frame', () =
     assert.equal(scaled.shadowOffsetY, 8);
 });
 
-run('original export drops the default neutral frame for edge-to-edge output', () => {
+run('original export stays edge-to-edge only when no framing was requested', () => {
     assert.deepEqual(
         resolveExportFrameStyle({
             selectedPlatform: 'original',
             backgroundColor: '#000000',
             videoPadding: 18,
         }),
-        { backgroundColor: 'transparent', videoPadding: 0 },
+        { backgroundColor: '#000000', videoPadding: 18 },
     );
 
     assert.deepEqual(
@@ -145,7 +216,7 @@ run('original export drops the default neutral frame for edge-to-edge output', (
             backgroundColor: '#0f172a',
             videoPadding: 18,
         }),
-        { backgroundColor: 'transparent', videoPadding: 0 },
+        { backgroundColor: '#0f172a', videoPadding: 18 },
     );
 
     assert.deepEqual(
@@ -155,6 +226,70 @@ run('original export drops the default neutral frame for edge-to-edge output', (
             videoPadding: 4,
         }),
         { backgroundColor: '#000000', videoPadding: 4 },
+    );
+});
+
+run('render export collapses the untouched original default frame but preserves intentional styling', () => {
+    assert.deepEqual(
+        resolveRenderExportFrameStyle({
+            selectedPlatform: 'original',
+            backgroundColor: '#000000',
+            videoPadding: 4,
+        }),
+        { backgroundColor: 'transparent', videoPadding: 0 },
+    );
+
+    assert.deepEqual(
+        resolveRenderExportFrameStyle({
+            selectedPlatform: 'original',
+            backgroundColor: '#0f172a',
+            videoPadding: 2,
+        }),
+        { backgroundColor: 'transparent', videoPadding: 0 },
+    );
+
+    assert.deepEqual(
+        resolveRenderExportFrameStyle({
+            selectedPlatform: 'original',
+            backgroundColor: '#ff6600',
+            videoPadding: 4,
+        }),
+        { backgroundColor: '#ff6600', videoPadding: 4 },
+    );
+
+    assert.deepEqual(
+        resolveRenderExportFrameStyle({
+            selectedPlatform: 'original',
+            backgroundColor: '#000000',
+            videoPadding: 12,
+        }),
+        { backgroundColor: '#000000', videoPadding: 12 },
+    );
+});
+
+run('export output frame size follows the selected platform preset', () => {
+    assert.deepEqual(
+        resolveExportOutputFrameSize({
+            selectedPlatform: 'vertical',
+            sourceFrameSize: { width: 1920, height: 1080 },
+        }),
+        { width: 1080, height: 1920 },
+    );
+
+    assert.deepEqual(
+        resolveExportOutputFrameSize({
+            selectedPlatform: 'square',
+            sourceFrameSize: { width: 1280, height: 720 },
+        }),
+        { width: 1080, height: 1080 },
+    );
+
+    assert.deepEqual(
+        resolveExportOutputFrameSize({
+            selectedPlatform: 'original',
+            sourceFrameSize: { width: 1280, height: 720 },
+        }),
+        { width: 1280, height: 720 },
     );
 });
 
@@ -232,6 +367,18 @@ run('zoom effects use the shared lighter default intensity', () => {
     assert.equal(getEffectIntensity({ type: 'zoom', intensity: undefined } as any), 15);
     assert.equal(getEffectIntensity({ type: 'slow_zoom', intensity: undefined } as any), 15);
     assert.equal(getEffectIntensity({ type: 'zoom', intensity: 48 } as any), 48);
+});
+
+run('zoom crop math preserves off-center focus before centering blend', () => {
+    const centered = computeZoomCropStartOffset(240, 200, 0.5, 0);
+    const leftBiased = computeZoomCropStartOffset(240, 200, 0.1, 0);
+    const rightBiased = computeZoomCropStartOffset(240, 200, 0.9, 0);
+    const fullyCentered = computeZoomCropStartOffset(240, 200, 0.9, 1);
+
+    assert.equal(centered, 20);
+    assert.equal(leftBiased, 4);
+    assert.equal(rightBiased, 36);
+    assert.equal(fullyCentered, 116);
 });
 
 run('crop preview reopens on the uncropped source frame', () => {
@@ -469,6 +616,74 @@ run('timeline scene gap closure remaps playhead time onto the packed timeline', 
     }, 11.5);
 
     assert.equal(remappedTime, 7.5);
+});
+
+run('timeline scene gap closure shortens timed ranges that span removed gaps', () => {
+    const scene = {
+        segments: [
+            { id: 'seg-1', startTime: 0, endTime: 4, timelineStart: 0 },
+            { id: 'seg-2', startTime: 4, endTime: 8, timelineStart: 6 },
+        ],
+        imageClips: [],
+        audioSegments: [],
+        smartEffects: [],
+        overlayImages: [],
+        textOverlays: [],
+        annotationOverlays: [],
+    };
+
+    const remappedRange = remapTimedRangeAfterClosingVisualGaps(scene, 3, 4);
+    const packedScene = closeVisualGapsInTimelineScene({
+        ...scene,
+        smartEffects: [
+            { id: 'fx-span', type: 'zoom', label: 'Span', startTime: 3, duration: 4 } as any,
+        ],
+    });
+
+    assert.equal(remappedRange.startTime, 3);
+    assert.equal(remappedRange.duration, 2);
+    assert.equal(packedScene.smartEffects[0].startTime, 3);
+    assert.equal(packedScene.smartEffects[0].duration, 2);
+});
+
+run('crossfade compaction remaps export time after the transition boundary', () => {
+    const items = buildVisualTimelineSceneItems(
+        [
+            { id: 'seg-1', startTime: 0, endTime: 4, timelineStart: 0 },
+            { id: 'seg-2', startTime: 4, endTime: 8, timelineStart: 4 },
+        ],
+        [],
+    );
+
+    const remappedTime = mapDisplayTimeAfterCrossfadeCompaction(
+        items,
+        [{ fromItemId: 'seg-1', toItemId: 'seg-2', type: 'crossfade' }],
+        'cut',
+        5,
+    );
+
+    assert.equal(remappedTime, 4.76);
+});
+
+run('crossfade compaction shortens timed ranges that span the transition boundary', () => {
+    const items = buildVisualTimelineSceneItems(
+        [
+            { id: 'seg-1', startTime: 0, endTime: 4, timelineStart: 0 },
+            { id: 'seg-2', startTime: 4, endTime: 8, timelineStart: 4 },
+        ],
+        [],
+    );
+
+    const remappedRange = remapTimedRangeAfterCrossfadeCompaction(
+        items,
+        [{ fromItemId: 'seg-1', toItemId: 'seg-2', type: 'crossfade' }],
+        'cut',
+        3.5,
+        1,
+    );
+
+    assert.equal(remappedRange.startTime, 3.5);
+    assert.ok(Math.abs(remappedRange.duration - 0.76) < 0.0001);
 });
 
 run('timeline scene reorder moves image clips between split videos and keeps timed items aligned', () => {

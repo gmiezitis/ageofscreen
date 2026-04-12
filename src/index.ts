@@ -145,7 +145,7 @@ const broadcastOnboardingState = (state: OnboardingState = getOnboardingState())
 
 
 const setCaptureShortcutPreference = (preference: CaptureShortcutPreference): OnboardingState => {
-    writeAppPreference("preferredCaptureShortcut", "trigger_line");
+    writeAppPreference("preferredCaptureShortcut", preference);
     
     if (app.isReady()) {
         rearmTriggerWindow();
@@ -612,6 +612,10 @@ const shieldEvents = new EventEmitter();
 let webRequestInstalled = false;
 let lastBlockedNoticeAt = 0;
 let triggerMouseResetTimeout: NodeJS.Timeout | null = null;
+let triggerTrackingInterval: NodeJS.Timeout | null = null;
+let triggerHoverStartedAt = 0;
+let triggerLastOpenedAt = 0;
+let pendingStopRecordingDispatchTimeouts: NodeJS.Timeout[] = [];
 let menuTriggerRearmTimeout: NodeJS.Timeout | null = null;
 let menuIdleReleaseTimeout: NodeJS.Timeout | null = null;
 let menuReopenBlockedUntil = 0;
@@ -723,15 +727,18 @@ let teleprompterSpeed = 90;
 let isAutoZoomEnabled = false;
 let lastMousePos = { x: 0, y: 0 };
 let mouseTrackInterval: NodeJS.Timeout | null = null;
-const TRIGGER_WINDOW_WIDTH = 44;
-const TRIGGER_WINDOW_HEIGHT = 9;
+const TRIGGER_WINDOW_WIDTH = 18;
+const TRIGGER_WINDOW_HEIGHT = 2;
 const TRIGGER_WINDOW_TOP_OFFSET = 0;
-const TRIGGER_MOUSE_REARM_WINDOW_MS = 52;
+const MENU_WINDOW_TOP_OFFSET = TRIGGER_WINDOW_HEIGHT + 1;
+const TRIGGER_HOVER_OPEN_MS = 180;
+const TRIGGER_TRACK_INTERVAL_MS = 50;
 const MENU_REOPEN_GUARD_MS = 260;
 const MENU_TRIGGER_REARM_DELAY_MS = 120;
 const MENU_PREWARM_DELAY_MS = 260;
 const MENU_IDLE_RELEASE_DELAY_MS = 20000;
 const CAPTURE_WINDOW_SETTLE_MS = 160;
+const STOP_RECORDING_RETRY_DELAYS_MS = [0, 160, 420] as const;
 let isWebcamSmall = false; // Toggle for webcam size
 let isWebcamZoomed = false; // Track zoom status for manual toggle
 
@@ -756,8 +763,93 @@ const clearTriggerMouseReset = () => {
     }
 };
 
+const clearTriggerTracking = () => {
+    triggerHoverStartedAt = 0;
+    if (triggerTrackingInterval) {
+        clearInterval(triggerTrackingInterval);
+        triggerTrackingInterval = null;
+    }
+};
+
+const clearPendingStopRecordingDispatches = () => {
+    if (pendingStopRecordingDispatchTimeouts.length === 0) {
+        return;
+    }
+
+    for (const timeout of pendingStopRecordingDispatchTimeouts) {
+        clearTimeout(timeout);
+    }
+    pendingStopRecordingDispatchTimeouts = [];
+};
+
+const dispatchStopRecordingRequest = () => {
+    if (menuWindow && !menuWindow.isDestroyed()) {
+        menuWindow.webContents.send("stop-recording-requested");
+    }
+    if (editorWindow && !editorWindow.isDestroyed()) {
+        editorWindow.webContents.send("stop-recording-requested");
+    }
+};
+
+const startTriggerTracking = () => {
+    if (triggerTrackingInterval) {
+        return;
+    }
+
+    triggerTrackingInterval = setInterval(() => {
+        if (!shouldUseTriggerLine() || isCaptureSessionActive) {
+            triggerHoverStartedAt = 0;
+            return;
+        }
+
+        if (!triggerWindow || triggerWindow.isDestroyed() || !triggerWindow.isVisible()) {
+            triggerHoverStartedAt = 0;
+            return;
+        }
+
+        if (menuWindow && !menuWindow.isDestroyed() && menuWindow.isVisible()) {
+            triggerHoverStartedAt = 0;
+            return;
+        }
+
+        const now = Date.now();
+        if (now < menuReopenBlockedUntil || now - triggerLastOpenedAt < MENU_REOPEN_GUARD_MS) {
+            triggerHoverStartedAt = 0;
+            return;
+        }
+
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenWidth } = primaryDisplay.size;
+        const triggerX = primaryDisplay.bounds.x + Math.round((screenWidth - TRIGGER_WINDOW_WIDTH) / 2);
+        const cursorPoint = screen.getCursorScreenPoint();
+        const withinTriggerBounds = (
+            cursorPoint.x >= triggerX
+            && cursorPoint.x < triggerX + TRIGGER_WINDOW_WIDTH
+            && cursorPoint.y >= primaryDisplay.bounds.y + TRIGGER_WINDOW_TOP_OFFSET
+            && cursorPoint.y <= primaryDisplay.bounds.y + TRIGGER_WINDOW_TOP_OFFSET + TRIGGER_WINDOW_HEIGHT
+        );
+
+        if (!withinTriggerBounds) {
+            triggerHoverStartedAt = 0;
+            return;
+        }
+
+        if (!triggerHoverStartedAt) {
+            triggerHoverStartedAt = now;
+            return;
+        }
+
+        if (now - triggerHoverStartedAt >= TRIGGER_HOVER_OPEN_MS) {
+            triggerHoverStartedAt = 0;
+            triggerLastOpenedAt = now;
+            createMenuWindow();
+        }
+    }, TRIGGER_TRACK_INTERVAL_MS);
+};
+
 const hideTriggerWindow = () => {
     clearTriggerMouseReset();
+    clearTriggerTracking();
 
     if (!triggerWindow || triggerWindow.isDestroyed()) {
         return;
@@ -854,19 +946,14 @@ const rearmTriggerWindow = () => {
     triggerWindow.setBounds({
         width: TRIGGER_WINDOW_WIDTH,
         height: TRIGGER_WINDOW_HEIGHT,
-        x: triggerX,
+        x: primaryDisplay.bounds.x + triggerX,
         y: TRIGGER_WINDOW_TOP_OFFSET,
     }, false);
     triggerWindow.setAlwaysOnTop(true, 'screen-saver');
     triggerWindow.showInactive();
-    triggerWindow.setIgnoreMouseEvents(false);
-
+    triggerWindow.setIgnoreMouseEvents(true, { forward: true });
     clearTriggerMouseReset();
-    triggerMouseResetTimeout = setTimeout(() => {
-        if (!triggerWindow || triggerWindow.isDestroyed()) return;
-        triggerWindow.setIgnoreMouseEvents(true, { forward: true });
-        triggerMouseResetTimeout = null;
-    }, TRIGGER_MOUSE_REARM_WINDOW_MS);
+    startTriggerTracking();
 };
 
 const scheduleTriggerRearm = (delayMs = MENU_TRIGGER_REARM_DELAY_MS) => {
@@ -977,7 +1064,7 @@ const createTriggerWindow = () => {
     triggerWindow = new BrowserWindow({
         width: TRIGGER_WINDOW_WIDTH,
         height: TRIGGER_WINDOW_HEIGHT,
-        x: triggerX,
+        x: primaryDisplay.bounds.x + triggerX,
         y: TRIGGER_WINDOW_TOP_OFFSET,
         frame: false,
         transparent: true,
@@ -1006,6 +1093,7 @@ const createTriggerWindow = () => {
 
     triggerWindow.on("closed", () => {
         clearTriggerMouseReset();
+        clearTriggerTracking();
         triggerWindow = null;
     });
 };
@@ -1067,7 +1155,7 @@ const createMenuWindow = (
         width: HUB_WIDTH,
         height: HUB_HEIGHT,
         x: centerX,
-        y: 0, // Positioned at top
+        y: MENU_WINDOW_TOP_OFFSET, // Leave the trigger strip visible at the top edge
         frame: false,
         transparent: true,
         alwaysOnTop: true,
@@ -1078,8 +1166,8 @@ const createMenuWindow = (
             preload: MENU_WINDOW_PRELOAD_WEBPACK_ENTRY,
             nodeIntegration: false,
             contextIsolation: true,
-            // The trigger strip wakes the menu, so hidden menu content can be throttled.
-            backgroundThrottling: true,
+            // This renderer hosts recording/compositing work and must stay responsive while hidden.
+            backgroundThrottling: false,
         },
     });
 
@@ -1307,6 +1395,7 @@ let isRecordingActive = false;
 const triggerStopRecording = () => {
     console.log('[ageofscreen] Triggering stop recording');
     isRecordingActive = false;
+    clearPendingStopRecordingDispatches();
 
     // Unregister ESC and zoom shortcuts
     try {
@@ -1333,22 +1422,28 @@ const triggerStopRecording = () => {
     // Hide recording widget
     hideRecordingWidget();
 
-    // Delay the stop signal slightly to ensure the compositor has cleared the windows from the screen
-    setTimeout(() => {
-        if (menuWindow && !menuWindow.isDestroyed()) {
-            menuWindow.webContents.send('stop-recording-requested');
-        }
-        if (editorWindow && !editorWindow.isDestroyed()) {
-            editorWindow.webContents.send('stop-recording-requested');
-        }
+    // Retry the stop request a few times so the first post-restart session can't miss it
+    // while renderer listeners and compositor teardown are still settling.
+    for (const delayMs of STOP_RECORDING_RETRY_DELAYS_MS) {
+        const timeout = setTimeout(() => {
+            dispatchStopRecordingRequest();
 
-        // Close remaining windows after stop
+            if (delayMs === STOP_RECORDING_RETRY_DELAYS_MS[STOP_RECORDING_RETRY_DELAYS_MS.length - 1]) {
+                clearPendingStopRecordingDispatches();
+            }
+        }, delayMs);
+        pendingStopRecordingDispatchTimeouts.push(timeout);
+    }
+
+    // Close remaining windows after the first stop request has been delivered.
+    const cleanupTimeout = setTimeout(() => {
         if (webcamWindow && !webcamWindow.isDestroyed()) {
             webcamWindow.close();
             webcamWindow = null;
         }
         closeTeleprompterWindow();
-    }, 150);
+    }, STOP_RECORDING_RETRY_DELAYS_MS[0] + 150);
+    pendingStopRecordingDispatchTimeouts.push(cleanupTimeout);
 };
 
 ipcMain.handle("get-window-bounds", (event, windowId: string) => {
@@ -2831,6 +2926,22 @@ const registerIpcHandlers = () => {
                 shouldRestoreEditorAfterCaptureCancel = false;
                 isCaptureSessionActive = false;
                 createEditorWindow(source.thumbnail.toDataURL());
+            } else {
+                console.warn("[ageofscreen] Selected window source disappeared before capture completed:", result.windowId);
+                if (captureWindow && !captureWindow.isDestroyed()) {
+                    captureWindow.close();
+                }
+                let restoredEditor = false;
+                if (shouldRestoreEditorAfterCaptureCancel && editorWindow && !editorWindow.isDestroyed()) {
+                    editorWindow.show();
+                    editorWindow.focus();
+                    restoredEditor = true;
+                }
+                shouldRestoreEditorAfterCaptureCancel = false;
+                isCaptureSessionActive = false;
+                if (!restoredEditor) {
+                    restoreTriggerWindowIfEnabled();
+                }
             }
             return;
         }
@@ -3692,6 +3803,7 @@ const registerIpcHandlers = () => {
                     trimData.crop || null,
                     trimData.backgroundColor || null,
                     trimData.videoPadding || 0,
+                    trimData.outputWidth && trimData.outputHeight ? { width: trimData.outputWidth, height: trimData.outputHeight } : null,
                     trimData.audioSegments || [],
                     addWatermark,
                     trimData.smartEffects || [],
@@ -3975,10 +4087,3 @@ app.on("window-all-closed", () => {
 });
 
 console.log("[ageofscreen] Main process initialized");
-
-
-
-
-
-
-

@@ -54,9 +54,11 @@ import {
     computeFollowCursorCoord,
     computeSafeFocusCoord,
     computeFocusCenteringOffset,
+    computeZoomEdgeDamping,
     computeTilt,
     computeEffectFadeRatio,
     effectEnvelope,
+    PREVIEW_ZOOM_CENTER_STRENGTH,
 } from './effectMath';
 
 
@@ -103,8 +105,6 @@ export interface PreviewEffectFrame {
     containerWidth: number;
     containerHeight: number;
 }
-
-const PREVIEW_ZOOM_CENTER_STRENGTH = 0.88;
 
 const toPreviewCursorPoint = (event: any, bounds: any): { x: number; y: number } | null => {
     if (!event || typeof event.x !== 'number' || typeof event.y !== 'number') return null;
@@ -692,8 +692,7 @@ export const getEffectStyle = (
                 const focusY = previewFrame.top + (previewFrame.height * effectiveCy) / 100;
                 const frameCenterX = previewFrame.left + previewFrame.width / 2;
                 const frameCenterY = previewFrame.top + previewFrame.height / 2;
-                const edgeSeverity = Math.max(Math.abs(effectiveCx - 50) / 50, Math.abs(effectiveCy - 50) / 50);
-                const edgeDamping = 1 - 0.24 * Math.pow(edgeSeverity, 1.35);
+                const edgeDamping = computeZoomEdgeDamping(effectiveCx, effectiveCy);
                 const previewCenterStrength = PREVIEW_ZOOM_CENTER_STRENGTH * edgeDamping;
                 const translateX = (frameCenterX - focusX) * centerProgress * previewCenterStrength;
                 const translateY = (frameCenterY - focusY) * centerProgress * previewCenterStrength;
@@ -747,4 +746,3 @@ export const getEffectStyle = (
         boxShadow: boxShadow.trim()
     };
 };
-

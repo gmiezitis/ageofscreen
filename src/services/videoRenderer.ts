@@ -14,9 +14,9 @@ import { getageofscreenTempDir } from './runtimePaths';
 import { perfMark } from '../utils/perf';
 import { fromMediaFileUrl } from '../shared/mediaPaths';
 import { isSupportedMediaFilePath } from '../shared/pathSecurity';
-import { normalizeArea, resolveBackgroundFFmpeg, CINEMATIC_CSS, computeBaseZoom, computeEffectFadeRatio, computeEffectiveCx, computeSafeFocusCoord, ZOOM_EASE_IN, ZOOM_EASE_OUT } from '../videoEditor/effectMath';
+import { normalizeArea, resolveBackgroundFFmpeg, CINEMATIC_CSS, computeBaseZoom, computeEffectFadeRatio, PREVIEW_ZOOM_CENTER_STRENGTH, TILT_RANGE, ZOOM_EASE_IN, ZOOM_EASE_OUT } from '../videoEditor/effectMath';
 import { DEFAULT_ZOOM_INTENSITY, getEffectIntensity } from '../videoEditor/effectIntensity';
-import { resolveClipTransitionType } from '../videoEditor/timelineScene';
+import { buildResolvedTimelineTransitions, VISUAL_TRANSITION_GAP_TOLERANCE, VISUAL_TRANSITION_PREFERRED_DURATION } from '../videoEditor/timelineScene';
 import type { ClipTransition, TransitionType } from '../videoEditor/types';
 
 declare const __non_webpack_require__: NodeRequire | undefined;
@@ -101,6 +101,11 @@ export interface CropRect {
     height: number; // percentage 0-100
 }
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+const toEvenDimension = (value: number, fallback: number): number => {
+    const rounded = Math.round(value);
+    const safe = Number.isFinite(rounded) && rounded > 0 ? rounded : fallback;
+    return Math.max(2, Math.round(safe / 2) * 2);
+};
 const ff = (value: number, digits = 4): string => value.toFixed(digits);
 const normalizeFfmpegColor = (value: string | null | undefined, fallback = 'white'): string => {
     const safeValue = (value || fallback).trim();
@@ -142,12 +147,15 @@ const FFMPEG_INITIAL_PROGRESS_TIMEOUT_MS = 60_000;
 const FFMPEG_PROGRESS_STALL_TIMEOUT_MS = 45_000;
 const FFMPEG_PROGRESS_CHECK_INTERVAL_MS = 5_000;
 const FFMPEG_STALL_MARKER = '[VideoRenderer] FFmpeg progress stalled';
-const EXPORT_TRANSITION_PREFERRED_DURATION = 0.24;
-const EXPORT_TRANSITION_MIN_DURATION = 0.06;
-const EXPORT_TRANSITION_GAP_TOLERANCE = 0.04;
 const getExpressionPointBudget = (duration: number, maxPoints: number, pointsPerSecond: number, minPoints: number): number => (
     Math.max(minPoints, Math.min(maxPoints, Math.ceil(Math.max(0.1, duration) * pointsPerSecond) + 1))
 );
+const clampFocusExpr = (coordExpr: string, spanPercent: number) => {
+    const marginPercent = Math.max(0.5, Math.min(49.5, spanPercent / 2));
+    const margin = ff(marginPercent / 100, 6);
+    const maxCoord = ff(1 - (marginPercent / 100), 6);
+    return `max(${margin}\\,min(${maxCoord}\\,${coordExpr}))`;
+};
 const parseFfmpegTimestampSeconds = (value: string): number => {
     const match = value.match(/(\d+):(\d+):(\d+(?:\.\d+)?)/);
     if (!match) return Number.NaN;
@@ -413,6 +421,7 @@ export class VideoRenderer {
         crop?: CropRect | null,
         backgroundColor?: string | null,
         videoPadding?: number,
+        outputFrameSize?: { width: number; height: number } | null,
         audioSegments?: Array<{ file: string; startTime: number; duration: number; volume: number }>,
         addWatermark?: boolean,
         smartEffects?: Array<{ type: string; startTime: number; duration: number; intensity: number; tilt?: number; zoomArea?: { x: number; y: number; width: number; height: number } | null; followCursor?: boolean; followCursorIntensity?: number; cursorTrack?: Array<{ time: number; x: number; y: number }> }>,
@@ -437,6 +446,7 @@ export class VideoRenderer {
             rippleFile?: string;
             rippleSize?: number;
             disabledRanges?: Array<{ startTime: number; endTime: number }>;
+            backdropOpacity?: number;
             track: Array<{ time: number; x: number; y: number }>;
             clicks: Array<{ time: number; x: number; y: number }>;
         } | null,
@@ -537,6 +547,26 @@ export class VideoRenderer {
             effectH = Math.floor(sourceH * crop.height / 100 / 2) * 2;
         }
 
+        const requestedOutputFrame = outputFrameSize
+            && Number.isFinite(outputFrameSize.width)
+            && Number.isFinite(outputFrameSize.height)
+            && outputFrameSize.width > 0
+            && outputFrameSize.height > 0
+            ? {
+                width: toEvenDimension(outputFrameSize.width, effectW),
+                height: toEvenDimension(outputFrameSize.height, effectH),
+            }
+            : null;
+        const frameW = requestedOutputFrame?.width ?? effectW;
+        const frameH = requestedOutputFrame?.height ?? effectH;
+        const scaleFactorValue = hasFrame ? (1 - padding / 100) : 1.0;
+        const windowMaxW = Math.max(2, frameW * scaleFactorValue);
+        const windowMaxH = Math.max(2, frameH * scaleFactorValue);
+        const windowScale = Math.max(0.0001, Math.min(windowMaxW / effectW, windowMaxH / effectH));
+        const windowW = toEvenDimension(effectW * windowScale, effectW);
+        const windowH = toEvenDimension(effectH * windowScale, effectH);
+        const needsFinalFrameCanvas = hasStyledBackground || hasFrame || frameW !== windowW || frameH !== windowH;
+
         const args: string[] = ['-y', '-i', inputPath];
         const audioProbeInfos: string[] = [];
         const tempOverlayFiles: string[] = [];
@@ -603,7 +633,7 @@ export class VideoRenderer {
             })),
         ].sort((a, b) => {
             const startDelta = a.startTime - b.startTime;
-            if (Math.abs(startDelta) > EXPORT_TRANSITION_GAP_TOLERANCE) {
+            if (Math.abs(startDelta) > VISUAL_TRANSITION_GAP_TOLERANCE) {
                 return startDelta;
             }
             if (a.kind === b.kind) {
@@ -612,32 +642,12 @@ export class VideoRenderer {
             return a.kind === 'image' ? -1 : 1;
         });
 
-        const requestedTimelineTransitions = timelineItems.slice(0, -1).map((item, index) => {
-            const nextItem = timelineItems[index + 1];
-            const requestedType = resolveClipTransitionType(
-                clipTransitions || [],
-                item.id,
-                nextItem.id,
-                (transitionType || 'cut') as TransitionType,
-            );
-            const gap = nextItem.startTime - (item.startTime + item.duration);
-            const duration = Math.min(
-                EXPORT_TRANSITION_PREFERRED_DURATION,
-                Math.max(0.02, item.duration * 0.5),
-                Math.max(0.02, nextItem.duration * 0.5),
-            );
-            const canApplyTransition = Math.abs(gap) <= EXPORT_TRANSITION_GAP_TOLERANCE
-                && requestedType !== 'cut'
-                && duration >= EXPORT_TRANSITION_MIN_DURATION;
-
-            return {
-                fromItemId: item.id,
-                toItemId: nextItem.id,
-                type: canApplyTransition ? requestedType : 'cut' as const,
-                requestedType,
-                duration: canApplyTransition ? duration : 0,
-            };
-        });
+        const requestedTimelineTransitions = buildResolvedTimelineTransitions(
+            timelineItems,
+            clipTransitions || [],
+            (transitionType || 'cut') as TransitionType,
+            VISUAL_TRANSITION_PREFERRED_DURATION,
+        );
         const timelineTransitions = forceCutTransitions
             ? requestedTimelineTransitions.map((transition) => ({ ...transition, type: 'cut' as const, duration: 0 }))
             : requestedTimelineTransitions;
@@ -691,7 +701,10 @@ export class VideoRenderer {
         }
         let cursorInputIdx = -1;
         if (effectiveCursorOverlay?.cursorFile) {
-            const resolvedPath = await resolveOverlayInputPath(effectiveCursorOverlay.cursorFile, imageClipInputs.length + textImageInputs.length + annotationInputs.length + imageOverlayInputs.length + (cursorBackdropInputIdx !== -1 ? 1 : 0));
+            const resolvedPath = await resolveOverlayInputPath(
+                effectiveCursorOverlay.cursorFile,
+                imageClipInputs.length + textImageInputs.length + annotationInputs.length + imageOverlayInputs.length + (cursorBackdropInputIdx !== -1 ? 1 : 0),
+            );
             args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
             cursorInputIdx = nextInputIdx;
             nextInputIdx += 1;
@@ -896,14 +909,16 @@ export class VideoRenderer {
                 const backdropNextLabel = `[cursorbackdropfx]`;
                 const backdropHotspotX = Number.isFinite(effectiveCursorOverlay.backdropHotspotX) ? effectiveCursorOverlay.backdropHotspotX : (effectiveCursorOverlay.backdropWidth ?? 0) / 2;
                 const backdropHotspotY = Number.isFinite(effectiveCursorOverlay.backdropHotspotY) ? effectiveCursorOverlay.backdropHotspotY : (effectiveCursorOverlay.backdropHeight ?? 0) / 2;
-                videoFilters.push(`[${cursorBackdropInputIdx}:v]format=rgba,scale=${effectiveCursorOverlay.backdropWidth}:${effectiveCursorOverlay.backdropHeight}${backdropBaseLabel}`);
+                const backdropOpacity = clamp01(
+                    Number.isFinite(effectiveCursorOverlay.backdropOpacity)
+                        ? Number(effectiveCursorOverlay.backdropOpacity)
+                        : 1,
+                );
+                videoFilters.push(`[${cursorBackdropInputIdx}:v]format=rgba,scale=${effectiveCursorOverlay.backdropWidth}:${effectiveCursorOverlay.backdropHeight},colorchannelmixer=aa=${backdropOpacity.toFixed(3)}${backdropBaseLabel}`);
                 videoFilters.push(`${videoOut}${backdropBaseLabel}overlay=x='max(0\\,min(W-w\\,W*(${cursorXExpr})-${backdropHotspotX.toFixed(2)}))':y='max(0\\,min(H-h\\,H*(${cursorYExpr})-${backdropHotspotY.toFixed(2)}))':eval=frame:enable='${cursorEnableExpr}':shortest=1:eof_action=endall:format=auto${backdropNextLabel}`);
                 videoOut = backdropNextLabel;
             }
-            // Disable drawing the custom cursor SVG pointer to avoid the "double cursor" issue (since the OS
-            // pointer is often already captured). We keep only the backdrop halo/glow and the click ripples.
-            const renderSyntheticPointer = false;
-            if (renderSyntheticPointer && cursorInputIdx !== -1 && (effectiveCursorOverlay.cursorWidth ?? 0) > 0 && (effectiveCursorOverlay.cursorHeight ?? 0) > 0) {
+            if (cursorInputIdx !== -1 && (effectiveCursorOverlay.cursorWidth ?? 0) > 0 && (effectiveCursorOverlay.cursorHeight ?? 0) > 0) {
                 const cursorBaseLabel = `[cursorbase]`;
                 const cursorNextLabel = `[cursorfx]`;
                 const cursorHotspotX = Number.isFinite(effectiveCursorOverlay.cursorHotspotX) ? effectiveCursorOverlay.cursorHotspotX : (effectiveCursorOverlay.cursorWidth ?? 0) / 2;
@@ -912,7 +927,6 @@ export class VideoRenderer {
                 videoFilters.push(`${videoOut}${cursorBaseLabel}overlay=x='max(0\\,min(W-w\\,W*(${cursorXExpr})-${cursorHotspotX.toFixed(2)}))':y='max(0\\,min(H-h\\,H*(${cursorYExpr})-${cursorHotspotY.toFixed(2)}))':eval=frame:enable='${cursorEnableExpr}':shortest=1:eof_action=endall:format=auto${cursorNextLabel}`);
                 videoOut = cursorNextLabel;
             }
-
             if (rippleInputIdx !== -1 && effectiveCursorOverlay.clicks.length > 0 && (effectiveCursorOverlay.rippleSize ?? 0) > 0) {
                 const rippleLabels = effectiveCursorOverlay.clicks.map((_, index) => `[ripple${index}]`).join('');
                 videoFilters.push(`[${rippleInputIdx}:v]format=rgba,split=${effectiveCursorOverlay.clicks.length}${rippleLabels}`);
@@ -946,8 +960,14 @@ export class VideoRenderer {
             videoFilters.push(`${videoOut}scale=trunc(${effectW}/2)*2:trunc(${effectH}/2)*2:flags=lanczos${normLabel}`);
             videoOut = normLabel;
 
-            const zoomEffects = contentEffects.filter((fx) => fx.type === 'zoom').sort((a, b) => a.startTime - b.startTime);
-            const nonZoomContentEffects = contentEffects.filter((fx) => fx.type !== 'zoom');
+            const zoomEffects = contentEffects.filter((fx) => fx.type === 'zoom');
+            const scaleOnlyContentEffects = contentEffects.filter((fx) => fx.type === 'breathing' || fx.type === 'slow_zoom');
+            const nonScaleContentEffects = contentEffects.filter((fx) => !['zoom', 'breathing', 'slow_zoom'].includes(fx.type));
+
+            let contentScaleExpr = '1';
+            let focusXExpr = '0.5';
+            let focusYExpr = '0.5';
+            let centerExpr = '0';
 
             if (zoomEffects.length > 0) {
                 const buildZoomMotion = (fx: typeof zoomEffects[number]) => {
@@ -975,7 +995,7 @@ export class VideoRenderer {
                         if (!fx.followCursor || cursorTrack.length === 0) return null;
                         const followExprBudget = getExpressionPointBudget(fx.duration, MAX_FOLLOW_CURSOR_EXPR_POINTS, 3, 6);
                         const normalized = sampleTimedTrack(cursorTrack, followExprBudget).map((point: { time: number; x: number; y: number }) => {
-                            const safeCoord = computeSafeFocusCoord(axis === 'x' ? point.x : point.y, axis === 'x' ? area.width : area.height) / 100;
+                            const safeCoord = clamp01((axis === 'x' ? point.x : point.y) / 100);
                             return {
                                 time: point.time,
                                 coord: safeCoord,
@@ -995,18 +1015,21 @@ export class VideoRenderer {
                     };
                     const dynamicFocusX = buildCursorExpr('x');
                     const dynamicFocusY = buildCursorExpr('y');
-                    const cx = area.x + area.width / 2;
-                    const cy = area.y + area.height / 2;
+                    const areaCenterX = (area.x + area.width / 2) / 100;
+                    const areaCenterY = (area.y + area.height / 2) / 100;
                     const tiltNorm = Math.max(-100, Math.min(100, fx.tilt ?? 0)) / 100;
-                    const effectiveCx = computeSafeFocusCoord(computeEffectiveCx(cx, tiltNorm), area.width) / 100;
-                    const effectiveCy = computeSafeFocusCoord(cy, area.height) / 100;
                     const followStrength = ff(Math.max(0, Math.min(1, (fx as any).followCursorIntensity != null ? (fx as any).followCursorIntensity / 100 : DEFAULT_ZOOM_INTENSITY / 100)), 6);
-                    const resolvedFocusX = dynamicFocusX
-                        ? `${ff(effectiveCx)}+(${dynamicFocusX}-${ff(effectiveCx)})*${followStrength}`
-                        : `${ff(effectiveCx)}`;
-                    const resolvedFocusY = dynamicFocusY
-                        ? `${ff(effectiveCy)}+(${dynamicFocusY}-${ff(effectiveCy)})*${followStrength}`
-                        : `${ff(effectiveCy)}`;
+                    const targetFocusX = dynamicFocusX
+                        ? `${ff(areaCenterX, 6)}+(${dynamicFocusX}-${ff(areaCenterX, 6)})*${followStrength}`
+                        : `${ff(areaCenterX, 6)}`;
+                    const targetFocusY = dynamicFocusY
+                        ? `${ff(areaCenterY, 6)}+(${dynamicFocusY}-${ff(areaCenterY, 6)})*${followStrength}`
+                        : `${ff(areaCenterY, 6)}`;
+                    const safeFocusX = clampFocusExpr(targetFocusX, area.width);
+                    const safeFocusY = clampFocusExpr(targetFocusY, area.height);
+                    const tiltShiftX = ff((tiltNorm * TILT_RANGE) / 100, 6);
+                    const resolvedFocusX = clampFocusExpr(`${safeFocusX}+${tiltShiftX}`, area.width);
+                    const resolvedFocusY = clampFocusExpr(safeFocusY, area.height);
                     return {
                         enable,
                         envelope,
@@ -1018,21 +1041,81 @@ export class VideoRenderer {
                 };
 
                 const motions = zoomEffects.map(buildZoomMotion);
-                const scaleExpr = motions.reduceRight((fallback, motion) => `if(${motion.enable}\,${motion.scale}\,${fallback})`, '1');
-                const focusXExpr = motions.reduceRight((fallback, motion) => `if(${motion.enable}\,${motion.focusX}\,${fallback})`, '0.5');
-                const focusYExpr = motions.reduceRight((fallback, motion) => `if(${motion.enable}\,${motion.focusY}\,${fallback})`, '0.5');
-                const centerExpr = motions.reduceRight((fallback, motion) => `if(${motion.enable}\,${motion.center}\,${fallback})`, '0');
+                // Preview gives precedence to the most recently active zoom, so export must do the same.
+                contentScaleExpr = motions.reduce((fallback, motion) => `if(${motion.enable}\,${motion.scale}\,${fallback})`, '1');
+                focusXExpr = motions.reduce((fallback, motion) => `if(${motion.enable}\,${motion.focusX}\,${fallback})`, '0.5');
+                focusYExpr = motions.reduce((fallback, motion) => `if(${motion.enable}\,${motion.focusY}\,${fallback})`, '0.5');
+                centerExpr = motions.reduce((fallback, motion) => `if(${motion.enable}\,${motion.center}\,${fallback})`, '0');
+            }
+
+            if (scaleOnlyContentEffects.length > 0) {
+                const scaleOnlyExprs = scaleOnlyContentEffects.map((fx) => {
+                    const start = fx.startTime.toFixed(3);
+                    const end = (fx.startTime + fx.duration).toFixed(3);
+                    const mult = getEffectIntensity(fx) / 100;
+                    const fadeRatio = computeEffectFadeRatio(fx.duration);
+                    const progress = `max(0\\,min(1\\,(t-${start})/${Math.max(0.001, fx.duration).toFixed(3)}))`;
+                    const fadeInExpr = `if(lt(${progress}\\,${ff(fadeRatio)})\\,if(lt(${progress}/${ff(fadeRatio)}\\,0.5)\\,4*pow(${progress}/${ff(fadeRatio)}\\,3)\\,1-pow(-2*(${progress}/${ff(fadeRatio)})+2\\,3)/2)\\,1)`;
+                    const fadeOutProgress = `(1-${progress})/${ff(fadeRatio)}`;
+                    const fadeOutExpr = `if(gt(${progress}\\,${ff(1 - fadeRatio)})\\,if(lt(${fadeOutProgress}\\,0.5)\\,4*pow(${fadeOutProgress}\\,3)\\,1-pow(-2*(${fadeOutProgress})+2\\,3)/2)\\,1)\\,1)`;
+                    const envelope = `${fadeInExpr}*${fadeOutExpr}`;
+
+                    if (fx.type === 'breathing') {
+                        const breathMult = (0.04 * mult).toFixed(4);
+                        const breathEased = `(0.5-0.5*cos(2*PI*(t-${start})/3))`;
+                        return `if(between(t\\,${start}\\,${end})\\,1+${breathMult}*${breathEased}*(${envelope})\\,1)`;
+                    }
+
+                    const maxZoom = (0.15 * mult).toFixed(4);
+                    const easedProgress = `(0.5-0.5*cos(PI*${progress}))`;
+                    return `if(between(t\\,${start}\\,${end})\\,1+${maxZoom}*${easedProgress}*(${envelope})\\,1)`;
+                });
+
+                contentScaleExpr = scaleOnlyExprs.reduce(
+                    (combinedExpr, nextExpr) => `(${combinedExpr})*(${nextExpr})`,
+                    contentScaleExpr,
+                );
+            }
+
+            if (zoomEffects.length > 0 || scaleOnlyContentEffects.length > 0) {
                 const scaledLabel = `[fxzsc${effectIdx}]`;
                 const nextLabel = `[fx${effectIdx}]`;
-                const cropXExpr = `max(0\\,min(iw-${effectW}\\,((iw-${effectW})*${focusXExpr})-(${effectW.toFixed(2)}*(0.5-(${focusXExpr}))*${centerExpr})))`;
-                const cropYExpr = `max(0\\,min(ih-${effectH}\\,((ih-${effectH})*${focusYExpr})-(${effectH.toFixed(2)}*(0.5-(${focusYExpr}))*${centerExpr})))`;
-                videoFilters.push(`${videoOut}format=rgba,scale=w='iw*${scaleExpr}':h='ih*${scaleExpr}':eval=frame:flags=lanczos${scaledLabel}`);
-                videoFilters.push(`${scaledLabel}crop=w=${effectW}:h=${effectH}:x='${cropXExpr}':y='${cropYExpr}'${nextLabel}`);
+                const edgeSeverityExpr = `max(abs((${focusXExpr})-0.5)/0.5\\,abs((${focusYExpr})-0.5)/0.5)`;
+                const edgeDampingExpr = `1-0.24*pow(${edgeSeverityExpr}\\,1.35)`;
+                const centerStrengthExpr = `${ff(PREVIEW_ZOOM_CENTER_STRENGTH, 4)}*${edgeDampingExpr}`;
+                const centerWeightExpr = `${centerExpr}*${centerStrengthExpr}`;
+                const usesWindowTransformCanvas = needsFinalFrameCanvas;
+
+                if (usesWindowTransformCanvas) {
+                    const baseWindowLabel = `[fxzwbase${effectIdx}]`;
+                    const canvasLabel = `[fxzwcanvas${effectIdx}]`;
+                    const focusPxXExpr = `${windowW.toFixed(2)}*(${focusXExpr})`;
+                    const focusPxYExpr = `${windowH.toFixed(2)}*(${focusYExpr})`;
+                    const translateXExpr = `${windowW.toFixed(2)}*(0.5-(${focusXExpr}))*${centerWeightExpr}`;
+                    const translateYExpr = `${windowH.toFixed(2)}*(0.5-(${focusYExpr}))*${centerWeightExpr}`;
+                    const overlayXExpr = `(${focusPxXExpr})-(${focusPxXExpr})*(${contentScaleExpr})+(${translateXExpr})`;
+                    const overlayYExpr = `(${focusPxYExpr})-(${focusPxYExpr})*(${contentScaleExpr})+(${translateYExpr})`;
+
+                    videoFilters.push(`${videoOut}format=rgba,scale=${windowW}:${windowH}:flags=lanczos${baseWindowLabel}`);
+                    videoFilters.push(`${baseWindowLabel}scale=w='${windowW}*${contentScaleExpr}':h='${windowH}*${contentScaleExpr}':eval=frame:flags=lanczos${scaledLabel}`);
+                    videoFilters.push(`color=c=black@0:s=${windowW}x${windowH}:r=60:d=${exportDuration.toFixed(3)},format=rgba${canvasLabel}`);
+                    videoFilters.push(`${canvasLabel}${scaledLabel}overlay=x='${overlayXExpr}':y='${overlayYExpr}':eval=frame:shortest=1:eof_action=endall:format=auto${nextLabel}`);
+                } else {
+                    const centeredCropXExpr = `(iw*(${focusXExpr}))-(${effectW.toFixed(2)}/2)`;
+                    const centeredCropYExpr = `(ih*(${focusYExpr}))-(${effectH.toFixed(2)}/2)`;
+                    const originCropXExpr = `(iw-${effectW.toFixed(2)})*(${focusXExpr})`;
+                    const originCropYExpr = `(ih-${effectH.toFixed(2)})*(${focusYExpr})`;
+                    const cropXExpr = `max(0\\,min(iw-${effectW}\\,${originCropXExpr}+(${centeredCropXExpr}-${originCropXExpr})*${centerWeightExpr}))`;
+                    const cropYExpr = `max(0\\,min(ih-${effectH}\\,${originCropYExpr}+(${centeredCropYExpr}-${originCropYExpr})*${centerWeightExpr}))`;
+
+                    videoFilters.push(`${videoOut}format=rgba,scale=w='iw*${contentScaleExpr}':h='ih*${contentScaleExpr}':eval=frame:flags=lanczos${scaledLabel}`);
+                    videoFilters.push(`${scaledLabel}crop=w=${effectW}:h=${effectH}:x='${cropXExpr}':y='${cropYExpr}'${nextLabel}`);
+                }
                 videoOut = nextLabel;
                 effectIdx++;
             }
 
-            for (const fx of nonZoomContentEffects) {
+            for (const fx of nonScaleContentEffects) {
                 const start = fx.startTime.toFixed(3);
                 const end = (fx.startTime + fx.duration).toFixed(3);
                 const startNum = fx.startTime;
@@ -1067,44 +1150,23 @@ export class VideoRenderer {
                 } else if (fx.type === 'exposure') {
                     videoFilters.push(`${prevLabel}eq=brightness=${(0.2 * mult).toFixed(3)}*(${envelope}):enable='${enable}'${nextLabel}`);
                     videoOut = nextLabel;
-                } else if (fx.type === 'breathing') {
-                    const breathMult = (0.04 * mult).toFixed(4);
-                    const scaledLabel = `[fxbrsc${effectIdx}]`;
-                    const breathEased = `(0.5-0.5*cos(2*PI*(t-${start})/3))`; // Breathes smoothly every 3 seconds
-                    const scaleExpr = `if(between(t\\,${start}\\,${end})\\,1+${breathMult}*${breathEased}*(${envelope})\\,1)`;
-                    videoFilters.push(`${prevLabel}scale=w='iw*${scaleExpr}':h='ih*${scaleExpr}':eval=frame:flags=lanczos${scaledLabel}`);
-                    videoFilters.push(`${scaledLabel}crop=${effectW}:${effectH}:'(iw-ow)/2':'(ih-oh)/2'${nextLabel}`);
-                    videoOut = nextLabel;
-                } else if (fx.type === 'slow_zoom') {
-                    const maxZoom = (0.15 * mult).toFixed(4);
-                    const dur = fx.duration.toFixed(3);
-                    const scaledLabel = `[fxszsc${effectIdx}]`;
-                    const easedProgress = `(0.5-0.5*cos(PI*(t-${start})/${dur}))`;
-                    const scaleExpr = `if(between(t\\,${start}\\,${end})\\,1+${maxZoom}*${easedProgress}*(${envelope})\\,1)`;
-                    videoFilters.push(`${prevLabel}scale=w='iw*${scaleExpr}':h='ih*${scaleExpr}':eval=frame:flags=lanczos${scaledLabel}`);
-                    videoFilters.push(`${scaledLabel}crop=${effectW}:${effectH}:'(iw-ow)/2':'(ih-oh)/2'${nextLabel}`);
-                    videoOut = nextLabel;
                 }
                 effectIdx++;
             }
         }
 
-        // 3. Prepare Window/Padding Scaling (Scale DOWN before Tilt)
-        const scaleFactorValue = hasFrame ? (1 - padding / 100) : 1.0;
-        const scaleFactor = scaleFactorValue.toFixed(4);
-
-        if (hasFrame) {
+        // 3. Prepare Window/Padding Scaling
+        if (windowW !== effectW || windowH !== effectH) {
             const prePadLabel = `[prepad]`;
-            // Scale video down first
-            videoFilters.push(`${videoOut}scale=iw*${scaleFactor}:ih*${scaleFactor}:flags=lanczos${prePadLabel}`);
+            videoFilters.push(`${videoOut}scale=${windowW}:${windowH}:flags=lanczos${prePadLabel}`);
             videoOut = prePadLabel;
         }
 
         // 4. Apply Window Effects (3D Tilt, Card Flip) - operates on Result of content effects + scale down
         if (windowEffects.length > 0) {
-            // New target size for tilt is the SCALED video window
-            const winW = Math.round(effectW * scaleFactorValue);
-            const winH = Math.round(effectH * scaleFactorValue);
+            // New target size for tilt is the scaled export window.
+            const winW = windowW;
+            const winH = windowH;
 
             for (const fx of windowEffects) {
                 const start = fx.startTime.toFixed(3);
@@ -1235,14 +1297,6 @@ export class VideoRenderer {
             });
         }
 
-        if (hasFrame) {
-            const padLabel = `[finalFrame]`;
-            const bgLabel = `[framebg]`;
-            pushBackgroundCanvas(bgLabel, effectW, effectH);
-            videoFilters.push(`${bgLabel}${videoOut}overlay=(W-w)/2:(H-h)/2:shortest=1:eof_action=endall:format=auto${padLabel}`);
-            videoOut = padLabel;
-        }
-
         // Overlay additional audio tracks if present
         if (audios.length > 0) {
             audios.forEach((a, i) => {
@@ -1345,8 +1399,16 @@ export class VideoRenderer {
             }
         }
 
+        if (needsFinalFrameCanvas) {
+            const padLabel = '[finalFrame]';
+            const bgLabel = '[framebg]';
+            pushBackgroundCanvas(bgLabel, frameW, frameH);
+            videoFilters.push(`${bgLabel}${videoOut}overlay=(W-w)/2:(H-h)/2:shortest=1:eof_action=endall:format=auto${padLabel}`);
+            videoOut = padLabel;
+        }
+
         if (addWatermark) {
-            const shortEdge = Math.max(240, Math.min(effectW, effectH));
+            const shortEdge = Math.max(240, Math.min(frameW, frameH));
             const rightMargin = Math.max(18, Math.round(shortEdge * 0.022));
             const bottomMargin = Math.max(14, Math.round(shortEdge * 0.018));
             const websiteFontSize = Math.max(12, Math.min(22, Math.round(shortEdge / 58)));
@@ -1376,7 +1438,7 @@ export class VideoRenderer {
         videoOut = videoTrimLabel;
 
         // Even dimensions MUST be the very last video filter for h264 compatibility
-        videoFilters.push(`${videoOut}scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos[vfinal]`);
+        videoFilters.push(`${videoOut}scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos,setsar=1[vfinal]`);
         videoOut = '[vfinal]';
 
         const selectedQuality = quality || 'high';
@@ -1384,8 +1446,8 @@ export class VideoRenderer {
             selectedQuality === 'fast'
                 ? { preset: 'veryfast', crf: '22' }
                 : selectedQuality === 'balanced'
-                    ? { preset: 'fast', crf: '19' }
-                    : { preset: 'medium', crf: '16' };
+                    ? { preset: 'fast', crf: '18' }
+                    : { preset: 'slow', crf: '15' };
 
         const allFilters = [...videoFilters, ...audioFilters].join(';');
         const videoOnlyFilters = videoFilters.join(';');
@@ -1526,6 +1588,10 @@ export class VideoRenderer {
         console.log('[VideoRenderer] Export config:', {
             padding,
             hasFrame,
+            frameW,
+            frameH,
+            windowW,
+            windowH,
             isCinematic: !!isCinematic,
             bgInputIdx,
             bgColor: ffBgColor,
@@ -1581,6 +1647,7 @@ export class VideoRenderer {
                                 crop,
                                 backgroundColor,
                                 videoPadding,
+                                outputFrameSize,
                                 audioSegments,
                                 addWatermark,
                                 smartEffects,
@@ -1625,6 +1692,7 @@ export class VideoRenderer {
                                 crop,
                                 backgroundColor,
                                 videoPadding,
+                                outputFrameSize,
                                 audioSegments,
                                 addWatermark,
                                 smartEffects,
@@ -1673,6 +1741,7 @@ export class VideoRenderer {
                                     crop,
                                     backgroundColor,
                                     videoPadding,
+                                    outputFrameSize,
                                     audioSegments,
                                     addWatermark,
                                     fallbackEffects,
@@ -1714,6 +1783,7 @@ export class VideoRenderer {
                                 crop,
                                 backgroundColor,
                                 videoPadding,
+                                outputFrameSize,
                                 audioSegments,
                                 addWatermark,
                                 [],
@@ -1794,13 +1864,3 @@ export class VideoRenderer {
 }
 
 export const videoRenderer = new VideoRenderer();
-
-
-
-
-
-
-
-
-
-

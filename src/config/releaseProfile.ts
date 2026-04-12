@@ -55,7 +55,7 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                 packagedBuild: true,
                 allowExternalExecutableInterop: false,
                 allowBundledFfmpegOnly: true,
-                allowAgentSurfaces: false,
+                allowAgentSurfaces: true,
                 defaultFeatures: {
                     teleprompter: false,
                     drawing: false,
@@ -65,7 +65,7 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     liveMagnifier: false,
                     autoZoomAdvanced: false,
                     proFeatures: false,
-                    agentSurfaces: false,
+                    agentSurfaces: true,
                 },
             };
         case "direct-download":

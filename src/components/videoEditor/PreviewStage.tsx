@@ -8,7 +8,7 @@ import CropOverlay from '../../videoEditor/CropOverlay';
 import { TextOverlayDraggable, AreaOverlay, TextOverlayEditor, EffectBadges } from './overlays';
 import { CursorHighlightOverlay } from './CursorHighlightOverlay';
 import { VideoAnnotationLayer } from './VideoAnnotationLayer';
-import { EffectStyleSet, getEffectStyle, getFollowCursorPoint, getPreviewCursorPoint, isCursorReplacementSafe } from '../../videoEditor/utils';
+import { EffectStyleSet, getEffectStyle, getFollowCursorPoint, getPreviewCursorPoint } from '../../videoEditor/utils';
 import { buildVisualTimelineSceneItems, getActivePreviewTransition } from '../../videoEditor/timelineScene';
 import { toMediaFileUrl } from '../../shared/mediaPaths';
 import { getPreviewCropForDisplay, isNoOpCrop } from '../../videoEditor/useCrop';
@@ -213,7 +213,6 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
         : 0;
 
     const mediaContentStyle = crop.getVideoStyle();
-    const hideNativePreviewPointer = cursorHighlight.enabled && isCursorReplacementSafe(recordedCursorData);
     const bgStyle = resolveBackgroundCSS(backgroundColor);
     const hasStyledBackground = !!backgroundColor && backgroundColor !== 'transparent';
     const effectivePadding = hasStyledBackground && videoPadding > 0 ? Math.max(videoPadding, 4) : videoPadding;
@@ -358,7 +357,7 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
                     <div style={{ ...crop.getWrapperStyle(), width: '100%', height: '100%', position: 'relative', overflow: crop.isActive ? 'visible' : 'hidden' }}>
                         <div style={{ width: '100%', height: '100%', ...previewEffectStyleSet.contentStyle, filter: getColorGradeFilter(colorGrade) || undefined }}>
                             <video key={mediaPath} ref={videoRef} src={getMediaSrc()} className="video-preview" onClick={togglePlay} onLoadedMetadata={onLoadedMetadata} preload="auto" playsInline controls={false} muted={videoMuted}
-                                style={{ ...mediaContentStyle, display: 'block', zIndex: 1, cursor: hideNativePreviewPointer ? 'none' : undefined }} />
+                                style={{ ...mediaContentStyle, display: 'block', zIndex: 1 }} />
                         </div>
                     </div>
                 </div>
@@ -427,10 +426,12 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
             <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'stretch', gap: showLeftDockTools ? LEFT_DOCK_PANEL_GAP : 0 }}>
                 <div ref={setLeftDockHostElement} style={{ position: 'relative', flex: showLeftDockTools ? `0 0 ${LEFT_DOCK_PANEL_WIDTH}px` : '0 0 0px', width: showLeftDockTools ? LEFT_DOCK_PANEL_WIDTH : 0, minHeight: 0, overflow: 'hidden', opacity: showLeftDockTools ? 1 : 0, transition: 'all 0.3s ease', pointerEvents: showLeftDockTools ? 'auto' : 'none' }} />
                 
-                <div ref={wrapperRef} className="video-wrapper" style={{
+                <div
+                    ref={wrapperRef}
+                    className="video-wrapper"
+                    style={{
                     position: 'relative', flex: 1, minWidth: 0, minHeight: 0,
                     aspectRatio: selectedPlatformRatio ? `${selectedPlatformRatio}` : undefined,
-                    cursor: hideNativePreviewPointer ? 'none' : undefined,
                     ...previewEffectStyleSet.windowStyle,
                     boxShadow: previewEffectStyleSet.boxShadow || undefined,
                     filter: previewEffectStyleSet.filter || undefined,

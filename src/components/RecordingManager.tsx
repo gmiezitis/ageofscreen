@@ -83,14 +83,24 @@ const suppressCapturedCursor = async (screenStream: MediaStream): Promise<boolea
 
 export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgradePrompt }: RecordingManagerProps) => {
   const [isRecording, setIsRecording] = useState(false);
-  const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
   const engineRef = useRef<RecordingEngine | null>(null);
+  const isRecordingRef = useRef(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
   const editAfterRecordingRef = useRef<boolean>(true);
   const chunksRef = useRef<Blob[]>([]);
   const activeStreamRef = useRef<MediaStream | null>(null);
   const webcamStreamRef = useRef<MediaStream | null>(null);
   const targetSourceRef = useRef<any>(null);
   const stopReasonRef = useRef<UpgradeSource | null>(null);
+
+  const setRecordingActive = useCallback((nextValue: boolean) => {
+    isRecordingRef.current = nextValue;
+    setIsRecording(nextValue);
+  }, []);
+
+  const setActiveRecorder = useCallback((nextRecorder: MediaRecorder | null) => {
+    recorderRef.current = nextRecorder;
+  }, []);
 
   useEffect(() => {
     if (!window.electronAPI?.onEditAfterRecordingChanged) return;
@@ -305,8 +315,8 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
             console.error('[RecordingManager] Error finalizing direct video:', err);
           } finally {
             cleanupCaptureResources(screenVideo, null);
-            setIsRecording(false);
-            setRecorder(null);
+            setRecordingActive(false);
+            setActiveRecorder(null);
             if (pendingEditorLaunch) {
               window.electronAPI?.showVideoEditor(pendingEditorLaunch.filePath, pendingEditorLaunch.captureName);
             }
@@ -318,8 +328,8 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
         };
 
         directRecorder.start(1000);
-        setRecorder(directRecorder);
-        setIsRecording(true);
+        setActiveRecorder(directRecorder);
+        setRecordingActive(true);
 
         window.electronAPI?.showRecordingWidget({
           ...smartFeatures,
@@ -487,8 +497,8 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
             } finally {
               cleanupWebcamUpdate?.();
               cleanupCaptureResources(screenVideo, webcamVideo);
-              setIsRecording(false);
-              setRecorder(null);
+              setRecordingActive(false);
+              setActiveRecorder(null);
               if (pendingEditorLaunch) {
                 window.electronAPI?.showVideoEditor(pendingEditorLaunch.filePath, pendingEditorLaunch.captureName);
               }
@@ -501,8 +511,8 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
         }
       } as MediaRecorder & { _progressTimer?: ReturnType<typeof setInterval> };
 
-      setRecorder(mediaRecorderProxy);
-      setIsRecording(true);
+      setActiveRecorder(mediaRecorderProxy);
+      setRecordingActive(true);
 
       window.electronAPI?.showRecordingWidget({
         ...smartFeatures,
@@ -517,28 +527,32 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
       console.error('Recording failed:', err);
       onMessage(`Failed: ${(err as Error).message}`);
       cleanupCaptureResources();
-      setIsRecording(false);
-      setRecorder(null);
+      setRecordingActive(false);
+      setActiveRecorder(null);
       window.electronAPI?.sendRecordingStatus?.(false);
       window.electronAPI?.sendRecordingProgress?.(0);
     }
-  }, [cleanupCaptureResources, emitUpgradePrompt, enableWebcam, finalizeRecordingBlob, getEntitlementState, onMessage, startRecordingProgress]);
+  }, [cleanupCaptureResources, emitUpgradePrompt, enableWebcam, finalizeRecordingBlob, getEntitlementState, onMessage, setActiveRecorder, setRecordingActive, startRecordingProgress]);
 
   const handleStopRecording = useCallback(() => {
-    if (recorder && recorder.state !== 'inactive') {
-      if ((recorder as any)._progressTimer) {
-        clearInterval((recorder as any)._progressTimer);
+    const activeRecorder = recorderRef.current;
+
+    if (activeRecorder && activeRecorder.state !== 'inactive' && !(activeRecorder as any)._stopRequested) {
+      (activeRecorder as any)._stopRequested = true;
+
+      if ((activeRecorder as any)._progressTimer) {
+        clearInterval((activeRecorder as any)._progressTimer);
       }
-      if ((recorder as any)._cleanupComposition) {
-        (recorder as any)._cleanupComposition();
+      if ((activeRecorder as any)._cleanupComposition) {
+        (activeRecorder as any)._cleanupComposition();
       }
-      recorder.stop();
-      setIsRecording(false);
+      activeRecorder.stop();
+      setRecordingActive(false);
       window.electronAPI?.sendRecordingStatus?.(false);
       window.electronAPI?.sendRecordingProgress?.(0);
       broadcastSourceStatus(false, false, false);
     }
-  }, [recorder]);
+  }, [broadcastSourceStatus, setRecordingActive]);
 
   useEffect(() => {
     if (!window.electronAPI) return;
@@ -552,8 +566,6 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
 
   return { isRecording, handleStartRecording, handleStopRecording };
 };
-
-
 
 
 
