@@ -121,7 +121,7 @@ const hasBundledFfmpegPayloads = expectedBundledFfmpegPaths.every((candidatePath
 const extraResources = [
     ...(fs.existsSync(ffmpegResourceRoot) ? [ffmpegResourceRoot] : []),
     ...(fs.existsSync(brandingResourceRoot) ? [brandingResourceRoot] : []),
-    ...(fs.existsSync(nativeCaptureAddonPath) ? [{ from: nativeCaptureAddonPath, to: path.join("native", "capture_engine", "build", "Release", "capture_engine.node") }] : []),
+    ...(fs.existsSync(nativeCaptureAddonPath) ? [nativeCaptureAddonPath] : []),
 ];
 
 if (releaseProfile.allowBundledFfmpegOnly && !hasBundledFfmpegPayloads) {
