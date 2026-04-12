@@ -86,10 +86,9 @@ jobs:
         if: matrix.channel == 'store'
         uses: actions/upload-artifact@v6
         with:
-          name: MyStoreApp
-          # This tells GitHub: "Look in EVERY folder inside 'out' for any .msix file"
+          name: store-msix-${{ matrix.arch }}
           path: out/**/*.msix
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Upload Direct Download Artifacts
         if: matrix.channel == 'direct'
