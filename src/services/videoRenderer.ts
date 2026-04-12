@@ -616,21 +616,31 @@ export class VideoRenderer {
         }
         const imageClipInputs = imageClips || [];
         const timelineItems = [
-            ...segments.map((seg, index) => ({
-                id: seg.id || `segment-${index}`,
-                kind: 'video' as const,
-                startTime: seg.timelineStart ?? 0,
-                duration: Math.max(0.02, seg.endSeconds - seg.startSeconds),
-                segment: seg,
-            })),
-            ...imageClipInputs.map((clip, index) => ({
-                id: clip.id || `image-${index}`,
-                kind: 'image' as const,
-                startTime: Math.max(0, clip.startTime ?? 0),
-                duration: Math.max(0.1, clip.duration ?? 0.1),
-                imageClipIndex: index,
-                clip,
-            })),
+            ...segments.map((seg, index) => {
+                const duration = Math.max(0.02, seg.endSeconds - seg.startSeconds);
+                const startTime = seg.timelineStart ?? 0;
+                return {
+                    id: seg.id || `segment-${index}`,
+                    kind: 'video' as const,
+                    startTime,
+                    endTime: startTime + duration,
+                    duration,
+                    segment: seg,
+                };
+            }),
+            ...imageClipInputs.map((clip, index) => {
+                const duration = Math.max(0.1, clip.duration ?? 0.1);
+                const startTime = Math.max(0, clip.startTime ?? 0);
+                return {
+                    id: clip.id || `image-${index}`,
+                    kind: 'imageClip' as const,
+                    startTime,
+                    endTime: startTime + duration,
+                    duration,
+                    imageClipIndex: index,
+                    clip,
+                };
+            }),
         ].sort((a, b) => {
             const startDelta = a.startTime - b.startTime;
             if (Math.abs(startDelta) > VISUAL_TRANSITION_GAP_TOLERANCE) {
@@ -639,11 +649,11 @@ export class VideoRenderer {
             if (a.kind === b.kind) {
                 return a.id.localeCompare(b.id);
             }
-            return a.kind === 'image' ? -1 : 1;
+            return a.kind === 'imageClip' ? -1 : 1;
         });
 
         const requestedTimelineTransitions = buildResolvedTimelineTransitions(
-            timelineItems,
+            timelineItems as any[],
             clipTransitions || [],
             (transitionType || 'cut') as TransitionType,
             VISUAL_TRANSITION_PREFERRED_DURATION,

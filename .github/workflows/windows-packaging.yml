@@ -18,10 +18,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -70,7 +70,7 @@ jobs:
 
       - name: Upload MSIX for Store
         if: matrix.channel == 'store'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: MyStoreApp
           # This tells GitHub: "Look in EVERY folder inside 'out' for any .msix file"
@@ -79,8 +79,8 @@ jobs:
 
       - name: Upload Direct Download Artifacts
         if: matrix.channel == 'direct'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-direct-${{ matrix.arch }}
-          path: out/make/**
-          if-no-files-found: ignore
+          path: out/make/**/*.zip
+          if-no-files-found: warn
