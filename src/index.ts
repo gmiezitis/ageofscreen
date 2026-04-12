@@ -3,7 +3,7 @@
  * Lightweight screen capture and focus tool
  */
 
-import { app, BrowserWindow, ipcMain, screen, desktopCapturer, nativeImage, Menu, Tray, dialog, globalShortcut, protocol, session, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, desktopCapturer, nativeImage, Tray, dialog, globalShortcut, protocol, session, shell } from "electron";
 import path from "path";
 import { FEATURES } from "./config/features";
 import { PLAN_CONFIG, type PlanTier } from "./config/plan";
@@ -144,15 +144,6 @@ const broadcastOnboardingState = (state: OnboardingState = getOnboardingState())
 
 
 
-const setCaptureShortcutPreference = (preference: CaptureShortcutPreference): OnboardingState => {
-    writeAppPreference("preferredCaptureShortcut", preference);
-    
-    if (app.isReady()) {
-        rearmTriggerWindow();
-    }
-
-    return getOnboardingState();
-};
 
 const completeOnboarding = (): OnboardingState => {
     writeAppPreference("hasCompletedOnboarding", true);

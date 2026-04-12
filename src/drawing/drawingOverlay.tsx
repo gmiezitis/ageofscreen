@@ -29,7 +29,6 @@ const DrawingOverlay: React.FC = () => {
     const currentStrokeRef = useRef<{ x: number; y: number }[]>([]);
     const strokeIdRef = useRef(0);
     const animationFrameRef = useRef<number | null>(null);
-    const [isDrawingState, setIsDrawingState] = useState(false); // Only for UI if needed, but we'll use refs for logic
 
     // Configuration - strokes fade after 2 seconds for a better professional feel
     const STROKE_LIFETIME = 2000;
@@ -203,7 +202,6 @@ const DrawingOverlay: React.FC = () => {
     const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
         isDrawingRef.current = true;
         currentStrokeRef.current = [{ x: e.clientX, y: e.clientY }];
-        setIsDrawingState(true);
     }, []);
 
     const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -223,7 +221,6 @@ const DrawingOverlay: React.FC = () => {
         }
         isDrawingRef.current = false;
         currentStrokeRef.current = [];
-        setIsDrawingState(false);
     }, [strokeColor]);
 
     const handleMouseLeave = useCallback(() => {
