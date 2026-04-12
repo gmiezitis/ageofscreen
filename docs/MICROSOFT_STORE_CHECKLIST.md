@@ -9,8 +9,8 @@ Use this with `docs/MICROSOFT_STORE_DEPLOYMENT_PLAN.md` for sequencing and go/no
 - Set signing secrets: `WINDOWS_CERT_FILE` and `WINDOWS_CERT_PASSWORD`
 - Build `MSIX` for `x64` and `arm64`
 - Upload the Forge-generated Store packages:
-  - `out/make/msix/x64/ageofscreen.msix`
-  - `out/make/msix/arm64/ageofscreen.msix`
+  - `out/make/msix/x64/AgeofScreen.msix`
+  - `out/make/msix/arm64/AgeofScreen.msix`
 - Do not switch to a Visual Studio Publish workflow unless Partner Center rejects the Forge-generated `MSIX`
 
 ## Local Validation

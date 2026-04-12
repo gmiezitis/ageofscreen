@@ -1,6 +1,6 @@
 {
     "name": "ageofscreen",
-    "productName": "ageofscreen",
+    "productName": "AgeofScreen",
     "version": "1.0.0",
     "description": "Screen capture and focus productivity tool",
     "main": ".webpack/main",

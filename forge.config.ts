@@ -19,7 +19,7 @@ import {
 import { FEATURES } from "./src/config/features";
 import { buildReleaseProfile, inferReleaseProfileName } from "./src/config/releaseProfile";
 
-const productName = "ageofscreen";
+const productName = "AgeofScreen";
 const packageDescription = "Local-first AI demo video maker";
 const releaseProfile = buildReleaseProfile(inferReleaseProfileName());
 const parsePort = (value: string | undefined, fallback: number): number => {
@@ -246,7 +246,7 @@ const directDownloadMakers = [
 
 const storeMakers = [
     new MakerMSIX({
-        packageName: "ageofscreen.msix",
+        packageName: "AgeofScreen.msix",
         sign: true,
         logLevel: "warn",
         windowsKitPath,
