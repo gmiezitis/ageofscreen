@@ -51,10 +51,19 @@ jobs:
         if: matrix.channel == 'direct' && matrix.arch == 'arm64'
         run: npm run make:win-arm64
 
+      - name: Decode signing certificate
+        if: matrix.channel == 'store'
+        shell: pwsh
+        run: |
+          $certBytes = [Convert]::FromBase64String("${{ secrets.WINDOWS_CERT_FILE }}")
+          $certPath = Join-Path $env:RUNNER_TEMP "signing-cert.pfx"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+          echo "DECODED_CERT_PATH=$certPath" >> $env:GITHUB_ENV
+
       - name: Build Store MSIX package
         if: matrix.channel == 'store' && matrix.arch == 'x64'
         env:
-          WINDOWS_CERT_FILE: ${{ secrets.WINDOWS_CERT_FILE }}
+          WINDOWS_CERT_FILE: ${{ env.DECODED_CERT_PATH }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
           WINDOWS_PUBLISHER: ${{ secrets.WINDOWS_PUBLISHER }}
           WINDOWS_STORE_IDENTITY_NAME: ${{ secrets.WINDOWS_STORE_IDENTITY_NAME }}
@@ -63,7 +72,7 @@ jobs:
       - name: Build Store MSIX package (ARM64)
         if: matrix.channel == 'store' && matrix.arch == 'arm64'
         env:
-          WINDOWS_CERT_FILE: ${{ secrets.WINDOWS_CERT_FILE }}
+          WINDOWS_CERT_FILE: ${{ env.DECODED_CERT_PATH }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
           WINDOWS_PUBLISHER: ${{ secrets.WINDOWS_PUBLISHER }}
           WINDOWS_STORE_IDENTITY_NAME: ${{ secrets.WINDOWS_STORE_IDENTITY_NAME }}
