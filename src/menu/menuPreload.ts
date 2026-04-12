@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
 import { TimerWidgetPayload } from "../focus/types";
 import type { AgentJob, AgentJobResult, ShieldMode, ShieldState, AgentRecordingRequest } from "../shared/agent";
 import type {
-    CaptureShortcutPreference,
     EntitlementState,
     OnboardingState,
     PurchaseProResult,

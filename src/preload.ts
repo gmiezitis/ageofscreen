@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
 import type {
-    CaptureShortcutPreference,
     EntitlementState,
     OnboardingState,
     PurchaseProResult,

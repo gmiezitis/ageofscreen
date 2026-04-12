@@ -2784,7 +2784,7 @@ const registerIpcHandlers = () => {
     });
 
     // Handle precise absolute resize
-    ipcMain.on("webcam-resize-absolute", (event, { screenX, screenY }: { screenX: number; screenY: number }) => {
+    ipcMain.on("webcam-resize-absolute", (_event, { screenX, screenY: _screenY }: { screenX: number; screenY: number }) => {
         if (webcamWindow && !webcamWindow.isDestroyed() && resizeSession) {
             // Target top-left is current mouse adjusted by the grab offset
             const targetX = screenX - resizeSession.grabOffsetX;
@@ -3098,7 +3098,7 @@ const registerIpcHandlers = () => {
         // Optionally notify editor if it's open
     });
 
-    ipcMain.on("get-recording-settings", (event) => {
+    ipcMain.on("get-recording-settings", (_event) => {
         if (recordingWidget && !recordingWidget.isDestroyed()) {
             recordingWidget.webContents.send('recording-settings', {
                 recordingMode: smartFeaturesConfig.recordingMode,
@@ -3145,7 +3145,7 @@ const registerIpcHandlers = () => {
     // Forward scroll events from drawing overlay to underlying windows
     let scrollPassthroughTimeout: NodeJS.Timeout | null = null;
 
-    ipcMain.on("forward-scroll", (event, data: { deltaX: number; deltaY: number }) => {
+    ipcMain.on("forward-scroll", (_event, _data: { deltaX: number; deltaY: number }) => {
         // Temporarily set the drawing overlay to ignore mouse events for scrolling
         if (drawingOverlayWindow && !drawingOverlayWindow.isDestroyed()) {
             // Enable passthrough mode
@@ -3576,7 +3576,7 @@ const registerIpcHandlers = () => {
     });
 
     // --- Video Editor IPC Handlers ---
-    ipcMain.on("video-editor-ready", (event) => {
+    ipcMain.on("video-editor-ready", (_event) => {
         console.log("[ageofscreen] video-editor-ready received");
         if (pendingVideoDataUrl && videoEditorWindow && !videoEditorWindow.isDestroyed()) {
             sendPendingMediaToVideoEditor("video-editor-ready");
@@ -4001,7 +4001,7 @@ app.whenReady().then(async () => {
                 if (!stats.isFile()) {
                     return new Response('Media file not found', { status: 404 });
                 }
-            } catch (fsErr) {
+            } catch (_fsErr) {
                 console.warn('[ageofscreen] Media file not found on disk:', filePath);
                 return new Response('Media file not found', { status: 404 });
             }
