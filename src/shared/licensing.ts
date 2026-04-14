@@ -1,6 +1,6 @@
 import type { PlanTier } from "../config/plan";
 
-export type CaptureShortcutPreference = "trigger_line";
+export type CaptureShortcutPreference = "trigger_line" | "print_screen";
 
 export interface EntitlementState {
     tier: PlanTier;
@@ -39,5 +39,4 @@ export interface OnboardingState {
     hasCompletedOnboarding: boolean;
     preferredCaptureShortcut: CaptureShortcutPreference;
 }
-
 

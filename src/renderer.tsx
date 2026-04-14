@@ -38,7 +38,7 @@ const EDITOR_APP_BACKGROUND = [
 
 const DEFAULT_ONBOARDING_STATE: OnboardingState = {
     hasCompletedOnboarding: false,
-    preferredCaptureShortcut: "trigger_line",
+    preferredCaptureShortcut: "print_screen",
 };
 
 const cloneAnnotations = (items: AnnotationObject[]): AnnotationObject[] => {
@@ -183,7 +183,7 @@ const App: React.FC = () => {
     const [lastPosition, setLastPosition] = useState<{ x: number; y: number } | null>(null);
     const [cropUndoStack, setCropUndoStack] = useState<EditorSnapshot[]>([]);
     const [cropRedoStack, setCropRedoStack] = useState<EditorSnapshot[]>([]);
-    const [onboardingState, setOnboardingState] = useState<OnboardingState>(DEFAULT_ONBOARDING_STATE);
+    const [_onboardingState, setOnboardingState] = useState<OnboardingState>(DEFAULT_ONBOARDING_STATE);
     const [statusNotice, setStatusNotice] = useState<StatusNotice | null>(null);
     const [showClosePrompt, setShowClosePrompt] = useState(false);
     const [isSavingBeforeClose, setIsSavingBeforeClose] = useState(false);

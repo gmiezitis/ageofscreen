@@ -86,7 +86,7 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     liveMagnifier: false,
                     autoZoomAdvanced: false,
                     proFeatures: false,
-                    agentSurfaces: false,
+                    agentSurfaces: true,
                 },
             };
         case "dev":

@@ -51,7 +51,7 @@ const appPreferencesStore = new (Store as any)({
     name: "app-preferences",
     defaults: {
         hasCompletedOnboarding: false,
-        preferredCaptureShortcut: "trigger_line",
+        preferredCaptureShortcut: "print_screen",
         devEntitlementOverride: PLAN_CONFIG.allowManualTierOverride ? (PLAN_CONFIG.devOverrideTier ?? null) : null,
     } satisfies AppPreferences,
 });
@@ -149,6 +149,11 @@ const completeOnboarding = (): OnboardingState => {
     writeAppPreference("hasCompletedOnboarding", true);
     const nextState = getOnboardingState();
     broadcastOnboardingState(nextState);
+    if (shouldUseTriggerLine()) {
+        restoreTriggerWindowIfEnabled(0);
+    } else {
+        hideTriggerWindow();
+    }
     return nextState;
 };
 
@@ -744,7 +749,12 @@ const hideWindowForCapture = (windowRef: BrowserWindow | null): boolean => {
 };
 const shouldUseTriggerLine = (): boolean => (
     (RELEASE_PROFILE.name === "dev" && process.platform === "win32")
+    || !Boolean(readAppPreference<boolean>("hasCompletedOnboarding"))
     || readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "trigger_line"
+);
+
+const shouldUsePrintScreenShortcut = (): boolean => (
+    readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "print_screen"
 );
 
 const clearTriggerMouseReset = () => {
@@ -848,6 +858,35 @@ const hideTriggerWindow = () => {
 
     triggerWindow.hide();
     triggerWindow.setIgnoreMouseEvents(true, { forward: true });
+};
+
+const registerCaptureShortcut = () => {
+    try {
+        if (globalShortcut.isRegistered("PrintScreen")) {
+            globalShortcut.unregister("PrintScreen");
+        }
+
+        if (!shouldUsePrintScreenShortcut()) {
+            return;
+        }
+
+        const registered = globalShortcut.register("PrintScreen", () => {
+            if (isCaptureSessionActive) {
+                return;
+            }
+
+            createMenuWindow({
+                openReason: "manual",
+                bypassReopenGuard: true,
+            });
+        });
+
+        if (!registered) {
+            console.warn("[ageofscreen] Print Screen shortcut could not be registered.");
+        }
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to register Print Screen shortcut:", error);
+    }
 };
 let zoomToMouseActive = false; // Current zoom state
 
@@ -4017,6 +4056,7 @@ app.whenReady().then(async () => {
     cachedEntitlementState = await getEntitlementProvider().initialize();
     cachedEntitlementState = await getEntitlementProvider().restoreIfNeeded();
     broadcastLicenseState(cachedEntitlementState);
+    registerCaptureShortcut();
     createTriggerWindow();
 
     const onboardingState = getOnboardingState();
@@ -4067,6 +4107,14 @@ app.on("window-all-closed", () => {
     const hasActiveWindows = triggerWindow && !triggerWindow.isDestroyed();
     if (!hasActiveWindows && process.platform !== "darwin") {
         app.quit();
+    }
+});
+
+app.on("will-quit", () => {
+    try {
+        globalShortcut.unregisterAll();
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to unregister global shortcuts on quit:", error);
     }
 });
 

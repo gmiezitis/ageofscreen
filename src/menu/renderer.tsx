@@ -5,6 +5,7 @@ import { RadialMenu, RadialMenuTool } from "../components/RadialMenu";
 import { RecordingSetup, RecordingConfig } from "../components/RecordingSetup";
 import { useRecordingManager } from "../components/RecordingManager";
 import type { AgentJob, AgentRecordingRequest, ShieldMode, ShieldState } from "../shared/agent";
+import type { OnboardingState } from "../shared/licensing";
 import { getMenuSleepSuppressedUntil, isMenuSleepSuppressed } from "./menuLifecycle";
 import {
     Bot,
@@ -17,6 +18,7 @@ import {
     Scissors,
     Sparkles,
     Square,
+    Lightbulb,
 } from "lucide-react";
 
 const DEFAULT_SHIELD_STATE: ShieldState = {
@@ -24,6 +26,11 @@ const DEFAULT_SHIELD_STATE: ShieldState = {
     localOnly: true,
     agentEnabled: false,
     networkFilterEnabled: true,
+};
+
+const DEFAULT_ONBOARDING_STATE: OnboardingState = {
+    hasCompletedOnboarding: false,
+    preferredCaptureShortcut: "print_screen",
 };
 
 const MENU_WAKE_ZONE_WIDTH = 380;
@@ -45,6 +52,8 @@ const MenuApp: React.FC = () => {
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [shieldState, setShieldState] = useState<ShieldState>(DEFAULT_SHIELD_STATE);
     const [shieldToast, setShieldToast] = useState<string | null>(null);
+    const [onboardingState, setOnboardingState] = useState<OnboardingState>(DEFAULT_ONBOARDING_STATE);
+    const [firstRunTipDismissed, setFirstRunTipDismissed] = useState(false);
     const sleepRequestedRef = useRef(false);
     const sleepSuppressedUntilRef = useRef(0);
     const menuWakeZoneRef = useRef<HTMLDivElement | null>(null);
@@ -107,6 +116,18 @@ const MenuApp: React.FC = () => {
             cleanupState();
             cleanupBlocked();
         };
+    }, []);
+
+    useEffect(() => {
+        const cleanupOnboarding = window.menuAPI.settings.onChanged((state: OnboardingState) => {
+            setOnboardingState(state);
+        });
+
+        window.menuAPI.settings.getOnboardingState()
+            .then((state: OnboardingState) => setOnboardingState(state))
+            .catch(() => { });
+
+        return cleanupOnboarding;
     }, []);
 
     useEffect(() => {
@@ -263,6 +284,16 @@ const MenuApp: React.FC = () => {
     };
 
     const shieldIsHuman = shieldState.mode === "human_local";
+    const showFirstRunTip = !firstRunTipDismissed && !onboardingState.hasCompletedOnboarding;
+
+    const dismissFirstRunTip = async () => {
+        setFirstRunTipDismissed(true);
+        try {
+            await window.menuAPI.settings.completeOnboarding();
+        } catch (error) {
+            console.warn("[MenuApp] Failed to complete onboarding", error);
+        }
+    };
 
     const tools: RadialMenuTool[] = [
         {
@@ -419,6 +450,88 @@ const MenuApp: React.FC = () => {
                     }}
                 >
                     {shieldToast}
+                </div>
+            )}
+
+            {showFirstRunTip && (
+                <div
+                    style={{
+                        position: "absolute",
+                        top: 18,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        width: "min(480px, calc(100vw - 32px))",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 12,
+                        padding: "14px 16px",
+                        borderRadius: 18,
+                        background: "linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.84))",
+                        border: "1px solid rgba(148, 163, 184, 0.18)",
+                        boxShadow: "0 24px 60px rgba(2, 6, 23, 0.34)",
+                        zIndex: 190,
+                        backdropFilter: "blur(18px)",
+                    }}
+                >
+                    <div
+                        style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 10,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            background: "rgba(96, 165, 250, 0.14)",
+                            color: "#bfdbfe",
+                            flexShrink: 0,
+                        }}
+                    >
+                        <Lightbulb size={15} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                            style={{
+                                fontSize: 10,
+                                fontWeight: 800,
+                                letterSpacing: "0.16em",
+                                textTransform: "uppercase",
+                                color: "#93c5fd",
+                                marginBottom: 4,
+                            }}
+                        >
+                            First launch tip
+                        </div>
+                        <div style={{ fontSize: 13, lineHeight: 1.55, color: "rgba(226, 232, 240, 0.9)" }}>
+                            Press <strong>Print Screen</strong> to open AgeofScreen.
+                            If Windows already uses that key on this PC, hover the thin trigger line at the top edge whenever you want the launcher back.
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => void dismissFirstRunTip()}
+                        style={{
+                            border: "1px solid rgba(255, 255, 255, 0.08)",
+                            background: "rgba(255, 255, 255, 0.04)",
+                            color: "#e2e8f0",
+                            borderRadius: 12,
+                            padding: "8px 12px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            flexShrink: 0,
+                            transition: "transform 160ms ease, background 160ms ease, border-color 160ms ease",
+                        }}
+                        onMouseEnter={(event) => {
+                            event.currentTarget.style.background = "rgba(255, 255, 255, 0.08)";
+                            event.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.14)";
+                        }}
+                        onMouseLeave={(event) => {
+                            event.currentTarget.style.background = "rgba(255, 255, 255, 0.04)";
+                            event.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.08)";
+                        }}
+                    >
+                        Got it
+                    </button>
                 </div>
             )}
 
