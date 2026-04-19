@@ -60,7 +60,7 @@ let entitlementLastSyncAt: string | null = null;
 let cachedEntitlementState: EntitlementState = {
     tier: PLAN_CONFIG.defaultTier,
     maxRecordingSeconds: PLAN_CONFIG.defaultTier === "free" ? PLAN_CONFIG.freeRecordingSeconds : null,
-    watermarkEnabled: PLAN_CONFIG.defaultTier === "free",
+    watermarkEnabled: true,
     canUseAutoPolish: PLAN_CONFIG.defaultTier === "pro",
     canUseStudioVoice: PLAN_CONFIG.defaultTier === "pro",
     purchaseAvailable: PLAN_CONFIG.allowManualTierOverride && RELEASE_PROFILE.name === "dev",
@@ -94,7 +94,7 @@ const buildEntitlementState = (
 ): EntitlementState => ({
     tier,
     maxRecordingSeconds: tier === "free" ? PLAN_CONFIG.freeRecordingSeconds : null,
-    watermarkEnabled: tier === "free",
+    watermarkEnabled: true,
     canUseAutoPolish: tier === "pro",
     canUseStudioVoice: tier === "pro",
     purchaseAvailable,
@@ -2162,6 +2162,7 @@ let currentPresenterName: string | undefined = undefined;
 let currentCameraBorderColor = '#22c55e'; // Default green
 let currentCameraBorderWidth = 4;
 let currentCameraGlowEnabled = false;
+let currentCameraAudioMeterEnabled = false;
 
 function broadcastWebcamUpdate() {
     const data = {
@@ -2173,6 +2174,7 @@ function broadcastWebcamUpdate() {
         borderColor: currentCameraBorderColor,
         borderWidth: currentCameraBorderWidth,
         glowEnabled: currentCameraGlowEnabled,
+        audioMeterEnabled: currentCameraAudioMeterEnabled,
         micEnabled: smartFeaturesConfig.micEnabled
     };
 
@@ -2184,19 +2186,21 @@ function broadcastWebcamUpdate() {
     });
 }
 
-const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean) => {
+const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean, audioMeterEnabled?: boolean) => {
     if (shape) currentCameraShape = normalizeCameraShape(shape);
     if (size !== undefined) currentCameraSize = size;
     if (name !== undefined) currentPresenterName = name;
     if (borderColor !== undefined) currentCameraBorderColor = borderColor;
     if (borderWidth !== undefined) currentCameraBorderWidth = borderWidth;
     if (glowEnabled !== undefined) currentCameraGlowEnabled = glowEnabled;
+    if (audioMeterEnabled !== undefined) currentCameraAudioMeterEnabled = audioMeterEnabled;
 
     if (webcamWindow && !webcamWindow.isDestroyed()) {
         webcamWindow.webContents.send("update-shape", currentCameraShape);
         webcamWindow.webContents.send("update-border-color", currentCameraBorderColor);
         webcamWindow.webContents.send("update-border-width", currentCameraBorderWidth);
         webcamWindow.webContents.send("update-glow-enabled", currentCameraGlowEnabled);
+        webcamWindow.webContents.send("update-audio-meter-visibility", currentCameraAudioMeterEnabled);
         if (name !== undefined) {
             webcamWindow.webContents.send("update-presenter-name", currentPresenterName);
         }
@@ -2265,7 +2269,7 @@ const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, b
 
     // Load webcam with shape, size, border color, and optional name
     const borderParam = encodeURIComponent(currentCameraBorderColor);
-    const url = `${WEBCAM_WINDOW_WEBPACK_ENTRY}?shape=${currentCameraShape}&size=${currentCameraSize}&borderColor=${borderParam}${currentPresenterName ? '&name=' + encodeURIComponent(currentPresenterName) : ''}&micEnabled=${smartFeaturesConfig.micEnabled}&borderWidth=${currentCameraBorderWidth}&glowEnabled=${currentCameraGlowEnabled}`;
+    const url = `${WEBCAM_WINDOW_WEBPACK_ENTRY}?shape=${currentCameraShape}&size=${currentCameraSize}&borderColor=${borderParam}${currentPresenterName ? '&name=' + encodeURIComponent(currentPresenterName) : ''}&micEnabled=${smartFeaturesConfig.micEnabled}&borderWidth=${currentCameraBorderWidth}&glowEnabled=${currentCameraGlowEnabled}&audioMeterEnabled=${currentCameraAudioMeterEnabled}`;
     webcamWindow.loadURL(url);
 
     webcamWindow.webContents.once("did-finish-load", () => {
@@ -2364,6 +2368,11 @@ const saveMediaSourceToPath = async (source: string, outputPath: string) => {
 };
 
 const dispatchRecordingStartRequest = (config?: AgentRecordingRequest) => {
+    if (isRecordingActive) {
+        console.warn("[ageofscreen] Ignoring duplicate recording start request because a recording is already active.");
+        return;
+    }
+
     const sendStart = () => {
         if (menuWindow && !menuWindow.isDestroyed()) {
             menuWindow.webContents.send("start-recording-requested", config);
@@ -2781,8 +2790,8 @@ const registerIpcHandlers = () => {
     });
 
 
-    ipcMain.on("menu-camera", (event, shape?: CameraShape, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean) => {
-        console.log("[ageofscreen] Toggling Camera with shape:", shape || 'default', "size:", size || 'default', "name:", name || 'none', "borderColor:", borderColor || 'default', "borderWidth:", borderWidth, "glow:", glowEnabled);
+    ipcMain.on("menu-camera", (event, shape?: CameraShape, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean, audioMeterEnabled?: boolean) => {
+        console.log("[ageofscreen] Toggling Camera with shape:", shape || 'default', "size:", size || 'default', "name:", name || 'none', "borderColor:", borderColor || 'default', "borderWidth:", borderWidth, "glow:", glowEnabled, "audioMeter:", audioMeterEnabled);
 
         // During recording, toggle webcam visibility when no args provided (from widget)
         if (isRecordingActive && webcamWindow && !webcamWindow.isDestroyed() && !shape && size === undefined) {
@@ -2796,7 +2805,7 @@ const registerIpcHandlers = () => {
             return;
         }
 
-        createWebcamWindow(shape, size, name, borderColor, borderWidth, glowEnabled);
+        createWebcamWindow(shape, size, name, borderColor, borderWidth, glowEnabled, audioMeterEnabled);
         if (webcamWindow && !webcamWindow.isDestroyed()) {
             webcamWindow.webContents.send("update-shape", currentCameraShape);
             if (name !== undefined) {

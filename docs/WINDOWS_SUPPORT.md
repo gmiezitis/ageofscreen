@@ -23,6 +23,7 @@ These values are read by Forge for Microsoft Store packaging and signing:
 - `WINDOWS_CERT_PASSWORD`: password for the signing certificate
 - `WINDOWS_PUBLISHER`: package publisher, for example `CN=ageofscreen LLC`
 - `WINDOWS_STORE_IDENTITY_NAME`: Store package identity, for example `ageofscreen.Desktop`
+- `WINDOWS_STORE_RESERVED_NAME`: exact reserved Store name to write into the MSIX manifest, for example `Age of Screen`
 - `WINDOWS_KIT_PATH`: optional full path to the Windows SDK bin folder, for example `C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64`
 - `WINDOWS_KIT_VERSION`: optional SDK version if you want Forge to resolve the bin folder by version instead of path
 
@@ -32,6 +33,7 @@ Defaults are development-safe:
 
 - `WINDOWS_PUBLISHER`: `CN=ageofscreen Dev`
 - `WINDOWS_STORE_IDENTITY_NAME`: `ageofscreen.Desktop`
+- `WINDOWS_STORE_RESERVED_NAME`: `Age of Screen`
 
 ## Notes
 

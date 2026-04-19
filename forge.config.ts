@@ -15,6 +15,7 @@ import {
     WINDOWS_PUBLISHER_DEFAULT,
     WINDOWS_PUBLISHER_DISPLAY_NAME,
     WINDOWS_STORE_IDENTITY_DEFAULT,
+    WINDOWS_STORE_RESERVED_NAME_DEFAULT,
 } from "./src/config/windowsSupport";
 import { FEATURES } from "./src/config/features";
 import { buildReleaseProfile, inferReleaseProfileName } from "./src/config/releaseProfile";
@@ -27,6 +28,7 @@ const parsePort = (value: string | undefined, fallback: number): number => {
     return Number.isInteger(parsed) && parsed >= 1024 && parsed <= 65535 ? parsed : fallback;
 };
 const windowsStoreIdentity = process.env.WINDOWS_STORE_IDENTITY_NAME || WINDOWS_STORE_IDENTITY_DEFAULT;
+const windowsStoreReservedName = process.env.WINDOWS_STORE_RESERVED_NAME || WINDOWS_STORE_RESERVED_NAME_DEFAULT;
 const windowsPublisher = process.env.WINDOWS_PUBLISHER || WINDOWS_PUBLISHER_DEFAULT;
 const windowsCertFile = process.env.WINDOWS_CERT_FILE;
 const windowsCertPassword = process.env.WINDOWS_CERT_PASSWORD;
@@ -254,8 +256,8 @@ const storeMakers = [
             packageIdentity: windowsStoreIdentity,
             publisher: windowsPublisher,
             publisherDisplayName: WINDOWS_PUBLISHER_DISPLAY_NAME,
-            packageDisplayName: productName,
-            appDisplayName: productName,
+            packageDisplayName: windowsStoreReservedName,
+            appDisplayName: windowsStoreReservedName,
             packageDescription,
             packageBackgroundColor: "#101014",
             packageMinOSVersion: WINDOWS_MIN_OS_VERSION,

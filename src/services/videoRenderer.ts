@@ -141,8 +141,10 @@ const sampleTimedTrack = <T extends { time: number }>(points: T[], maxPoints: nu
 };
 const MAX_CURSOR_OVERLAY_EXPR_POINTS = 72;
 const MAX_FOLLOW_CURSOR_EXPR_POINTS = 18;
-const EXPORT_SAFE_EFFECT_TYPES = new Set(['zoom', '3d_tilt', 'card_flip', 'slow_zoom', 'breathing', 'blur_area', 'exposure']);
-const RELIABLE_FALLBACK_EFFECT_TYPES = new Set(['zoom', 'slow_zoom', 'breathing', 'blur_area', 'exposure']);
+// Breathing currently stays preview-only so it cannot destabilize FFmpeg export
+// or interfere with zoom-area targeting in the rendered file.
+const EXPORT_SAFE_EFFECT_TYPES = new Set(['zoom', '3d_tilt', 'card_flip', 'slow_zoom', 'blur_area', 'exposure']);
+const RELIABLE_FALLBACK_EFFECT_TYPES = new Set(['zoom', 'slow_zoom', 'blur_area', 'exposure']);
 const FFMPEG_INITIAL_PROGRESS_TIMEOUT_MS = 60_000;
 const FFMPEG_PROGRESS_STALL_TIMEOUT_MS = 45_000;
 const FFMPEG_PROGRESS_CHECK_INTERVAL_MS = 5_000;
@@ -183,7 +185,6 @@ const resolveBrandingResourcePath = (fileName: string): string | null => {
 
     return null;
 };
-
 const ensureReadableMediaInputPath = (source: string, label: string): string => {
     const resolvedPath = fromMediaFileUrl(source);
     if (!path.isAbsolute(resolvedPath)) {
@@ -737,10 +738,9 @@ export class VideoRenderer {
                 watermarkInputIdx = nextInputIdx;
                 nextInputIdx += 1;
             } else {
-                console.warn('[VideoRenderer] Export watermark logo not found. Falling back to text-only watermark.');
+                console.warn('[VideoRenderer] Export watermark image not found. Continuing without image watermark.');
             }
         }
-
         const videoFilters: string[] = [];
         const audioFilters: string[] = [];
         let videoOut = '';
@@ -1419,28 +1419,16 @@ export class VideoRenderer {
 
         if (addWatermark) {
             const shortEdge = Math.max(240, Math.min(frameW, frameH));
-            const rightMargin = Math.max(18, Math.round(shortEdge * 0.022));
-            const bottomMargin = Math.max(14, Math.round(shortEdge * 0.018));
-            const websiteFontSize = Math.max(12, Math.min(22, Math.round(shortEdge / 58)));
-            const websiteGap = Math.max(6, Math.round(websiteFontSize * 0.42));
-            const logoWidth = Math.max(76, Math.round(shortEdge * 0.11));
-            let watermarkOut = videoOut;
-
             if (watermarkInputIdx !== -1) {
+                const rightMargin = Math.max(10, Math.round(shortEdge * 0.018));
+                const bottomMargin = Math.max(10, Math.round(shortEdge * 0.018));
+                const logoWidth = Math.max(88, Math.min(182, Math.round(shortEdge * 0.2)));
                 const scaledLabel = '[wmbrandscale]';
-                const nextLabel = '[wmbrandout]';
-                const logoBottomOffset = bottomMargin + websiteFontSize + websiteGap;
-                videoFilters.push(`[${watermarkInputIdx}:v]format=rgba,scale=${logoWidth}:-1:flags=lanczos,colorchannelmixer=aa=0.76${scaledLabel}`);
-                videoFilters.push(`${watermarkOut}${scaledLabel}overlay=x='W-w-${rightMargin}':y='H-h-${logoBottomOffset}':shortest=1:eof_action=endall:format=auto${nextLabel}`);
-                watermarkOut = nextLabel;
+                const nextLabel = '[outwm]';
+                videoFilters.push(`[${watermarkInputIdx}:v]format=rgba,scale=${logoWidth}:-1:flags=lanczos,colorchannelmixer=aa=0.36${scaledLabel}`);
+                videoFilters.push(`${videoOut}${scaledLabel}overlay=x='W-w-${rightMargin}':y='H-h-${bottomMargin}':shortest=1:eof_action=endall:format=auto${nextLabel}`);
+                videoOut = nextLabel;
             }
-
-            const fontPart = process.platform === 'win32'
-                ? `:fontfile='C\\:/Windows/Fonts/arial.ttf'`
-                : '';
-            const drawtext = `drawtext=text='ageofscreen.com':fontsize=${websiteFontSize}:fontcolor=white@0.72:x=w-text_w-${rightMargin}:y=h-text_h-${bottomMargin}:shadowcolor=black@0.35:shadowx=0:shadowy=1${fontPart}`;
-            videoFilters.push(`${watermarkOut}${drawtext}[outwm]`);
-            videoOut = '[outwm]';
         }
 
         const videoTrimLabel = '[vfinaltrim]';

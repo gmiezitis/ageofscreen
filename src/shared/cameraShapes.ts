@@ -129,7 +129,7 @@ export const getCameraBorderRadius = (shape: CameraShape): string => {
         case 'pill':
             return '9999px';
         case 'square':
-            return '14px';
+            return '18px';
         default:
             return '0';
     }
@@ -171,7 +171,7 @@ export const traceCameraShapePath = (
     }
 
     if (normalizedShape === 'square') {
-        roundRect(ctx, x, y, width, height, Math.min(width, height) * 0.14);
+        roundRect(ctx, x, y, width, height, Math.min(width, height) * 0.18);
         return;
     }
 

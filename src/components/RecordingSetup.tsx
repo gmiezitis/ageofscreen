@@ -30,6 +30,7 @@ export interface RecordingConfig {
     cameraBorderColor?: string;
     cameraBorderWidth?: number;
     cameraGlowEnabled?: boolean;
+    cameraAudioMeterEnabled?: boolean;
     teleprompterEnabled: boolean;
     teleprompterText: string;
     teleprompterSpeed: number;
@@ -61,11 +62,12 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
 }) => {
     const [cameraEnabled, setCameraEnabled] = useState(true);
     const [micEnabled, setMicEnabled] = useState(true);
-    const [cameraShape, setCameraShape] = useState<CameraShape>('circle');
+    const [cameraShape, setCameraShape] = useState<CameraShape>('square');
     const [cameraSize, setCameraSize] = useState(DEFAULT_CAMERA_SIZE);
     const [cameraBorderColor, setCameraBorderColor] = useState(DEFAULT_CAMERA_BORDER_COLOR);
     const [cameraBorderWidth, setCameraBorderWidth] = useState(4);
     const [cameraGlowEnabled, setCameraGlowEnabled] = useState(false);
+    const [cameraAudioMeterEnabled, setCameraAudioMeterEnabled] = useState(false);
     const [isAdvancedVisible, setIsAdvancedVisible] = useState(false);
     const [teleprompterEnabled, setTeleprompterEnabled] = useState(false);
     const [teleprompterText, setTeleprompterText] = useState('');
@@ -189,7 +191,7 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
             const effectiveTeleprompter = FEATURES.ENABLE_TELEPROMPTER ? teleprompterEnabled : false;
             onStartRecording({
                 cameraEnabled, micEnabled, cameraShape, cameraSize, cameraBorderColor,
-                cameraBorderWidth, cameraGlowEnabled,
+                cameraBorderWidth, cameraGlowEnabled, cameraAudioMeterEnabled,
                 teleprompterEnabled: effectiveTeleprompter,
                 teleprompterText, teleprompterSpeed,
                 liveMagnifierEnabled: effectiveMagnifier,
@@ -204,7 +206,7 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
         }
         const timer = setTimeout(() => setCountdown(prev => (prev !== null ? prev - 1 : null)), 1000);
         return () => clearTimeout(timer);
-    }, [countdown, cameraEnabled, cameraShape, cameraSize, cameraBorderColor, cameraBorderWidth, cameraGlowEnabled, teleprompterEnabled, teleprompterText, teleprompterSpeed, liveMagnifierEnabled, captureCursorData, presenterNameEnabled, presenterName, recordingMode, selectedWindowId, editAfterRecording, onStartRecording, stopCameraPreview, onClose]);
+    }, [countdown, cameraEnabled, cameraShape, cameraSize, cameraBorderColor, cameraBorderWidth, cameraGlowEnabled, cameraAudioMeterEnabled, teleprompterEnabled, teleprompterText, teleprompterSpeed, liveMagnifierEnabled, captureCursorData, presenterNameEnabled, presenterName, recordingMode, selectedWindowId, editAfterRecording, onStartRecording, stopCameraPreview, onClose]);
 
 
     const handleClose = () => {
@@ -296,6 +298,8 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
                         cameraBorderColor={cameraBorderColor}
                         cameraBorderWidth={cameraBorderWidth}
                         cameraGlowEnabled={cameraGlowEnabled}
+                        cameraAudioMeterEnabled={cameraAudioMeterEnabled}
+                        micEnabled={micEnabled}
                         isPreviewStarting={isPreviewStarting}
                         presenterNameEnabled={presenterNameEnabled} presenterName={presenterName}
                     />
@@ -378,6 +382,17 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
                                             {cameraGlowEnabled ? 'On' : 'Off'}
                                         </button>
                                     </div>
+                                    <div className={styles.advancedRow}>
+                                        <span className={styles.advancedLabel}>Voice Meter</span>
+                                        <button
+                                            className={`${styles.glowToggle} ${cameraAudioMeterEnabled ? styles.active : ''}`}
+                                            onClick={() => setCameraAudioMeterEnabled(!cameraAudioMeterEnabled)}
+                                            disabled={!micEnabled}
+                                            title={micEnabled ? 'Show a minimal sound meter on the webcam' : 'Enable microphone to use the voice meter'}
+                                        >
+                                            {cameraAudioMeterEnabled && micEnabled ? 'On' : 'Off'}
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                             <div className={styles.sliderRow}>
@@ -431,4 +446,3 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
 };
 
 export default RecordingSetup;
-

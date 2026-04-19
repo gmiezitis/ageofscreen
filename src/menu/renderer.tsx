@@ -87,7 +87,10 @@ const MenuApp: React.FC = () => {
         const cleanupStart = window.menuAPI.onStartRecordingRequested((config?: AgentRecordingRequest) => {
             if (!isRecording) {
                 handleStartRecording(config);
+                return;
             }
+
+            showTimedStatus("A recording is already in progress. Stop it before starting another one.");
         });
         const cleanupStop = window.menuAPI.onStopRecordingRequested(() => {
             if (isRecording) {
@@ -229,6 +232,11 @@ const MenuApp: React.FC = () => {
     };
 
     const handleStartRecordingWithConfig = (config: RecordingConfig) => {
+        if (isRecording) {
+            showTimedStatus("A recording is already in progress. Stop it before starting another one.");
+            return;
+        }
+
         if (config.cameraEnabled) {
             window.menuAPI.toggleCamera(
                 config.cameraShape,
@@ -237,6 +245,7 @@ const MenuApp: React.FC = () => {
                 config.cameraBorderColor,
                 config.cameraBorderWidth,
                 config.cameraGlowEnabled,
+                config.cameraAudioMeterEnabled,
             );
         }
 
@@ -249,6 +258,7 @@ const MenuApp: React.FC = () => {
         handleStartRecording({
             liveMagnifierEnabled: config.liveMagnifierEnabled,
             captureCursorData: config.captureCursorData,
+            micEnabled: config.micEnabled,
             recordingMode: config.recordingMode,
             windowBackground: config.windowBackground,
             windowId: config.windowId,
@@ -256,6 +266,10 @@ const MenuApp: React.FC = () => {
             cameraShape: config.cameraShape,
             cameraSize: config.cameraSize,
             cameraBorderColor: config.cameraBorderColor,
+            cameraBorderWidth: config.cameraBorderWidth,
+            cameraGlowEnabled: config.cameraGlowEnabled,
+            cameraAudioMeterEnabled: config.cameraAudioMeterEnabled,
+            presenterName: config.presenterNameEnabled ? config.presenterName : undefined,
             editAfterRecording: config.editAfterRecording,
         });
 
@@ -407,6 +421,10 @@ const MenuApp: React.FC = () => {
                     .agent-btn:active {
                         transform: translateY(0);
                     }
+                    .first-run-tip-btn:hover {
+                        background: rgba(255, 255, 255, 0.14) !important;
+                        border-color: rgba(255, 255, 255, 0.18) !important;
+                    }
                 `}
             </style>
 
@@ -453,88 +471,6 @@ const MenuApp: React.FC = () => {
                 </div>
             )}
 
-            {showFirstRunTip && (
-                <div
-                    style={{
-                        position: "absolute",
-                        top: 18,
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        width: "min(480px, calc(100vw - 32px))",
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: 12,
-                        padding: "14px 16px",
-                        borderRadius: 18,
-                        background: "linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.84))",
-                        border: "1px solid rgba(148, 163, 184, 0.18)",
-                        boxShadow: "0 24px 60px rgba(2, 6, 23, 0.34)",
-                        zIndex: 190,
-                        backdropFilter: "blur(18px)",
-                    }}
-                >
-                    <div
-                        style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: 10,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            background: "rgba(96, 165, 250, 0.14)",
-                            color: "#bfdbfe",
-                            flexShrink: 0,
-                        }}
-                    >
-                        <Lightbulb size={15} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                        <div
-                            style={{
-                                fontSize: 10,
-                                fontWeight: 800,
-                                letterSpacing: "0.16em",
-                                textTransform: "uppercase",
-                                color: "#93c5fd",
-                                marginBottom: 4,
-                            }}
-                        >
-                            First launch tip
-                        </div>
-                        <div style={{ fontSize: 13, lineHeight: 1.55, color: "rgba(226, 232, 240, 0.9)" }}>
-                            Press <strong>Print Screen</strong> to open AgeofScreen.
-                            If Windows already uses that key on this PC, hover the thin trigger line at the top edge whenever you want the launcher back.
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => void dismissFirstRunTip()}
-                        style={{
-                            border: "1px solid rgba(255, 255, 255, 0.08)",
-                            background: "rgba(255, 255, 255, 0.04)",
-                            color: "#e2e8f0",
-                            borderRadius: 12,
-                            padding: "8px 12px",
-                            fontSize: 12,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                            flexShrink: 0,
-                            transition: "transform 160ms ease, background 160ms ease, border-color 160ms ease",
-                        }}
-                        onMouseEnter={(event) => {
-                            event.currentTarget.style.background = "rgba(255, 255, 255, 0.08)";
-                            event.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.14)";
-                        }}
-                        onMouseLeave={(event) => {
-                            event.currentTarget.style.background = "rgba(255, 255, 255, 0.04)";
-                            event.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.08)";
-                        }}
-                    >
-                        Got it
-                    </button>
-                </div>
-            )}
-
             <div
                 ref={menuWakeZoneRef}
                 style={{
@@ -544,6 +480,7 @@ const MenuApp: React.FC = () => {
                     alignItems: "center",
                     justifyContent: "center",
                     transform: `translateY(${MENU_WAKE_ZONE_OFFSET_Y}px)`,
+                    position: "relative",
                 }}
                 onMouseEnter={handleInteractiveMouseEnter}
             >
@@ -555,6 +492,75 @@ const MenuApp: React.FC = () => {
                         setIsRecordingSetupVisible(true);
                     }}
                 />
+                {showFirstRunTip && (
+                    <div
+                        style={{
+                            position: "absolute",
+                            left: "50%",
+                            bottom: 14,
+                            transform: "translateX(-50%)",
+                            width: "min(268px, calc(100% - 36px))",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            padding: "10px 12px",
+                            borderRadius: 16,
+                            background: "linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.82))",
+                            border: "1px solid rgba(148, 163, 184, 0.18)",
+                            boxShadow: "0 18px 40px rgba(2, 6, 23, 0.28)",
+                            backdropFilter: "blur(16px)",
+                            zIndex: 40,
+                            pointerEvents: "auto",
+                        }}
+                        onMouseEnter={handleInteractiveMouseEnter}
+                    >
+                        <div
+                            style={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: 8,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                background: "rgba(96, 165, 250, 0.12)",
+                                color: "#bfdbfe",
+                                flexShrink: 0,
+                            }}
+                        >
+                            <Lightbulb size={13} />
+                        </div>
+                        <div
+                            style={{
+                                flex: 1,
+                                minWidth: 0,
+                                fontSize: 11,
+                                lineHeight: 1.4,
+                                color: "rgba(226, 232, 240, 0.9)",
+                            }}
+                        >
+                            <strong>Print Screen</strong> opens AgeofScreen. If Windows takes that key, use the thin top trigger.
+                        </div>
+                        <button
+                            type="button"
+                            className="first-run-tip-btn"
+                            onClick={() => void dismissFirstRunTip()}
+                            style={{
+                                border: "1px solid rgba(255, 255, 255, 0.1)",
+                                background: "rgba(255, 255, 255, 0.06)",
+                                color: "#e2e8f0",
+                                borderRadius: 10,
+                                padding: "7px 10px",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                flexShrink: 0,
+                                transition: "background 160ms ease, border-color 160ms ease",
+                            }}
+                        >
+                            Got it
+                        </button>
+                    </div>
+                )}
             </div>
 
             {FEATURES.ENABLE_AGENT_SURFACES && !shieldIsHuman && (

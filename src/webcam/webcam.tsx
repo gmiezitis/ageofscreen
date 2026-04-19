@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
-import { WebcamBorder } from './WebcamBorder';
 import { CameraShape, getCameraShapeStyle, normalizeCameraShape } from '../shared/cameraShapes';
+import { WebcamBorder } from './WebcamBorder';
 
 /**
  * Main Webcam Window component.
@@ -20,16 +20,23 @@ declare global {
     }
 }
 
+const DEFAULT_CAMERA_BORDER_COLOR = '#000000';
+const DEFAULT_CAMERA_BORDER_WIDTH = 4;
+const DEFAULT_CAMERA_GLOW_ENABLED = false;
+
+const normalizeBorderColor = (value: string): string => value.trim().toLowerCase();
+
 const getParamsFromURL = () => {
     const params = new URLSearchParams(window.location.search);
     return {
         shape: normalizeCameraShape(params.get('shape')),
         size: parseInt(params.get('size') || '120', 10),
         name: params.get('name') || '',
-        borderColor: params.get('borderColor') || '#22c55e',
+        borderColor: params.get('borderColor') || DEFAULT_CAMERA_BORDER_COLOR,
         micEnabled: params.get('micEnabled') === 'true',
-        borderWidth: parseInt(params.get('borderWidth') || '4', 10),
+        borderWidth: parseInt(params.get('borderWidth') || String(DEFAULT_CAMERA_BORDER_WIDTH), 10),
         glowEnabled: params.get('glowEnabled') === 'true',
+        audioMeterEnabled: params.get('audioMeterEnabled') === 'true',
     };
 };
 
@@ -41,6 +48,7 @@ const WebcamWindow: React.FC = () => {
     const [borderWidth, setBorderWidth] = useState(params.borderWidth);
     const [glowEnabled, setGlowEnabled] = useState(params.glowEnabled);
     const [micEnabled, setMicEnabled] = useState(params.micEnabled);
+    const [audioMeterEnabled, setAudioMeterEnabled] = useState(params.audioMeterEnabled);
     const videoRef = useRef<HTMLVideoElement>(null);
 
     const [isRecording, setIsRecording] = useState(false);
@@ -217,6 +225,7 @@ const WebcamWindow: React.FC = () => {
             api.on('update-glow-enabled', (g: boolean) => setGlowEnabled(g)),
             api.on('update-presenter-name', (n: string) => setPresenterName(n)),
             api.on('update-mic-status', (m: boolean) => setMicEnabled(m)),
+            api.on('update-audio-meter-visibility', (enabled: boolean) => setAudioMeterEnabled(enabled)),
             api.on('window-visibility', (visible: boolean) => setIsWindowVisible(visible)),
             api.on('drawing-status', (isDrawing: boolean) => setIsDrawingMode(isDrawing)),
             api.on('stop-stream', () => stopWebcamStream()),
@@ -249,6 +258,17 @@ const WebcamWindow: React.FC = () => {
     }, [handleResize, handleResizeEnd]);
 
     const cameraShapeStyle = getCameraShapeStyle(shape);
+    const showLiveBorder = (
+        borderWidth > 0
+        && (
+            glowEnabled !== DEFAULT_CAMERA_GLOW_ENABLED
+            || borderWidth !== DEFAULT_CAMERA_BORDER_WIDTH
+            || normalizeBorderColor(borderColor) !== DEFAULT_CAMERA_BORDER_COLOR
+        )
+    );
+    const showAudioMeter = micEnabled && audioMeterEnabled;
+    const showWebcamOverlay = showLiveBorder || showAudioMeter;
+    const liveFrameInset = showLiveBorder ? Math.max(borderWidth, 2) : 0;
 
     return (
         <div
@@ -272,71 +292,93 @@ const WebcamWindow: React.FC = () => {
                     left: 0,
                     width: '100%',
                     height: '100%',
-                    background: '#000',
+                    background: 'transparent',
                     boxSizing: 'border-box',
                     WebkitAppRegion: 'drag',
                     zIndex: 10,
-                    overflow: 'hidden',
                     WebkitMaskImage: '-webkit-radial-gradient(white, black)',
                     transition: 'border-radius 0.4s ease',
+                    boxShadow: '0 14px 32px rgba(2, 6, 23, 0.26)',
                     ...cameraShapeStyle,
                 } as any}
             >
-                <video
-                    ref={videoRef}
-                    autoPlay
-                    muted
-                    playsInline
+                <div
                     style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
-                        transform: 'scaleX(-1) scale(1.02)',
-                        display: 'block',
-                        pointerEvents: 'none'
-                    }}
-                />
-
-                {presenterName && (
-                    <div
-                        className="no-drag"
+                        position: 'absolute',
+                        top: liveFrameInset,
+                        right: liveFrameInset,
+                        bottom: liveFrameInset,
+                        left: liveFrameInset,
+                        background: '#000',
+                        overflow: 'hidden',
+                        ...cameraShapeStyle,
+                    } as any}
+                >
+                    <video
+                        ref={videoRef}
+                        autoPlay
+                        muted
+                        playsInline
                         style={{
-                            position: 'absolute',
-                            bottom: '15%',
-                            left: '12%',
-                            background: isRecording ? 'rgba(239, 68, 68, 0.45)' : 'rgba(255, 255, 255, 0.08)',
-                            backdropFilter: 'blur(16px) saturate(180%)',
-                            WebkitBackdropFilter: 'blur(16px) saturate(180%)',
-                            border: '1px solid rgba(255, 255, 255, 0.12)',
-                            borderRadius: 'min(12px, 3vw)',
-                            padding: '0.6vw 1.8vw',
-                            color: '#fff',
-                            fontSize: 'min(14px, max(9px, 4.5vw))',
-                            fontWeight: 600,
-                            letterSpacing: '0.01em',
-                            maxWidth: '75%',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            zIndex: 30,
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                            transform: 'scaleX(-1)',
+                            display: 'block',
                             pointerEvents: 'none',
-                            boxShadow: 'none',
-                            transition: 'background 0.3s ease, transform 0.3s ease',
-                            animation: 'presenterFadeIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
                         }}
-                    >
-                        {presenterName}
-                    </div>
-                )}
+                    />
 
-                <WebcamBorder
-                    isRecording={isRecording} progress={recordingProgress} volume={volume}
-                    shape={shape} borderColor={borderColor} borderWidth={borderWidth}
-                    glowEnabled={glowEnabled} micEnabled={micEnabled}
-                />
+                    {presenterName && (
+                        <div
+                            className="no-drag"
+                            style={{
+                                position: 'absolute',
+                                bottom: '15%',
+                                left: '12%',
+                                background: isRecording ? 'rgba(239, 68, 68, 0.45)' : 'rgba(255, 255, 255, 0.08)',
+                                backdropFilter: 'blur(16px) saturate(180%)',
+                                WebkitBackdropFilter: 'blur(16px) saturate(180%)',
+                                border: '1px solid rgba(255, 255, 255, 0.12)',
+                                borderRadius: 'min(12px, 3vw)',
+                                padding: '0.6vw 1.8vw',
+                                color: '#fff',
+                                fontSize: 'min(14px, max(9px, 4.5vw))',
+                                fontWeight: 600,
+                                letterSpacing: '0.01em',
+                                maxWidth: '75%',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                zIndex: 30,
+                                pointerEvents: 'none',
+                                boxShadow: 'none',
+                                transition: 'background 0.3s ease, transform 0.3s ease',
+                                animation: 'presenterFadeIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}
+                        >
+                            {presenterName}
+                        </div>
+                    )}
+                </div>
+
+                {showWebcamOverlay && (
+                    <WebcamBorder
+                        isRecording={isRecording}
+                        progress={recordingProgress}
+                        volume={volume}
+                        shape={shape}
+                        showBorder={showLiveBorder}
+                        borderColor={borderColor}
+                        borderWidth={borderWidth}
+                        glowEnabled={glowEnabled}
+                        micEnabled={micEnabled}
+                        showAudioMeter={showAudioMeter}
+                    />
+                )}
 
                 {/* Bottom Center - Controls Trigger Area (Option Widget Invoker) */}
                 <div

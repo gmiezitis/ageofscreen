@@ -23,7 +23,7 @@ export interface IMenuElectronAPI {
     triggerWindow: () => void;
     triggerFocus: () => void;
     triggerRecord: () => void;
-    toggleCamera: (shape?: string, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean) => void;
+    toggleCamera: (shape?: string, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean, audioMeterEnabled?: boolean) => void;
     showTeleprompter: (text: string, speed: number) => void;
     timerWidget: {
         show: (payload: TimerWidgetPayload) => void;
@@ -93,7 +93,7 @@ const menuAPI: IMenuElectronAPI = {
     triggerWindow: () => ipcRenderer.send("menu-window"),
     triggerFocus: () => ipcRenderer.send("menu-focus"),
     triggerRecord: () => ipcRenderer.send("menu-record"),
-    toggleCamera: (shape?: string, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean) => ipcRenderer.send("menu-camera", shape, size, name, borderColor, borderWidth, glowEnabled),
+    toggleCamera: (shape?: string, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean, audioMeterEnabled?: boolean) => ipcRenderer.send("menu-camera", shape, size, name, borderColor, borderWidth, glowEnabled, audioMeterEnabled),
     showTeleprompter: (text: string, speed: number) => ipcRenderer.send("show-teleprompter", text, speed),
     timerWidget: {
         show: (payload: TimerWidgetPayload) => ipcRenderer.send("timer-widget-show", payload),

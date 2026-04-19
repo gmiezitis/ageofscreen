@@ -13,6 +13,8 @@ interface PreviewPaneProps {
     cameraBorderColor?: string;
     cameraBorderWidth: number;
     cameraGlowEnabled: boolean;
+    cameraAudioMeterEnabled: boolean;
+    micEnabled: boolean;
     isPreviewStarting: boolean;
     presenterNameEnabled: boolean;
     presenterName: string;
@@ -28,6 +30,8 @@ export const PreviewPane: React.FC<PreviewPaneProps> = ({
     cameraBorderColor = '#22c55e',
     cameraBorderWidth,
     cameraGlowEnabled,
+    cameraAudioMeterEnabled,
+    micEnabled,
     isPreviewStarting,
     presenterNameEnabled,
     presenterName,
@@ -35,6 +39,7 @@ export const PreviewPane: React.FC<PreviewPaneProps> = ({
     const normalizedShape = normalizeCameraShape(cameraShape);
     const previewDimensions = getCameraDimensionsForWidth(normalizedShape, cameraSize);
     const previewShapeStyle = getCameraShapeStyle(normalizedShape);
+    const previewMeterBars = [0.28, 0.52, 0.82, 0.48, 0.72, 0.38, 0.6];
 
     return (
         <div className={styles.cameraPreview}>
@@ -46,22 +51,34 @@ export const PreviewPane: React.FC<PreviewPaneProps> = ({
                     style={{
                         width: `${previewDimensions.width}px`,
                         height: `${previewDimensions.height}px`,
+                        boxSizing: 'border-box',
                         border: `${cameraBorderWidth}px solid ${cameraBorderColor}`,
                         boxShadow: cameraGlowEnabled ? `0 0 20px ${cameraBorderColor}88, inset 0 0 10px ${cameraBorderColor}44` : 'none',
                         ...previewShapeStyle,
                     }}
-                >
-                    <video
-                        ref={videoRef as any}
-                        className={styles.previewVideo}
-                        autoPlay
-                        muted
-                        playsInline
-                    />
-                    {presenterNameEnabled && presenterName && (
-                        <div className={styles.presenterTag}>
-                            {presenterName}
-                        </div>
+                    >
+                        <video
+                            ref={videoRef as any}
+                            className={styles.previewVideo}
+                            autoPlay
+                            muted
+                            playsInline
+                        />
+                        {cameraAudioMeterEnabled && micEnabled && (
+                            <div className={styles.previewAudioMeter} aria-hidden="true">
+                                {previewMeterBars.map((barHeight, index) => (
+                                    <span
+                                        key={index}
+                                        className={styles.previewAudioBar}
+                                        style={{ height: `${Math.round(barHeight * 14) + 4}px` }}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                        {presenterNameEnabled && presenterName && (
+                            <div className={styles.presenterTag}>
+                                {presenterName}
+                            </div>
                     )}
                 </div>
             ) : cameraEnabled && isPreviewStarting ? (

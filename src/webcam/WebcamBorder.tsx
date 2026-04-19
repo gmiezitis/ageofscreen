@@ -6,10 +6,12 @@ interface WebcamBorderProps {
     progress: number; // 0 to 1
     volume?: number; // 0 to 1
     shape: CameraShape;
+    showBorder?: boolean;
     borderColor?: string; // Hex, default #000000 (black)
     borderWidth?: number;
     glowEnabled?: boolean;
     micEnabled?: boolean;
+    showAudioMeter?: boolean;
 }
 
 const hexToRgba = (hex: string, alpha: number): string => {
@@ -25,10 +27,12 @@ export const WebcamBorder: React.FC<WebcamBorderProps> = ({
     progress,
     volume,
     shape,
+    showBorder = true,
     borderColor = '#000000',
     borderWidth = 4,
     glowEnabled = false,
-    micEnabled = false
+    micEnabled = false,
+    showAudioMeter = false,
 }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     // Use state to force re-render on resize
@@ -68,7 +72,7 @@ export const WebcamBorder: React.FC<WebcamBorderProps> = ({
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
 
-        const padding = 6;
+        const padding = Math.max(1, Math.ceil(borderWidth / 2));
         const drawDimensions = {
             width: width - padding * 2,
             height: height - padding * 2,
@@ -88,78 +92,70 @@ export const WebcamBorder: React.FC<WebcamBorderProps> = ({
             );
         };
 
-        // Draw the full colored border
-        drawPath(ctx);
-        
-        // Modulate border alpha and glow based on volume
         const volMod = volume ? Math.min(volume * 2.5, 1) : 0;
-        const baseAlpha = 0.85;
-        const dynamicAlpha = Math.min(baseAlpha + (volMod * 0.15), 1);
-        
-        ctx.strokeStyle = hexToRgba(borderColor, dynamicAlpha);
 
-        // Dynamic Glow based on volume and explicit glow setting
-        // When quiet, subtle blur. When loud, intense pulse.
-        if (glowEnabled) {
-            ctx.shadowBlur = 15 + (volMod * 15);
-            ctx.shadowColor = borderColor;
-        } else {
+        if (showBorder) {
+            drawPath(ctx);
+
+            const baseAlpha = 0.85;
+            const dynamicAlpha = Math.min(baseAlpha + (volMod * 0.15), 1);
+
+            ctx.strokeStyle = hexToRgba(borderColor, dynamicAlpha);
+
+            if (glowEnabled) {
+                ctx.shadowBlur = 15 + (volMod * 15);
+                ctx.shadowColor = borderColor;
+            } else {
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = 'transparent';
+            }
+
+            ctx.stroke();
             ctx.shadowBlur = 0;
-            ctx.shadowColor = 'transparent';
+
+            if (volMod > 0.5) {
+                ctx.beginPath();
+                const centerX = width / 2;
+                ctx.arc(centerX, padding, 3, 0, Math.PI * 2);
+                ctx.fillStyle = borderColor;
+                ctx.fill();
+            }
         }
 
-        ctx.stroke();
+        if (micEnabled && showAudioMeter) {
+            const meterBarCount = 7;
+            const meterBarWidth = Math.max(3, Math.round(width * 0.005));
+            const meterGap = Math.max(3, Math.round(width * 0.004));
+            const meterInnerWidth = meterBarCount * meterBarWidth + (meterBarCount - 1) * meterGap;
+            const meterX = Math.round((width - meterInnerWidth) / 2);
+            const normalizedVolume = Math.max(0, Math.min(volume ?? 0, 1));
+            const bottomInset = Math.max(6, Math.round(height * 0.022));
+            const barMinHeight = Math.max(3, Math.round(height * 0.018));
+            const barMaxHeight = Math.max(barMinHeight + 3, Math.round(height * 0.05));
+            const barBaseY = height - padding - bottomInset;
+            const centerIndex = (meterBarCount - 1) / 2;
 
-        // Reset shadow
-        ctx.shadowBlur = 0;
+            for (let i = 0; i < meterBarCount; i += 1) {
+                const distance = Math.abs(i - centerIndex);
+                const shapeBias = Math.max(0.52, 1 - distance * 0.14);
+                const animatedHeight = barMinHeight + Math.round((barMaxHeight - barMinHeight) * normalizedVolume * shapeBias);
+                const barHeight = Math.min(barMaxHeight, animatedHeight);
+                const barX = meterX + i * (meterBarWidth + meterGap);
+                const barY = barBaseY - barHeight;
 
-        // Optional: Small reactive dot on the border if loud
-        if (volMod > 0.5) {
-             ctx.beginPath();
-             const centerX = width / 2;
-             // Draw a tiny highlight dot at the top center
-             ctx.arc(centerX, padding, 3, 0, Math.PI * 2);
-             ctx.fillStyle = borderColor;
-             ctx.fill();
-        }
-
-        // --- NEW: SIDE LEVEL METER (Simple Visible Approach) ---
-        if (micEnabled) {
-            const meterWidth = 8;
-            const meterMaxHeight = height * 0.35;
-            const meterX = width - padding - 2;
-            const meterY = (height - meterMaxHeight) / 2;
-
-            // 1. Meter Channel (Background)
-            ctx.beginPath();
-            ctx.roundRect(meterX - meterWidth, meterY, meterWidth, meterMaxHeight, 4);
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-
-            // 2. Dynamic Level (Fill)
-            const levelHeight = Math.max(4, meterMaxHeight * (volume ?? 0));
-            ctx.beginPath();
-            ctx.roundRect(meterX - meterWidth, meterY + meterMaxHeight - levelHeight, meterWidth, levelHeight, 4);
-            
-            // Bright gradient for visibility
-            const grad = ctx.createLinearGradient(0, meterY + meterMaxHeight, 0, meterY);
-            grad.addColorStop(0, borderColor);
-            grad.addColorStop(1, '#fff');
-            
-            ctx.fillStyle = grad;
-            ctx.fill();
-            
-            // Optional: White highlight at the very top of the bar
-            ctx.shadowBlur = 8;
-            ctx.shadowColor = '#fff';
-            ctx.stroke();
+                ctx.beginPath();
+                ctx.roundRect(barX, barY, meterBarWidth, barHeight, meterBarWidth / 2);
+                ctx.fillStyle = i <= Math.round(normalizedVolume * (meterBarCount - 1)) + 1
+                    ? 'rgba(255, 255, 255, 0.84)'
+                    : 'rgba(255, 255, 255, 0.18)';
+                ctx.shadowBlur = 4;
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.08)';
+                ctx.fill();
+            }
             ctx.shadowBlur = 0;
         }
 
-    }, [isRecording, progress, volume, shape, borderColor, dimensions, micEnabled]);
+    }, [isRecording, progress, volume, shape, showBorder, borderColor, borderWidth, glowEnabled, dimensions, micEnabled, showAudioMeter]);
 
     return (
         <canvas

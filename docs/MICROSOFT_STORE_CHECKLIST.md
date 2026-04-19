@@ -5,6 +5,7 @@ Use this with `docs/MICROSOFT_STORE_DEPLOYMENT_PLAN.md` for sequencing and go/no
 ## Package Setup
 
 - Set `WINDOWS_STORE_IDENTITY_NAME`
+- Set `WINDOWS_STORE_RESERVED_NAME` to the exact reserved Partner Center app name
 - Set `WINDOWS_PUBLISHER`
 - Set signing secrets: `WINDOWS_CERT_FILE` and `WINDOWS_CERT_PASSWORD`
 - Build `MSIX` for `x64` and `arm64`
@@ -12,6 +13,8 @@ Use this with `docs/MICROSOFT_STORE_DEPLOYMENT_PLAN.md` for sequencing and go/no
   - `out/make/msix/x64/AgeofScreen.msix`
   - `out/make/msix/arm64/AgeofScreen.msix`
 - Do not switch to a Visual Studio Publish workflow unless Partner Center rejects the Forge-generated `MSIX`
+- In Partner Center device-family availability, keep only `Windows.Desktop` checked unless you also ship packages for the other selected families
+- Do not check `Xbox` unless you are intentionally targeting it and have a compatible neutral or `x64` package
 
 ## Local Validation
 

@@ -439,29 +439,28 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                             <span>{isAutoPolishing ? 'Polishing...' : 'Auto-Polish'}</span>
                             {(!canUseAutoPolish || importedVideoLacksMetadata) && <Lock size={10} />}
                         </button>
-                        {!canUseAutoPolish && canPurchasePro && (
-                            <button
-                                type="button"
-                                onClick={() => void purchasePro('auto_polish')}
-                                disabled={purchasePending}
+                        {!canUseAutoPolish && (
+                            <div
                                 style={{
-                                    border: '1px solid rgba(250,204,21,0.22)',
-                                    background: 'rgba(250,204,21,0.12)',
+                                    border: '1px solid rgba(250,204,21,0.18)',
+                                    background: 'rgba(250,204,21,0.08)',
                                     color: '#fde68a',
-                                    padding: '6px 10px',
+                                    padding: '6px 9px',
                                     borderRadius: '999px',
                                     fontSize: '10px',
                                     fontWeight: 700,
-                                    cursor: purchasePending ? 'wait' : 'pointer',
+                                    letterSpacing: '0.06em',
+                                    textTransform: 'uppercase',
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '4px',
                                     WebkitAppRegion: 'no-drag',
+                                    opacity: 0.9,
                                 } as any}
                             >
-                                <Crown size={11} />
-                                Upgrade
-                            </button>
+                                <Crown size={10} />
+                                Pro
+                            </div>
                         )}
                     </div>
                 )}
@@ -491,29 +490,28 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                         <Mic2 size={18} />
                         {studioVoiceButtonDisabled && <Lock size={10} />}
                     </button>
-                    {!canUseStudioVoice && canPurchasePro && (
-                        <button
-                            type="button"
-                            onClick={() => void purchasePro('studio_voice')}
-                            disabled={purchasePending}
+                    {!canUseStudioVoice && (
+                        <div
                             style={{
-                                border: '1px solid rgba(250,204,21,0.22)',
-                                background: 'rgba(250,204,21,0.12)',
+                                border: '1px solid rgba(250,204,21,0.18)',
+                                background: 'rgba(250,204,21,0.08)',
                                 color: '#fde68a',
-                                padding: '6px 10px',
+                                padding: '6px 9px',
                                 borderRadius: '999px',
                                 fontSize: '10px',
                                 fontWeight: 700,
-                                cursor: purchasePending ? 'wait' : 'pointer',
+                                letterSpacing: '0.06em',
+                                textTransform: 'uppercase',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: '4px',
                                 WebkitAppRegion: 'no-drag',
+                                opacity: 0.9,
                             } as any}
                         >
-                            <Crown size={11} />
-                            Upgrade
-                        </button>
+                            <Crown size={10} />
+                            Pro
+                        </div>
                     )}
                 </div>
 
@@ -637,43 +635,15 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                                             background: 'rgba(250,204,21,0.08)',
                                             border: '1px solid rgba(250,204,21,0.18)',
                                             display: 'grid',
-                                            gap: '8px',
+                                            gap: '6px',
                                         }}
                                     >
                                         <div style={{ fontSize: '10px', color: '#fde68a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                                             Free export
                                         </div>
                                         <div style={{ fontSize: '11px', color: '#e2e8f0', lineHeight: 1.45 }}>
-                                            Exports include a ageofscreen watermark. Upgrade to remove it.
+                                            Exports include a subtle ageofscreen watermark.
                                         </div>
-                                        {canPurchasePro ? (
-                                            <button
-                                                type="button"
-                                                onClick={() => void purchasePro('export_watermark')}
-                                                disabled={purchasePending}
-                                                style={{
-                                                    border: '1px solid rgba(250,204,21,0.22)',
-                                                    background: 'rgba(250,204,21,0.14)',
-                                                    color: '#fde68a',
-                                                    padding: '8px 10px',
-                                                    borderRadius: '999px',
-                                                    fontSize: '11px',
-                                                    fontWeight: 700,
-                                                    cursor: purchasePending ? 'wait' : 'pointer',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    gap: '6px',
-                                                }}
-                                            >
-                                                <Crown size={12} />
-                                                Remove Watermark
-                                            </button>
-                                        ) : (
-                                            <div style={{ fontSize: '11px', color: '#cbd5e1', lineHeight: 1.45 }}>
-                                                Pro unlock is not available in this build yet.
-                                            </div>
-                                        )}
                                     </div>
                                     <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '4px 8px 8px 8px' }} />
                                 </>

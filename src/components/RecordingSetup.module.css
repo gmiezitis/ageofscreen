@@ -181,6 +181,7 @@
 .previewShape {
     overflow: hidden;
     background: rgba(6, 10, 18, 0.85);
+    box-sizing: border-box;
     transition:
         width 260ms var(--recording-ease),
         height 260ms var(--recording-ease),
@@ -199,6 +200,26 @@
     height: 100%;
     object-fit: cover;
     transform: scaleX(-1);
+}
+
+.previewAudioMeter {
+    position: absolute;
+    left: 50%;
+    bottom: 5px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: end;
+    gap: 3px;
+    z-index: 4;
+    pointer-events: none;
+}
+
+.previewAudioBar {
+    width: 3px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.84);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.08);
+    opacity: 0.88;
 }
 
 .presenterTag {

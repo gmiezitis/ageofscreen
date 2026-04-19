@@ -4,6 +4,7 @@
  * No AI, no cloud - runs entirely with FFmpeg.
  */
 
+import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
@@ -14,6 +15,26 @@ const getFfprobePath = (ffmpegPath: string): string | null => {
   const ext = path.extname(ffmpegPath);
   const p = path.join(dir, 'ffprobe' + ext);
   return fs.existsSync(p) ? p : null;
+};
+
+const EXPORT_WATERMARK_FILE = 'export-watermark.png';
+const resolveBrandingResourcePath = (fileName: string): string | null => {
+  const candidates = app.isPackaged
+    ? [
+      path.join(process.resourcesPath, 'branding', fileName),
+    ]
+    : [
+      path.resolve(process.cwd(), 'resources', 'branding', fileName),
+      path.resolve(app.getAppPath(), 'resources', 'branding', fileName),
+    ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 };
 
 /** Get video duration in seconds using ffprobe. Returns null if unavailable. */
@@ -339,10 +360,12 @@ async function runPipeline(
   inputPath: string,
   outputPath: string,
   filterComplex: string,
-  mapArgs: string[]
+  mapArgs: string[],
+  extraInputArgs: string[] = [],
 ): Promise<{ success: boolean; error?: string }> {
   const args = [
     '-y', '-i', inputPath,
+    ...extraInputArgs,
     '-filter_complex', filterComplex,
     ...mapArgs,
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
@@ -400,10 +423,12 @@ export async function runAutoPolish(
   // setsar=1/fps=60 ensures consistent playback across players
   let vFilter = `[0:v]fps=60,scale=trunc(iw*${scaleFactor}/2)*2:trunc(ih*${scaleFactor}/2)*2,pad=trunc(iw/${scaleFactor}/2)*2:trunc(ih/${scaleFactor}/2)*2:(ow-iw)/2:(oh-ih)/2:color='${ffBgColor}',setsar=1,setpts=PTS-STARTPTS[vid]`;
   let videoMap = '[vid]';
+  const watermarkLogoPath = addWatermark ? resolveBrandingResourcePath(EXPORT_WATERMARK_FILE) : null;
+  const watermarkInputArgs = watermarkLogoPath ? ['-loop', '1', '-i', watermarkLogoPath] : [];
 
-  if (addWatermark) {
-    const drawtext = "drawtext=text='Made with ageofscreen':fontsize=min(h\\,w)/28:fontcolor=white@0.4:x=w-text_w-24:y=h-text_h-20";
-    vFilter += `;[vid]${drawtext}[vid2]`;
+  if (addWatermark && watermarkLogoPath) {
+    const logoWidthExpr = 'min(iw\\,ih)*0.2';
+    vFilter += `;[1:v]format=rgba,scale=${logoWidthExpr}:-1:flags=lanczos,colorchannelmixer=aa=0.36[wm];[vid][wm]overlay=x=W-w-14:y=H-h-14:format=auto[vid2]`;
     videoMap = '[vid2]';
   }
 
@@ -414,7 +439,7 @@ export async function runAutoPolish(
     const aFilter = `[0:a]silenceremove=start_periods=1:start_duration=0.1:start_threshold=-35dB:stop_periods=1:stop_duration=0.1:stop_threshold=-35dB,aresample=44100,aformat=sample_fmts=flt,asetpts=PTS-STARTPTS,loudnorm=I=-16:TP=-1.5:LRA=11[aud]`;
     const fullFilter = `${aFilter};${vFilter}`;
     const m = perfMark('autoPolish:fullPipeline');
-    fullResult = await runPipeline(ffmpegPath, inputPath, outputPath, fullFilter, ['-map', videoMap, '-map', '[aud]']);
+    fullResult = await runPipeline(ffmpegPath, inputPath, outputPath, fullFilter, ['-map', videoMap, '-map', '[aud]'], watermarkInputArgs);
     m.end();
   }
 
@@ -426,7 +451,7 @@ export async function runAutoPolish(
 
   // Video-only (no audio, or full pipeline failed)
   const mVideo = perfMark('autoPolish:videoOnly');
-  const videoResult = await runPipeline(ffmpegPath, inputPath, outputPath, vFilter, ['-map', videoMap, '-an']);
+  const videoResult = await runPipeline(ffmpegPath, inputPath, outputPath, vFilter, ['-map', videoMap, '-an'], watermarkInputArgs);
   mVideo.end();
 
   if (videoResult.success) {

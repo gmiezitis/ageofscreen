@@ -7,6 +7,7 @@ import { UnsavedChangesDialog } from "./components/UnsavedChangesDialog";
 import { useAnnotationManager } from "./services/annotationManager";
 import { useRecordingManager } from "./components/RecordingManager";
 import { CanvasRenderer } from "./services/canvasRenderer";
+import { buildWatermarkedCanvas } from "./services/exportWatermark";
 import { penSizeValues, textSizeValues, highlighterSizeValues } from "./styles";
 import type { Tool, PenSize, BlurMode, AnnotationObject, ImageAnnotation } from "./types";
 import type { OnboardingState } from "./shared/licensing";
@@ -650,7 +651,16 @@ const App: React.FC = () => {
 
     const handleSave = useCallback(async (options?: { closeAfterSave?: boolean }) => {
         if (!canvasRef.current) return false;
-        const dataUrl = canvasRef.current.toDataURL("image/png");
+        let exportCanvas = canvasRef.current;
+        try {
+            const entitlementState = await (window as any).electronAPI.license.getState();
+            if (entitlementState?.watermarkEnabled) {
+                exportCanvas = await buildWatermarkedCanvas(canvasRef.current);
+            }
+        } catch (error) {
+            console.warn("[Editor] Failed to resolve entitlement state before saving screenshot:", error);
+        }
+        const dataUrl = exportCanvas.toDataURL("image/png");
         const result = await (window as any).electronAPI.saveImageAs(dataUrl);
         if (result?.success) {
             lastSavedSignatureRef.current = currentEditorSignature;

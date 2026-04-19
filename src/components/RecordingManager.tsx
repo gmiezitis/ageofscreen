@@ -197,6 +197,11 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
   }, []);
 
   const handleStartRecording = useCallback(async (smartFeatures?: Partial<RecordingConfig>) => {
+    if (isRecordingRef.current) {
+      onMessage('A recording is already in progress. Stop it before starting another one.');
+      return;
+    }
+
     onMessage('Preparing recording...');
     stopReasonRef.current = null;
     if (typeof smartFeatures?.editAfterRecording === 'boolean') {
@@ -566,7 +571,6 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
 
   return { isRecording, handleStartRecording, handleStopRecording };
 };
-
 
 
 
