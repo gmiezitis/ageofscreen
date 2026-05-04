@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { OverlayImage, Segment, TextOverlay, TransitionType } from './types';
+import { ImageClip, OverlayImage, Segment, TextOverlay, TransitionType } from './types';
 import { DEFAULT_TEXT_OVERLAY_FONT_STACK } from './textOverlayRendering';
 import { useEditorHistory } from './useEditorHistory';
 import { useEditorExport } from './useEditorExport';
@@ -21,6 +21,7 @@ import {
 import {
     closeVisualGapsInTimelineScene,
     mapDisplayTimeAfterClosingVisualGaps,
+    normalizeVisualTimelineScene,
     removeImageClipFromTimelineScene,
     resolveClipTransitionType,
     shiftTimelineSceneAfter,
@@ -702,11 +703,37 @@ export const useVideoEditorHandlers = (state: any) => {
         const pinnedTarget = getSeekTargetFromDisplayTime(displayTimeRef.current)
             ?? (video && Number.isFinite(video.currentTime) ? getSeekTargetFromVideoTime(video.currentTime) : null);
         if (!pinnedTarget) return;
-        if (pinnedTarget.kind === 'image') return;
+        if (pinnedTarget.kind === 'image') {
+            const imageClip = imageClips.find((clip: ImageClip) => clip.id === pinnedTarget.imageClipId);
+            if (!imageClip) return;
+            const splitOffset = displayTimeRef.current - imageClip.startTime;
+            if (splitOffset < 0.01 || imageClip.duration - splitOffset < 0.01) return;
+            const index = imageClips.findIndex((clip: ImageClip) => clip.id === imageClip.id);
+            if (index < 0) return;
 
-        const preciseVideoTime = video && !video.paused && !video.ended && Number.isFinite(video.currentTime)
-            ? video.currentTime
-            : pinnedTarget.videoTime;
+            saveHistory();
+            const idA = `image-clip-${Date.now()}-a`;
+            const idB = `image-clip-${Date.now()}-b`;
+            const nextImageClips = [...imageClips];
+            nextImageClips.splice(
+                index,
+                1,
+                { ...imageClip, id: idA, duration: splitOffset },
+                { ...imageClip, id: idB, startTime: displayTimeRef.current, duration: imageClip.duration - splitOffset },
+            );
+            setImageClips(nextImageClips);
+            state.setSelectedImageClipId(idB);
+            rememberSeekTarget({
+                kind: 'image',
+                imageClipId: idB,
+                displayTime: displayTimeRef.current,
+                videoTime: pinnedTarget.videoTime,
+            }, displayTimeRef.current);
+            saveHistory({ imageClips: nextImageClips });
+            return;
+        }
+
+        const preciseVideoTime = pinnedTarget.videoTime;
         const seg = segments.find((s: Segment) => s.id === pinnedTarget.segmentId)
             ?? segments.find((s: Segment) => preciseVideoTime >= s.startTime && preciseVideoTime <= s.endTime);
         if (!seg) return;
@@ -727,7 +754,7 @@ export const useVideoEditorHandlers = (state: any) => {
             videoTime: preciseVideoTime,
         }, seg.timelineStart + firstDur);
         saveHistory(newSegs);
-    }, [segments, videoRef, getSeekTargetFromDisplayTime, getSeekTargetFromVideoTime, saveHistory, setSegments, setSelectedSegmentId, rememberSeekTarget]);
+    }, [segments, imageClips, videoRef, getSeekTargetFromDisplayTime, getSeekTargetFromVideoTime, saveHistory, setSegments, setSelectedSegmentId, setImageClips, state, rememberSeekTarget]);
 
     const deleteSelectedSegment = useCallback(() => {
         saveHistory();
@@ -1057,7 +1084,7 @@ export const useVideoEditorHandlers = (state: any) => {
 
     const finalizeMainTrackResize = useCallback(() => {
         const currentScene = getTimelineSceneCollections();
-        const nextScene = closeVisualGapsInTimelineScene(currentScene);
+        const nextScene = normalizeVisualTimelineScene(currentScene);
         const didChange = JSON.stringify(currentScene) !== JSON.stringify(nextScene);
         const nextDisplayTime = didChange
             ? mapDisplayTimeAfterClosingVisualGaps(currentScene, displayTimeRef.current)

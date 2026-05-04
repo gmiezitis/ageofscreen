@@ -553,6 +553,115 @@ export const reorderVisualTimelineSceneItems = (
     };
 };
 
+export const normalizeVisualTimelineScene = (
+    collections: TimelineSceneCollections,
+): TimelineSceneCollections => {
+    const visualItems = buildVisualTimelineSceneItems(collections.segments, collections.imageClips);
+    if (visualItems.length === 0) {
+        return {
+            segments: sortSegmentsByTimeline(collections.segments),
+            imageClips: sortItemsByStartTime(collections.imageClips),
+            audioSegments: sortItemsByStartTime(collections.audioSegments),
+            smartEffects: sortItemsByStartTime(collections.smartEffects),
+            overlayImages: sortItemsByStartTime(collections.overlayImages),
+            textOverlays: sortItemsByStartTime(collections.textOverlays),
+            annotationOverlays: sortAnnotationsByStartTime(collections.annotationOverlays),
+        };
+    }
+
+    const nextPlacementById = new Map<string, { startTime: number; endTime: number }>();
+    const nextSegments: Segment[] = [];
+    const nextImageClips: ImageClip[] = [];
+    let cursor = 0;
+
+    visualItems.forEach((item) => {
+        const duration = Math.max(0, item.duration);
+        const startTime = cursor;
+        const endTime = cursor + duration;
+        nextPlacementById.set(item.id, { startTime, endTime });
+
+        if (item.kind === 'video') {
+            nextSegments.push({
+                ...item.segment,
+                timelineStart: startTime,
+            });
+        } else {
+            nextImageClips.push({
+                ...item.clip,
+                startTime,
+            });
+        }
+
+        cursor = endTime;
+    });
+
+    const mapDisplayTime = (displayTime: number) => {
+        const containingItem = visualItems.find((item) => (
+            displayTime >= item.startTime - TIMELINE_EPSILON
+            && displayTime <= item.endTime + TIMELINE_EPSILON
+        ));
+        if (containingItem) {
+            const placement = nextPlacementById.get(containingItem.id);
+            if (!placement) return Math.max(0, displayTime);
+            const relativeOffset = Math.max(0, Math.min(
+                containingItem.duration,
+                displayTime - containingItem.startTime,
+            ));
+            return Math.max(0, placement.startTime + relativeOffset);
+        }
+
+        const nextOldItem = visualItems.find((item) => item.startTime > displayTime + TIMELINE_EPSILON);
+        if (nextOldItem) {
+            const placement = nextPlacementById.get(nextOldItem.id);
+            if (!placement) return Math.max(0, displayTime);
+            return Math.max(0, placement.startTime + (displayTime - nextOldItem.startTime));
+        }
+
+        const previousOldItem = [...visualItems]
+            .reverse()
+            .find((item) => item.endTime < displayTime - TIMELINE_EPSILON);
+        if (previousOldItem) {
+            const placement = nextPlacementById.get(previousOldItem.id);
+            if (!placement) return Math.max(0, displayTime);
+            return Math.max(0, placement.endTime + (displayTime - previousOldItem.endTime));
+        }
+
+        return Math.max(0, displayTime);
+    };
+
+    return {
+        segments: sortSegmentsByTimeline(nextSegments),
+        imageClips: sortItemsByStartTime(nextImageClips),
+        audioSegments: sortItemsByStartTime(
+            collections.audioSegments.map((segment) => ({
+                ...segment,
+                startTime: mapDisplayTime(segment.startTime),
+            })),
+        ),
+        smartEffects: sortItemsByStartTime(
+            collections.smartEffects.map((effect) => ({
+                ...effect,
+                startTime: mapDisplayTime(effect.startTime),
+            })),
+        ),
+        overlayImages: sortItemsByStartTime(
+            collections.overlayImages.map((overlay) => ({
+                ...overlay,
+                startTime: mapDisplayTime(overlay.startTime),
+            })),
+        ),
+        textOverlays: sortItemsByStartTime(
+            collections.textOverlays.map((overlay) => ({
+                ...overlay,
+                startTime: mapDisplayTime(overlay.startTime),
+            })),
+        ),
+        annotationOverlays: sortAnnotationsByStartTime(
+            remapAnnotationOverlayTimes(collections.annotationOverlays, mapDisplayTime),
+        ),
+    };
+};
+
 const buildTimelineGaps = (visualItems: VisualSceneItem[]): TimelineGap[] => {
     if (visualItems.length === 0) return [];
 

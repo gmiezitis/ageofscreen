@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { shiftTimelineSceneAfter } from './timelineScene';
 
 /**
  * Handles mouse-driven drag & resize operations on the timeline:
@@ -92,16 +93,55 @@ export function useDragResize(state: any, handlers: any) {
                 const pxPerSec = trackWidth / (totalDuration > 0 ? totalDuration : 1);
                 const deltaPx = e.clientX - resizing.startX;
                 const deltaSec = deltaPx / pxPerSec;
+                const applyMainTrackScene = (nextScene: any) => {
+                    state.setSegments(nextScene.segments);
+                    state.setImageClips(nextScene.imageClips);
+                    state.setAudioSegments(nextScene.audioSegments);
+                    state.setSmartEffects(nextScene.smartEffects);
+                    state.setOverlayImages(nextScene.overlayImages);
+                    state.setTextOverlays(nextScene.textOverlays);
+                    state.setAnnotationOverlays(nextScene.annotationOverlays);
+                };
+                const initialScene = resizing.initialScene;
 
                 if (resizing.type === 'video') {
-                    state.setSegments((prev: any) => prev.map((s: any) => {
-                        if (s.id !== resizing.id) return s;
-                        if (resizing.edge === 'end') {
-                            return { ...s, endTime: Math.max(s.startTime + 0.5, resizing.initialDuration + resizing.initialTime + deltaSec) };
-                        } else {
-                            return { ...s, startTime: Math.max(0, Math.min(s.endTime - 0.5, resizing.initialTime + deltaSec)) };
-                        }
-                    }));
+                    const initialSegment = initialScene?.segments?.find((s: any) => s.id === resizing.id);
+                    if (initialSegment) {
+                        const minDuration = 0.08;
+                        const originalDuration = Math.max(minDuration, initialSegment.endTime - initialSegment.startTime);
+                        const originalTimelineEnd = initialSegment.timelineStart + originalDuration;
+                        const nextSegments = initialScene.segments.map((segment: any) => {
+                            if (segment.id !== resizing.id) return segment;
+                            if (resizing.edge === 'end') {
+                                return {
+                                    ...segment,
+                                    endTime: Math.max(segment.startTime + minDuration, initialSegment.endTime + deltaSec),
+                                };
+                            }
+
+                            return {
+                                ...segment,
+                                startTime: Math.max(0, Math.min(segment.endTime - minDuration, initialSegment.startTime + deltaSec)),
+                            };
+                        });
+                        const resizedSegment = nextSegments.find((segment: any) => segment.id === resizing.id);
+                        const nextDuration = Math.max(minDuration, resizedSegment.endTime - resizedSegment.startTime);
+                        const durationDelta = nextDuration - originalDuration;
+                        const nextScene = shiftTimelineSceneAfter(
+                            { ...initialScene, segments: nextSegments },
+                            originalTimelineEnd,
+                            durationDelta,
+                        );
+                        applyMainTrackScene(nextScene);
+                    } else {
+                        state.setSegments((prev: any) => prev.map((s: any) => {
+                            if (s.id !== resizing.id) return s;
+                            if (resizing.edge === 'end') {
+                                return { ...s, endTime: Math.max(s.startTime + 0.08, resizing.initialDuration + resizing.initialTime + deltaSec) };
+                            }
+                            return { ...s, startTime: Math.max(0, Math.min(s.endTime - 0.08, resizing.initialTime + deltaSec)) };
+                        }));
+                    }
                 } else if (resizing.type === 'audio') {
                     state.setAudioSegments((prev: any) => prev.map((s: any) => {
                         if (s.id !== resizing.id) return s;
@@ -140,18 +180,53 @@ export function useDragResize(state: any, handlers: any) {
                         }
                     }));
                 } else if (resizing.type === 'imageClip') {
-                    state.setImageClips((prev: any) => prev.map((s: any) => {
-                        if (s.id !== resizing.id) return s;
-                        if (resizing.edge === 'end') {
-                            return { ...s, duration: Math.max(0.2, Math.min(totalDuration - s.startTime, resizing.initialDuration + deltaSec)) };
-                        } else {
-                            const maxDelta = resizing.initialDuration - 0.2;
+                    const initialClip = initialScene?.imageClips?.find((clip: any) => clip.id === resizing.id);
+                    if (initialClip) {
+                        const minDuration = 0.08;
+                        const originalDuration = Math.max(minDuration, initialClip.duration);
+                        const originalEnd = initialClip.startTime + originalDuration;
+                        const nextImageClips = initialScene.imageClips.map((clip: any) => {
+                            if (clip.id !== resizing.id) return clip;
+                            if (resizing.edge === 'end') {
+                                return {
+                                    ...clip,
+                                    duration: Math.max(minDuration, originalDuration + deltaSec),
+                                };
+                            }
+
+                            const maxDelta = originalDuration - minDuration;
+                            const actualDelta = Math.max(-initialClip.startTime, Math.min(maxDelta, deltaSec));
+                            return {
+                                ...clip,
+                                startTime: Math.max(0, initialClip.startTime + actualDelta),
+                                duration: Math.max(minDuration, originalDuration - actualDelta),
+                            };
+                        });
+                        const resizedClip = nextImageClips.find((clip: any) => clip.id === resizing.id);
+                        const nextEnd = resizedClip.startTime + Math.max(minDuration, resizedClip.duration);
+                        const durationDelta = resizing.edge === 'end'
+                            ? nextEnd - originalEnd
+                            : 0;
+                        const nextScene = shiftTimelineSceneAfter(
+                            { ...initialScene, imageClips: nextImageClips },
+                            originalEnd,
+                            durationDelta,
+                            { excludeImageClipId: resizing.id },
+                        );
+                        applyMainTrackScene(nextScene);
+                    } else {
+                        state.setImageClips((prev: any) => prev.map((s: any) => {
+                            if (s.id !== resizing.id) return s;
+                            if (resizing.edge === 'end') {
+                                return { ...s, duration: Math.max(0.08, resizing.initialDuration + deltaSec) };
+                            }
+                            const maxDelta = resizing.initialDuration - 0.08;
                             const actualDelta = Math.min(maxDelta, deltaSec);
                             const newStart = Math.max(0, resizing.initialTime + actualDelta);
                             const newDuration = resizing.initialDuration - actualDelta;
-                            return { ...s, startTime: newStart, duration: Math.max(0.2, newDuration) };
-                        }
-                    }));
+                            return { ...s, startTime: newStart, duration: Math.max(0.08, newDuration) };
+                        }));
+                    }
                 } else if (resizing.type === 'text') {
                     state.setTextOverlays((prev: any) => prev.map((s: any) => {
                         if (s.id !== resizing.id) return s;

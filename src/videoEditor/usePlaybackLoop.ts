@@ -219,7 +219,13 @@ export function usePlaybackLoop(state: any, handlers: any) {
 
                 if (nextDisplayTime >= clipEnd - 0.01) {
                     const timelineItems = buildTimelinePlaybackItems(segmentsRef.current, imageClipsRef.current);
-                    const nextItem = timelineItems.find((item) => item.startTime >= clipEnd - 0.001 && item.id !== currentImageClip.id);
+                    const currentItemIndex = timelineItems.findIndex((item) => item.id === currentImageClip.id);
+                    const nextItem = currentItemIndex >= 0
+                        ? timelineItems[currentItemIndex + 1] ?? null
+                        : timelineItems.find((item) => (
+                            item.id !== currentImageClip.id
+                            && item.endTime > clipEnd + 0.001
+                        )) ?? null;
                     imageClipPlaybackRef.current = null;
 
                     if (!nextItem) {

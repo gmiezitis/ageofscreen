@@ -328,7 +328,25 @@ export function useTimelineDrag(
         e.preventDefault();
         e.stopPropagation();
         saveHistory();
-        state.setResizing({ id, type, edge, startX: e.clientX, initialTime, initialDuration });
+        state.setResizing({
+            id,
+            type,
+            edge,
+            startX: e.clientX,
+            initialTime,
+            initialDuration,
+            initialScene: type === 'video' || type === 'imageClip'
+                ? {
+                    segments,
+                    imageClips,
+                    audioSegments,
+                    smartEffects,
+                    overlayImages,
+                    textOverlays,
+                    annotationOverlays,
+                }
+                : undefined,
+        });
     };
 
     const handleDragStart = (e: React.DragEvent, id: string) => {
