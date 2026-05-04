@@ -18,11 +18,14 @@ export type Tool =
   | "text-dragging"
   | "blur-dragging"
   | "notes"
-  | "symbol";
+  | "symbol"
+  | "sticker";
 
 // Define size types
-export type PenSize = "s" | "m" | "l";
+export type PenSize = "s" | "m" | "l" | "xl";
 export type BlurMode = "spot" | "focus";
+export type ArrowType = "standard" | "sharp" | "feathered" | "outline" | "double" | "dotted" | "dashed" | "curved" | "handdrawn" | "bold" | "brush";
+export type StepType = "circle" | "square" | "hexagon" | "diamond" | "pill" | "outline-circle" | "outline-square";
 
 // Base annotation interface
 export interface BaseAnnotation {
@@ -45,6 +48,7 @@ export interface TextAnnotation extends BaseAnnotation {
   boxY?: number; // Box top-left y
   boxWidth?: number; // Box width
   boxHeight?: number; // Box height
+  isPlainText?: boolean; // Whether to render as plain text without box
 }
 
 // Pen annotation interface
@@ -66,6 +70,7 @@ export interface ArrowAnnotation extends BaseAnnotation {
   color: string;
   width: number;
   size: PenSize; // Store abstract size
+  arrowType?: ArrowType;
 }
 
 // Straight line annotation interface
@@ -132,6 +137,7 @@ export interface StepAnnotation extends BaseAnnotation {
   fontSize: number; // Font size used for number and radius calculation
   size: PenSize; // Store abstract size used ('s', 'm', 'l')
   symbol?: string; // Optional symbol to display instead of number (e.g., 'check', 'cross') or 'none'
+  stepType?: StepType;
 }
 
 // --- NEW: Symbol Annotation ---

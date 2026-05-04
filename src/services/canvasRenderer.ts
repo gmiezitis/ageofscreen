@@ -11,6 +11,7 @@ import type {
   BlurAnnotation,
   SymbolAnnotation,
   ImageAnnotation,
+  ArrowType,
 } from '../types';
 
 /**
@@ -21,6 +22,7 @@ import type {
  */
 export class CanvasRenderer {
   private static imageCache = new Map<string, HTMLImageElement>();
+
   static readonly SELECTION_PADDING = 3;
   static readonly IMAGE_HANDLE_SIZE = 14;
   static readonly IMAGE_HANDLE_HIT_PADDING = 4;
@@ -246,19 +248,18 @@ export class CanvasRenderer {
     const radius = Math.max(
       annotation.radius,
       Math.ceil(textWidth / 2 + textPadding),
-      Math.ceil(fontSize * 0.82),
+      Math.ceil(fontSize * 0.72)
     );
+
     const luminance = this.getRelativeLuminance(annotation.color);
-    const lightBadge = luminance >= 0.58;
-    const textColor = annotation.symbol === "none"
-      ? annotation.color
-      : (lightBadge ? "#0f172a" : "#ffffff");
-    const textOutlineColor = annotation.symbol === "none"
-      ? (lightBadge ? "rgba(255,255,255,0.88)" : "rgba(15,23,42,0.62)")
-      : (lightBadge ? "rgba(255,255,255,0.88)" : "rgba(15,23,42,0.52)");
-    const circleOutlineColor = lightBadge
-      ? "rgba(15,23,42,0.22)"
-      : "rgba(255,255,255,0.24)";
+    const isHollow = annotation.stepType?.startsWith("outline-");
+    
+    const textColor = isHollow 
+      ? annotation.color 
+      : (luminance > 0.6 ? "#0f172a" : "#f8fafc");
+      
+    const textOutlineColor = luminance > 0.6 ? "rgba(255, 255, 255, 0.2)" : "rgba(15, 23, 42, 0.1)";
+    const circleOutlineColor = isHollow ? annotation.color : (luminance > 0.6 ? "rgba(15, 23, 42, 0.12)" : "rgba(255, 255, 255, 0.1)");
 
     return {
       content,
@@ -281,36 +282,36 @@ export class CanvasRenderer {
     },
   ) {
     const fontSize = this.parseFontSize(annotation.font);
-    const boxX = annotation.boxX ?? annotation.x;
-    const boxY = annotation.boxY ?? Math.max(0, annotation.y - fontSize);
-    const boxWidth = Math.max(120, annotation.boxWidth ?? Math.max(220, fontSize * 8));
-    const minBoxHeight = Math.max(Math.round(fontSize * 2.2), annotation.boxHeight ?? 0);
-    const paddingX = Math.max(12, Math.round(fontSize * 0.55));
-    const paddingY = Math.max(10, Math.round(fontSize * 0.45));
-    const innerWidth = Math.max(24, boxWidth - paddingX * 2);
     const text = textOverride ?? annotation.content ?? "";
+    
+    const paddingX = Math.max(8, Math.round(fontSize * 0.4));
+    const paddingY = Math.max(6, Math.round(fontSize * 0.3));
 
+    let contentMaxWidth = 40;
     if (ctx) {
       ctx.save();
       ctx.font = annotation.font;
-    }
-
-    const lines = this.wrapTextToWidth(ctx, text, innerWidth, fontSize);
-
-    if (ctx) {
+      const splitLines = text.split('\n');
+      const metrics = splitLines.map((line) => ctx.measureText(line));
+      contentMaxWidth = Math.max(40, ...metrics.map((m) => m.width)) + paddingX * 2 + 4;
       ctx.restore();
+    } else {
+      // Approximation for hit-testing without context
+      const splitLines = text.split('\n');
+      const approxWidths = splitLines.map((line) => line.length * fontSize * 0.56);
+      contentMaxWidth = Math.max(40, ...approxWidths) + paddingX * 2 + 4;
     }
+
+    const boxX = annotation.boxX ?? annotation.x;
+    const boxY = annotation.boxY ?? Math.max(0, annotation.y - fontSize);
+    const boxWidth = contentMaxWidth;
+    const innerWidth = Math.max(24, boxWidth - paddingX * 2);
+
+    const lines = text.split('\n');
 
     const lineHeight = Math.max(Math.round(fontSize * 1.28), fontSize + 6);
-    const availableHeight = Math.max(lineHeight, minBoxHeight - paddingY * 2);
-    const maxVisibleLines = Math.max(1, Math.floor(availableHeight / lineHeight));
-    const shouldConstrainToBox = !!options?.constrainToBox && annotation.boxHeight !== undefined;
-    const visibleLines = shouldConstrainToBox ? lines.slice(0, maxVisibleLines) : lines;
-    const contentHeight = Math.max(lineHeight, visibleLines.length * lineHeight);
-    const boxHeight = shouldConstrainToBox
-      ? minBoxHeight
-      : Math.max(minBoxHeight, contentHeight + paddingY * 2);
-    const isOverflowing = shouldConstrainToBox && lines.length > maxVisibleLines;
+    const contentHeight = Math.max(lineHeight, lines.length * lineHeight);
+    const boxHeight = contentHeight + paddingY * 2;
 
     return {
       boxX,
@@ -322,10 +323,10 @@ export class CanvasRenderer {
       innerWidth,
       fontSize,
       lineHeight,
-      lines: visibleLines,
+      lines: lines,
       rawLines: lines,
-      maxVisibleLines,
-      isOverflowing,
+      maxVisibleLines: lines.length,
+      isOverflowing: false,
     };
   }
 
@@ -495,53 +496,181 @@ export class CanvasRenderer {
     fromX: number,
     fromY: number,
     toX: number,
-    toY: number
+    toY: number,
+    arrowType: ArrowType = 'sharp'
   ) {
     const dx = toX - fromX;
     const dy = toY - fromY;
     const angle = Math.atan2(dy, dx);
+    const length = Math.sqrt(dx * dx + dy * dy);
+    if (length < 1) return;
 
-    const headLength = Math.min(
-      this.ARROW_HEAD_MAX_LENGTH,
-      Math.max(this.ARROW_HEAD_MIN_LENGTH, ctx.lineWidth * this.ARROW_HEAD_LENGTH_MULTIPLIER),
-    );
-    const arrowHeadAngle = this.ARROW_HEAD_HALF_ANGLE;
-    const shaftEndX = toX - headLength * Math.cos(angle);
-    const shaftEndY = toY - headLength * Math.sin(angle);
+    // Dynamic sizing based on line width
+    const lw = Math.max(2, ctx.lineWidth);
+    let headLength = Math.max(16, lw * 4.5);
+    let headWidth = Math.max(12, lw * 3.5);
+    let headIndentation = arrowType === 'standard' ? 0 : headLength * 0.35;
+
+    if (arrowType === 'bold') {
+      ctx.lineWidth *= 1.8;
+      headLength *= 1.2;
+      headWidth *= 1.3;
+    } else if (arrowType === 'brush') {
+      ctx.lineWidth *= 2.8;
+      headLength *= 1.5;
+      headWidth *= 1.8;
+    }
 
     ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
 
-    // Keep the shaft clean but make the head feel crisp and pointed.
-    ctx.lineCap = "butt";
-    ctx.lineJoin = "miter";
-    ctx.miterLimit = 6;
+    // Set line dash for dotted/dashed
+    if (arrowType === 'dotted') {
+      ctx.setLineDash([lw, lw * 1.5]);
+    } else if (arrowType === 'dashed') {
+      ctx.setLineDash([lw * 4, lw * 3]);
+    }
 
-    // Stop the shaft at the head base so the point stays crisp.
-    ctx.beginPath();
-    ctx.moveTo(fromX, fromY);
-    ctx.lineTo(shaftEndX, shaftEndY);
-    ctx.stroke();
+    // --- Draw the Shaft ---
+    const shaftEndX = toX - (headLength - headIndentation) * Math.cos(angle);
+    const shaftEndY = toY - (headLength - headIndentation) * Math.sin(angle);
+    
+    if (arrowType === 'curved' || arrowType === 'brush') {
+      // Draw a quadratic curve for "curved" or "brush" style
+      const curveAmount = arrowType === 'brush' ? 0.12 : 0.15;
+      const midX = (fromX + toX) / 2 - Math.sin(angle) * (length * curveAmount);
+      const midY = (fromY + toY) / 2 + Math.cos(angle) * (length * curveAmount);
+      
+      if (arrowType === 'brush') {
+        // Draw multiple strokes for a brush-like feel
+        const offset = ctx.lineWidth * 0.15;
+        ctx.save();
+        
+        // Main stroke
+        ctx.beginPath();
+        ctx.moveTo(fromX, fromY);
+        ctx.quadraticCurveTo(midX, midY, shaftEndX, shaftEndY);
+        ctx.stroke();
+        
+        // Textured side strokes
+        ctx.globalAlpha *= 0.6;
+        ctx.lineWidth *= 0.8;
+        
+        ctx.beginPath();
+        ctx.moveTo(fromX + Math.sin(angle) * offset, fromY - Math.cos(angle) * offset);
+        ctx.quadraticCurveTo(midX + Math.sin(angle) * offset, midY - Math.cos(angle) * offset, shaftEndX, shaftEndY);
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.moveTo(fromX - Math.sin(angle) * offset, fromY + Math.cos(angle) * offset);
+        ctx.quadraticCurveTo(midX - Math.sin(angle) * offset, midY + Math.cos(angle) * offset, shaftEndX, shaftEndY);
+        ctx.stroke();
+        
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(fromX, fromY);
+        ctx.quadraticCurveTo(midX, midY, shaftEndX, shaftEndY);
+        ctx.stroke();
+      }
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(fromX, fromY);
+      ctx.lineTo(shaftEndX, shaftEndY);
+      ctx.stroke();
+    }
 
-    // Draw classic triangular arrowhead - bigger and more visible
-    ctx.beginPath();
-    ctx.moveTo(toX, toY); // Arrow tip
+    // Reset dash for the head
+    ctx.setLineDash([]);
 
-    // Left side of arrowhead
-    const leftX = toX - headLength * Math.cos(angle - arrowHeadAngle);
-    const leftY = toY - headLength * Math.sin(angle - arrowHeadAngle);
+    // --- Draw Double Head if needed ---
+    if (arrowType === 'double') {
+      this.drawArrowHead(ctx, fromX, fromY, angle + Math.PI, headLength, headWidth, headIndentation, false);
+    }
 
-    // Right side of arrowhead  
-    const rightX = toX - headLength * Math.cos(angle + arrowHeadAngle);
-    const rightY = toY - headLength * Math.sin(angle + arrowHeadAngle);
+    // --- Draw Fletchings (Feathers) ---
+    if (arrowType === 'feathered' && length > headLength * 2.5) {
+      const fletchingLength = headLength * 0.8;
+      const fletchingWidth = headWidth * 0.9;
+      const numFletchings = 3;
+      const fletchingSpacing = lw * 2.5;
 
-    // Create classic triangular arrowhead - fill AND stroke for better visibility
-    ctx.lineTo(leftX, leftY);
-    ctx.lineTo(rightX, rightY);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+      ctx.beginPath();
+      for (let i = 0; i < numFletchings; i++) {
+        const fBaseX = fromX + (i * fletchingSpacing) * Math.cos(angle);
+        const fBaseY = fromY + (i * fletchingSpacing) * Math.sin(angle);
+        
+        const fLeftX = fBaseX - fletchingLength * Math.cos(angle) - fletchingWidth * Math.sin(angle);
+        const fLeftY = fBaseY - fletchingLength * Math.sin(angle) + fletchingWidth * Math.cos(angle);
+        
+        const fRightX = fBaseX - fletchingLength * Math.cos(angle) + fletchingWidth * Math.sin(angle);
+        const fRightY = fBaseY - fletchingLength * Math.sin(angle) - fletchingWidth * Math.cos(angle);
+
+        ctx.moveTo(fLeftX, fLeftY);
+        ctx.lineTo(fBaseX, fBaseY);
+        ctx.lineTo(fRightX, fRightY);
+      }
+      ctx.stroke();
+    }
+
+    // --- Draw the Arrowhead ---
+    if (arrowType === 'brush') {
+      ctx.save();
+      // Draw a slightly messy, multi-stroke head
+      this.drawArrowHead(ctx, toX, toY, angle, headLength, headWidth, headIndentation, false);
+      
+      ctx.globalAlpha *= 0.6;
+      const offset = ctx.lineWidth * 0.1;
+      this.drawArrowHead(ctx, toX + Math.sin(angle) * offset, toY - Math.cos(angle) * offset, angle, headLength * 0.95, headWidth * 0.95, headIndentation, false);
+      this.drawArrowHead(ctx, toX - Math.sin(angle) * offset, toY + Math.cos(angle) * offset, angle, headLength * 0.95, headWidth * 0.95, headIndentation, false);
+      
+      ctx.restore();
+    } else {
+      this.drawArrowHead(ctx, toX, toY, angle, headLength, headWidth, headIndentation, arrowType === 'outline');
+    }
 
     ctx.restore();
+  }
+
+  private static drawArrowHead(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    angle: number,
+    headLength: number,
+    headWidth: number,
+    headIndentation: number,
+    isOutline: boolean
+  ) {
+    ctx.beginPath();
+    ctx.moveTo(x, y); // Tip
+    
+    // Left back corner
+    const leftX = x - headLength * Math.cos(angle) - (headWidth / 2) * Math.sin(angle);
+    const leftY = y - headLength * Math.sin(angle) + (headWidth / 2) * Math.cos(angle);
+    ctx.lineTo(leftX, leftY);
+
+    // Inner indented point
+    if (headIndentation > 0) {
+      const innerX = x - (headLength - headIndentation) * Math.cos(angle);
+      const innerY = y - (headLength - headIndentation) * Math.sin(angle);
+      ctx.lineTo(innerX, innerY);
+    }
+
+    // Right back corner
+    const rightX = x - headLength * Math.cos(angle) + (headWidth / 2) * Math.sin(angle);
+    const rightY = y - headLength * Math.sin(angle) - (headWidth / 2) * Math.cos(angle);
+    ctx.lineTo(rightX, rightY);
+
+    ctx.closePath();
+    
+    if (isOutline) {
+      ctx.stroke();
+    } else {
+      ctx.fill();
+      ctx.stroke();
+    }
   }
 
   static drawLine(
@@ -583,21 +712,23 @@ export class CanvasRenderer {
       const layout = this.getTextBoxLayout(annotation, ctx, displayText);
       const cursorLayout = this.getTextBoxLayout(annotation, ctx, actualText);
 
-      ctx.fillStyle = "rgba(15, 23, 42, 0.78)";
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
-      ctx.lineWidth = 1.5;
-      ctx.fillRect(layout.boxX, layout.boxY, layout.boxWidth, layout.boxHeight);
-      ctx.strokeRect(layout.boxX, layout.boxY, layout.boxWidth, layout.boxHeight);
+      if (!annotation.isPlainText) {
+        ctx.fillStyle = "rgba(15, 23, 42, 0.78)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(layout.boxX, layout.boxY, layout.boxWidth, layout.boxHeight);
+        ctx.strokeRect(layout.boxX, layout.boxY, layout.boxWidth, layout.boxHeight);
+      }
 
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
       ctx.save();
       ctx.beginPath();
       ctx.rect(
-        layout.boxX + 1,
-        layout.boxY + 1,
-        Math.max(0, layout.boxWidth - 2),
-        Math.max(0, layout.boxHeight - 2),
+        layout.boxX - 5,
+        layout.boxY - 5,
+        Math.max(0, layout.boxWidth + 10),
+        Math.max(0, layout.boxHeight + 10),
       );
       ctx.clip();
 
@@ -686,7 +817,7 @@ export class CanvasRenderer {
     ctx.strokeStyle = annotation.color;
     ctx.lineWidth = annotation.width;
     ctx.fillStyle = annotation.color;
-    this.drawArrow(ctx, annotation.startX, annotation.startY, annotation.endX, annotation.endY);
+    this.drawArrow(ctx, annotation.startX, annotation.startY, annotation.endX, annotation.endY, annotation.arrowType);
   }
 
   static drawLineObject(ctx: CanvasRenderingContext2D, annotation: LineAnnotation) {
@@ -743,18 +874,57 @@ export class CanvasRenderer {
   static drawStepObject(ctx: CanvasRenderingContext2D, annotation: StepAnnotation) {
     const isNoCircle = annotation.symbol === "none";
     const badge = this.getStepBadgeMetrics(annotation, ctx);
+    const type = annotation.stepType || "circle";
 
     ctx.save();
 
-    // Draw Circle (unless symbol is 'none' which means no circle)
+    // Draw Badge Shape (unless symbol is 'none')
     if (!isNoCircle) {
       ctx.fillStyle = annotation.color;
-      ctx.beginPath();
-      ctx.arc(annotation.cx, annotation.cy, badge.radius, 0, 2 * Math.PI);
-      ctx.fill();
       ctx.strokeStyle = badge.circleOutlineColor;
       ctx.lineWidth = badge.circleOutlineWidth;
-      ctx.stroke();
+
+      const x = annotation.cx;
+      const y = annotation.cy;
+      const r = badge.radius;
+
+      ctx.beginPath();
+      if (type === "circle" || type === "outline-circle") {
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
+      } else if (type === "square" || type === "outline-square") {
+        ctx.rect(x - r, y - r, r * 2, r * 2);
+      } else if (type === "hexagon") {
+        for (let i = 0; i < 6; i++) {
+          const angle = (Math.PI / 3) * i - Math.PI / 2;
+          const px = x + r * Math.cos(angle);
+          const py = y + r * Math.sin(angle);
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+      } else if (type === "diamond") {
+        ctx.moveTo(x, y - r * 1.1);
+        ctx.lineTo(x + r * 1.1, y);
+        ctx.lineTo(x, y + r * 1.1);
+        ctx.lineTo(x - r * 1.1, y);
+        ctx.closePath();
+      } else if (type === "pill") {
+        const w = r * 1.3;
+        const h = r;
+        // Draw pill shape manually for better compatibility
+        ctx.moveTo(x - w + h, y - h);
+        ctx.lineTo(x + w - h, y - h);
+        ctx.arc(x + w - h, y, h, -Math.PI / 2, Math.PI / 2);
+        ctx.lineTo(x - w + h, y + h);
+        ctx.arc(x - w + h, y, h, Math.PI / 2, -Math.PI / 2);
+        ctx.closePath();
+      }
+
+      if (type.startsWith("outline-")) {
+          ctx.stroke();
+      } else {
+          ctx.fill();
+          ctx.stroke();
+      }
     }
 
     // Draw Content
@@ -1028,4 +1198,5 @@ export class CanvasRenderer {
       }
     }
   }
+
 } 

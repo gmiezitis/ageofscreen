@@ -16,6 +16,7 @@ interface PreviewPaneProps {
     cameraAudioMeterEnabled: boolean;
     micEnabled: boolean;
     isPreviewStarting: boolean;
+    previewError: string | null;
     presenterNameEnabled: boolean;
     presenterName: string;
 }
@@ -33,6 +34,7 @@ export const PreviewPane: React.FC<PreviewPaneProps> = ({
     cameraAudioMeterEnabled,
     micEnabled,
     isPreviewStarting,
+    previewError,
     presenterNameEnabled,
     presenterName,
 }) => {
@@ -85,6 +87,11 @@ export const PreviewPane: React.FC<PreviewPaneProps> = ({
                 <div className={styles.previewLoading} aria-hidden="true">
                     <div className={styles.previewSkeletonShape} />
                     <div className={styles.previewSkeletonLine} />
+                </div>
+            ) : cameraEnabled && previewError ? (
+                <div className={styles.previewPlaceholder}>
+                    <Camera size={24} strokeWidth={1.5} />
+                    <span>{previewError}</span>
                 </div>
             ) : (
                 <div className={styles.previewPlaceholder}>
