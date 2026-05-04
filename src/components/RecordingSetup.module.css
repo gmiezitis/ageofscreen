@@ -133,6 +133,10 @@
     flex: 1;
 }
 
+.onboardingTip span + span {
+    display: none;
+}
+
 .onboardingTip .tipDismiss {
     flex-shrink: 0;
     width: 20px;
@@ -259,7 +263,11 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
+    max-width: 82%;
+    text-align: center;
     color: rgba(148, 163, 184, 0.72);
+    font-size: 12px;
+    line-height: 1.25;
 }
 
 .previewLoading {
@@ -331,16 +339,72 @@
     position: relative;
 }
 
-.toggleCard:not(:last-child)::after {
-    content: '';
-    position: absolute;
-    right: -1px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 1px;
-    height: 14px;
-    background: rgba(255, 255, 255, 0.08); /* Smooth subtle divider */
+.toggleCard::before,
+.toggleCard::after {
+    opacity: 0;
     pointer-events: none;
+    position: absolute;
+    left: 50%;
+    transition:
+        opacity 140ms var(--recording-ease),
+        transform 140ms var(--recording-ease);
+    z-index: 12;
+}
+
+.toggleCard::before {
+    content: attr(data-tooltip);
+    bottom: calc(100% + 10px);
+    transform: translate(-50%, 4px) scale(0.98);
+    width: max-content;
+    max-width: 132px;
+    padding: 7px 10px;
+    border-radius: 10px;
+    background:
+        linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(12, 18, 30, 0.98));
+    border: 1px solid rgba(191, 219, 254, 0.16);
+    color: #f8fafc;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: 0;
+    text-align: center;
+    white-space: nowrap;
+    box-shadow:
+        0 14px 30px rgba(2, 6, 23, 0.42),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(16px) saturate(150%);
+}
+
+.toggleCard::after {
+    content: '';
+    bottom: calc(100% + 5px);
+    transform: translate(-50%, 4px) rotate(45deg);
+    width: 9px;
+    height: 9px;
+    border-right: 1px solid rgba(191, 219, 254, 0.16);
+    border-bottom: 1px solid rgba(191, 219, 254, 0.16);
+    background: rgba(12, 18, 30, 0.98);
+}
+
+.toggleCard:hover::before,
+.toggleCard:hover::after,
+.toggleCard:focus-visible::before,
+.toggleCard:focus-visible::after {
+    opacity: 1;
+}
+
+.toggleCard:hover::before,
+.toggleCard:focus-visible::before {
+    transform: translate(-50%, 0) scale(1);
+}
+
+.toggleCard:hover::after,
+.toggleCard:focus-visible::after {
+    transform: translate(-50%, 0) rotate(45deg);
+}
+
+.toggleCard:not(:last-child) {
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .toggleCard:hover {

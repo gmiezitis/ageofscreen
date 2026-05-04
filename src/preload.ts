@@ -42,9 +42,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     saveVideo: (buffer: ArrayBuffer) => ipcRenderer.invoke("save-video", buffer),
     saveTempVideo: (buffer: ArrayBuffer) => ipcRenderer.invoke("save-temp-video", buffer),
     deleteTempVideo: (filePath: string) => ipcRenderer.invoke("delete-temp-video", filePath),
+    showVideoEditorShell: () => ipcRenderer.send("open-media-editor"),
     showVideoEditor: (videoDataUrl: string, name?: string) => ipcRenderer.send("show-video-editor", videoDataUrl, name),
 
-    setCursorReplacementSafe: (safe: boolean) => ipcRenderer.send("recording-cursor-replacement-safe", safe),
     sendRecordingStatus: (status: boolean) => ipcRenderer.send("recording-status", status),
     sendRecordingProgress: (progress: number) => ipcRenderer.send("recording-progress", progress),
     onWidgetStopRecording: (callback: () => void) => {

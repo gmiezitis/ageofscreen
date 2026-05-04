@@ -13,8 +13,10 @@ import type {
   EllipseAnnotation,
   StepAnnotation,
   BlurAnnotation,
-  SymbolAnnotation,
   FocusRectangleAnnotation,
+  SymbolAnnotation,
+  ArrowType,
+  StepType,
 } from '../types';
 import { textSizeValues } from '../styles';
 import { CanvasRenderer } from '../services/canvasRenderer';
@@ -42,13 +44,15 @@ interface AnnotationCanvasProps {
   textColor: string;
   selectedTextSize: PenSize;
   defaultTextFontSize: number;
-  defaultTextBoxWidth: number;
+  isPlainText: boolean;
   stepColor: string;
   selectedStepSize: PenSize;
   selectedStepSymbol?: string;
   stepCounter: number;
   selectedSymbolText: string;
   selectedBlurMode: BlurMode;
+  selectedArrowType: ArrowType;
+  selectedStepType: StepType;
   blurBrushSize: number;
 
   // Drawing state
@@ -73,6 +77,7 @@ interface AnnotationCanvasProps {
   // Callbacks
   onStepCounterIncrement: () => void;
   onToolSelect?: (tool: Tool) => void; // New Prop
+  isDarkMode: boolean;
 }
 
 export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
@@ -93,13 +98,15 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
   textColor,
   selectedTextSize,
   defaultTextFontSize,
-  defaultTextBoxWidth,
+  isPlainText,
   stepColor,
   selectedStepSize,
   selectedStepSymbol,
+  selectedStepType,
   stepCounter,
   selectedSymbolText,
   selectedBlurMode,
+  selectedArrowType,
   blurBrushSize,
   isDrawing,
   setIsDrawing,
@@ -114,10 +121,15 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
   dynamicCursorStyle,
   onStepCounterIncrement,
   onToolSelect, // Destructure new prop
+  isDarkMode,
 }) => {
   const [hoverCursor, setHoverCursor] = React.useState<string | null>(null);
+  const [blurCanvasVersion, setBlurCanvasVersion] = React.useState(0);
 
   const relativeStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const pendingStrokePointsRef = useRef<{ x: number; y: number }[]>([]);
+  const strokeFrameRef = useRef<number | null>(null);
+  const preparedBlurSourceRef = useRef<HTMLImageElement | null>(null);
   const imageResizeStateRef = useRef<{
     id: string;
     corner: "nw" | "ne" | "sw" | "se";
@@ -136,6 +148,104 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
     if (!previewCanvas || !ctx) return;
     ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
   }, [previewCanvasRef]);
+
+  const flushPendingStrokePoints = useCallback(() => {
+    if (strokeFrameRef.current !== null) {
+      window.cancelAnimationFrame(strokeFrameRef.current);
+      strokeFrameRef.current = null;
+    }
+
+    const points = pendingStrokePointsRef.current;
+    if (points.length === 0) return;
+
+    pendingStrokePointsRef.current = [];
+    if (annotationActions.addPointsToLastAnnotation) {
+      annotationActions.addPointsToLastAnnotation(points);
+      return;
+    }
+
+    points.forEach((point) => annotationActions.addPointToLastAnnotation(point));
+  }, [annotationActions]);
+
+  const queueStrokePoint = useCallback((point: { x: number; y: number }) => {
+    pendingStrokePointsRef.current.push(point);
+    if (strokeFrameRef.current !== null) return;
+
+    strokeFrameRef.current = window.requestAnimationFrame(() => {
+      strokeFrameRef.current = null;
+      const points = pendingStrokePointsRef.current;
+      if (points.length === 0) return;
+
+      pendingStrokePointsRef.current = [];
+      if (annotationActions.addPointsToLastAnnotation) {
+        annotationActions.addPointsToLastAnnotation(points);
+      } else {
+        points.forEach((queuedPoint) => annotationActions.addPointToLastAnnotation(queuedPoint));
+      }
+    });
+  }, [annotationActions]);
+
+  useEffect(() => () => {
+    if (strokeFrameRef.current !== null) {
+      window.cancelAnimationFrame(strokeFrameRef.current);
+    }
+  }, []);
+
+  const hasBlurAnnotations = annotations.some(
+    (annotation) => annotation.type === "focusRect"
+      || (annotation.type === "blur" && annotation.mode === "spot")
+  );
+
+  useEffect(() => {
+    const img = imageElementRef.current;
+    const blurCanvas = blurredImageCanvasRef.current;
+    if (!isImageLoaded || !hasBlurAnnotations || !img || !blurCanvas) {
+      return;
+    }
+
+    const needsRefresh = preparedBlurSourceRef.current !== img
+      || blurCanvas.width !== img.naturalWidth
+      || blurCanvas.height !== img.naturalHeight;
+    if (!needsRefresh) {
+      return;
+    }
+
+    let cancelled = false;
+    const prepare = () => {
+      if (cancelled) return;
+      const ctx = blurCanvas.getContext("2d");
+      if (!ctx) return;
+
+      blurCanvas.width = img.naturalWidth;
+      blurCanvas.height = img.naturalHeight;
+      ctx.filter = "blur(10px)";
+      ctx.drawImage(img, 0, 0);
+      ctx.filter = "none";
+      preparedBlurSourceRef.current = img;
+      setBlurCanvasVersion((version) => version + 1);
+    };
+
+    const idleCallback = (window as any).requestIdleCallback as
+      | ((callback: () => void, options?: { timeout: number }) => number)
+      | undefined;
+    const cancelIdleCallback = (window as any).cancelIdleCallback as
+      | ((id: number) => void)
+      | undefined;
+
+    if (idleCallback && cancelIdleCallback) {
+      const idleId = idleCallback(prepare, { timeout: 180 });
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(idleId);
+      };
+    }
+
+    const timerId = window.setTimeout(prepare, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [annotations, blurredImageCanvasRef, hasBlurAnnotations, imageElementRef, isImageLoaded]);
 
   const findImageResizeHandleAtPoint = useCallback((x: number, y: number) => {
     for (let i = annotations.length - 1; i >= 0; i--) {
@@ -294,13 +404,14 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
           fontSize: fontSize,
           size: selectedStepSize,
           symbol: selectedStepSymbol,
+          stepType: selectedStepType,
         };
 
         annotationActions.addAnnotation(newAnnotation);
         onStepCounterIncrement();
 
         // Auto-switch to move tool after placing step? Optional.
-      } else if (selectedTool === "symbol") {
+      } else if (selectedTool === "sticker" || selectedTool === "symbol") {
         const fontSize = textSizeValues[selectedStepSize] * 1.8; // Emojis should be larger
 
         const newAnnotation: SymbolAnnotation = {
@@ -346,6 +457,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       annotations, // Added dependency for hit test
       findImageResizeHandleAtPoint,
       selectedAnnotationId,
+      selectedStepType,
     ]
   );
 
@@ -419,13 +531,15 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       // Dragging logic
       if (selectedTool === "move" || selectedTool === "select") {
         if (hoverCursor !== "grabbing") setHoverCursor("grabbing");
-        annotationActions.updateDragOffset({ x, y });
+        const clampedX = Math.max(0, Math.min(canvas.width, x));
+        const clampedY = Math.max(0, Math.min(canvas.height, y));
+        annotationActions.updateDragOffset({ x: clampedX, y: clampedY });
         return;
       }
 
       if (selectedTool === "pen" || selectedTool === "highlighter" || (selectedTool === "blur" && selectedBlurMode === "spot")) {
         // Update the last pen/highlighter/blur annotation with new point
-        annotationActions.addPointToLastAnnotation({ x, y });
+        queueStrokePoint({ x, y });
         setLastPosition({ x, y });
       } else {
         // Draw real-time preview for shapes on the preview canvas
@@ -441,23 +555,55 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
             ctx.lineWidth = penWidth;
 
             if (selectedTool === "text") {
-              // Text box preview (dashed line)
+              // Text box preview - Premium Focus Frame
               const rx = Math.min(startPos.x, x);
               const ry = Math.min(startPos.y, y);
               const rw = Math.abs(x - startPos.x);
               const rh = Math.abs(y - startPos.y);
 
-              ctx.strokeStyle = textColor;
-              ctx.setLineDash([5, 5]);
-              ctx.strokeRect(rx, ry, rw, rh);
+              // 1. Light background fill
+              ctx.fillStyle = isDarkMode ? "rgba(255, 255, 255, 0.03)" : "rgba(125, 211, 252, 0.05)";
+              ctx.fillRect(rx, ry, rw, rh);
 
-              // Show "Text" hint in center
-              ctx.font = "14px sans-serif";
+              // 2. Subtle dashed border
+              ctx.strokeStyle = textColor;
+              ctx.globalAlpha = 0.4;
+              ctx.setLineDash([4, 4]);
+              ctx.lineWidth = 1;
+              ctx.strokeRect(rx, ry, rw, rh);
+              ctx.globalAlpha = 1.0;
+
+              // 3. Corner Brackets (Premium look)
+              ctx.setLineDash([]);
+              ctx.lineWidth = 2;
+              const cl = Math.min(12, rw / 3.5, rh / 3.5); // corner length
+              
+              if (cl > 2) {
+                // Top-left
+                ctx.beginPath();
+                ctx.moveTo(rx, ry + cl); ctx.lineTo(rx, ry); ctx.lineTo(rx + cl, ry);
+                ctx.stroke();
+                // Top-right
+                ctx.beginPath();
+                ctx.moveTo(rx + rw - cl, ry); ctx.lineTo(rx + rw, ry); ctx.lineTo(rx + rw, ry + cl);
+                ctx.stroke();
+                // Bottom-left
+                ctx.beginPath();
+                ctx.moveTo(rx, ry + rh - cl); ctx.lineTo(rx, ry + rh); ctx.lineTo(rx + cl, ry + rh);
+                ctx.stroke();
+                // Bottom-right
+                ctx.beginPath();
+                ctx.moveTo(rx + rw - cl, ry + rh); ctx.lineTo(rx + rw, ry + rh); ctx.lineTo(rx + rw, ry + rh - cl);
+                ctx.stroke();
+              }
+
+              // 4. "Type here" hint
+              ctx.font = "italic 13px sans-serif";
               ctx.fillStyle = textColor;
               ctx.textAlign = "center";
               ctx.textBaseline = "middle";
-              if (rw > 30 && rh > 20) {
-                ctx.fillText("Type here", rx + rw / 2, ry + rh / 2);
+              if (rw > 50 && rh > 25) {
+                ctx.fillText("Type here...", rx + rw / 2, ry + rh / 2);
               }
             } else if (selectedTool === "rectangle") {
               ctx.strokeStyle = penColor;
@@ -475,7 +621,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
             } else if (selectedTool === "arrow") {
               ctx.strokeStyle = penColor;
               ctx.fillStyle = penColor;
-              CanvasRenderer.drawArrow(ctx, startPos.x, startPos.y, x, y);
+              CanvasRenderer.drawArrow(ctx, startPos.x, startPos.y, x, y, selectedArrowType);
             } else if (selectedTool === "ellipse") {
               ctx.strokeStyle = penColor;
               ctx.fillStyle = penColor;
@@ -511,6 +657,9 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       textColor,
       findImageResizeHandleAtPoint,
       hoverCursor,
+      queueStrokePoint,
+      selectedArrowType,
+      selectedStepType,
     ]
   );
 
@@ -568,6 +717,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
           color: penColor,
           width: penWidth,
           size: selectedPenSize,
+          arrowType: selectedArrowType,
         };
         annotationActions.addAnnotation(newAnnotation);
       } else if (selectedTool === "rectangle" && relativeStartPosRef.current) {
@@ -626,18 +776,23 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
         const minBoxHeight = Math.max(52, Math.round(defaultTextFontSize * 2.2));
 
         // If click without drag (small box), create a default box
-        if (rectWidth < 10 || rectHeight < 10) {
-          rectWidth = defaultTextBoxWidth;
+        if (rectWidth < 15 || rectHeight < 15) {
+          rectWidth = 140;
           rectHeight = minBoxHeight;
           // Center on click
           rectX = startPos.x - rectWidth / 2;
           rectY = startPos.y - rectHeight / 2;
         } else {
-          rectWidth = Math.max(120, rectWidth);
-          rectHeight = Math.max(minBoxHeight, rectHeight);
+          // More precise: allow smaller boxes
+          rectWidth = Math.max(40, rectWidth);
+          rectHeight = Math.max(25, rectHeight);
         }
 
-        const fontSize = defaultTextFontSize;
+        // Adjust size of letters: if they draw a large box, scale the font size
+        let fontSize = defaultTextFontSize;
+        if (rectHeight > defaultTextFontSize * 2.5) {
+            fontSize = Math.min(400, Math.round(rectHeight * 0.65));
+        }
 
         const newAnnotation: TextAnnotation = {
           id: `text_${Date.now()}`,
@@ -651,7 +806,8 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
           boxX: rectX,
           boxY: rectY,
           boxWidth: rectWidth,
-          boxHeight: rectHeight
+          boxHeight: rectHeight,
+          isPlainText: isPlainText
         };
 
         annotationActions.addAnnotation(newAnnotation);
@@ -693,6 +849,8 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
         }
       }
 
+      flushPendingStrokePoints();
+
       // Clear preview canvas
       const previewCanvas = previewCanvasRef.current;
       if (previewCanvas) {
@@ -715,11 +873,13 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       textColor,
       selectedTextSize,
       defaultTextFontSize,
-      defaultTextBoxWidth,
+      isPlainText,
       selectedBlurMode,
       annotationActions,
       setIsDrawing,
       onToolSelect,
+      flushPendingStrokePoints,
+      selectedArrowType,
     ]
   );
 
@@ -743,12 +903,17 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       );
 
       if (includeImage && imgElement) {
-        if (focusRects.length > 0 && blurredImageCanvasRef.current) {
+        const blurredImageCanvas = blurredImageCanvasRef.current;
+        const hasPreparedBlurCanvas = !!blurredImageCanvas
+          && blurredImageCanvas.width === canvas.width
+          && blurredImageCanvas.height === canvas.height;
+
+        if (focusRects.length > 0 && hasPreparedBlurCanvas) {
           CanvasRenderer.applyFocusAreaBlur(
             context,
             canvas,
             focusRects[0],
-            blurredImageCanvasRef.current,
+            blurredImageCanvas,
             imgElement
           );
         } else {
@@ -795,6 +960,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       canvasRef,
       imageElementRef,
       blurredImageCanvasRef,
+      blurCanvasVersion,
     ]
   );
 

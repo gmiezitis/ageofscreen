@@ -184,9 +184,9 @@ const TextOverlayEditor: React.FC<Props> = ({
                 left: 10,
                 zIndex: 90,
                 width: 'min(258px, calc(100% - 20px))',
-                maxHeight: 'calc(100% - 10px)',
-                overflowY: 'auto',
-                scrollbarGutter: 'stable both-edges',
+                maxHeight: isDocked ? undefined : 'calc(100% - 10px)',
+                overflowY: isDocked ? 'visible' : 'auto',
+                scrollbarGutter: isDocked ? undefined : 'stable both-edges',
                 padding: 8,
                 display: 'grid',
                 gap: 6,
@@ -249,20 +249,25 @@ const TextOverlayEditor: React.FC<Props> = ({
             <div style={sectionStyle}>
                 <textarea
                     value={overlay.text}
-                    onChange={(event) => onEdit(overlay.id, { text: event.target.value })}
+                    onChange={(event) => {
+                        onEdit(overlay.id, { text: event.target.value });
+                        // Auto-grow height via rows if needed (rough estimate)
+                    }}
                     onFocus={onFocus}
                     onBlur={onBlur}
                     placeholder="Overlay text"
-                    rows={1}
+                    rows={Math.max(2, (overlay.text || '').split('\n').length)}
                     style={{
                         width: '100%',
                         resize: 'none',
-                        minHeight: 36,
+                        minHeight: 48,
+                        maxHeight: 120,
                         ...controlSurfaceStyle,
-                        padding: '7px 9px',
-                        fontSize: 10.5,
-                        lineHeight: 1.3,
+                        padding: '8px 10px',
+                        fontSize: 11,
+                        lineHeight: 1.4,
                         fontFamily: getTextOverlayFontFamily(overlay),
+                        overflowY: 'auto',
                     }}
                 />
 

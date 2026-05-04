@@ -427,8 +427,8 @@ export async function runAutoPolish(
   const watermarkInputArgs = watermarkLogoPath ? ['-loop', '1', '-i', watermarkLogoPath] : [];
 
   if (addWatermark && watermarkLogoPath) {
-    const logoWidthExpr = 'min(iw\\,ih)*0.2';
-    vFilter += `;[1:v]format=rgba,scale=${logoWidthExpr}:-1:flags=lanczos,colorchannelmixer=aa=0.36[wm];[vid][wm]overlay=x=W-w-14:y=H-h-14:format=auto[vid2]`;
+    const logoWidthExpr = 'min(iw\\,ih)*0.25';
+    vFilter += `;[1:v]format=rgba,scale=${logoWidthExpr}:-1:flags=lanczos,colorchannelmixer=aa=0.68[wm];[vid][wm]overlay=x=W-w-14:y=H-h-14:format=auto[vid2]`;
     videoMap = '[vid2]';
   }
 

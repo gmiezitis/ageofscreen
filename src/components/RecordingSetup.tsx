@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Lightbulb, Circle, Square, LayoutTemplate, Heart, Hexagon, Diamond, Settings2, Sparkles } from 'lucide-react';
 import { FEATURES } from '../config/features';
 import { CameraShape } from '../shared/cameraShapes';
+import { describeMediaError, getMediaErrorName, getUserMediaWithFallback } from '../shared/mediaDeviceAccess';
 
 import styles from './RecordingSetup.module.css';
 import { PreviewPane } from './RecordingSetup/PreviewPane';
@@ -13,11 +14,17 @@ import { WindowSource } from '../types';
 const DEFAULT_CAMERA_SIZE = 100;
 const MIN_CAMERA_SIZE = 60;
 const MAX_CAMERA_SIZE = 250;
+const CAMERA_START_RETRY_DELAYS_MS = [0, 500, 1000, 2000];
+const CAMERA_RELEASE_DELAY_MS = 120;
+
+const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
 
 interface RecordingSetupProps {
     isVisible: boolean;
     onClose: () => void;
     onStartRecording: (config: RecordingConfig) => void;
+    showShortcutTip?: boolean;
+    onCompleteShortcutTip?: () => void;
 }
 
 export const DEFAULT_CAMERA_BORDER_COLOR = '#000000';
@@ -59,6 +66,8 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
     isVisible,
     onClose,
     onStartRecording,
+    showShortcutTip = false,
+    onCompleteShortcutTip,
 }) => {
     const [cameraEnabled, setCameraEnabled] = useState(true);
     const [micEnabled, setMicEnabled] = useState(true);
@@ -86,11 +95,21 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
     const [countdown, setCountdown] = useState<number | null>(null);
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [isPreviewStarting, setIsPreviewStarting] = useState(false);
+    const [previewError, setPreviewError] = useState<string | null>(null);
     const [showRecordingTip, setShowRecordingTip] = useState(() => !localStorage.getItem('ageofscreen-hasSeenRecordingTip'));
     const videoRef = useRef<HTMLVideoElement>(null);
     const previewRequestIdRef = useRef(0);
     const windowSourceRequestIdRef = useRef(0);
     const previewStreamRef = useRef<MediaStream | null>(null);
+    const recordingStartInFlightRef = useRef(false);
+    const wasVisibleRef = useRef(false);
+    const shouldShowLauncherTip = showRecordingTip || showShortcutTip;
+
+    const dismissLauncherTip = () => {
+        setShowRecordingTip(false);
+        localStorage.setItem('ageofscreen-hasSeenRecordingTip', '1');
+        onCompleteShortcutTip?.();
+    };
 
     const stopStreamTracks = useCallback((mediaStream: MediaStream | null) => {
         mediaStream?.getTracks().forEach((track) => track.stop());
@@ -111,17 +130,39 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
         setStream(nextStream);
     }, [stopStreamTracks]);
 
+    const getCameraPreviewErrorMessage = useCallback((err: unknown): string => {
+        const errorName = getMediaErrorName(err);
+        if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
+            return 'Camera permission is blocked. Allow camera access in Windows privacy settings.';
+        }
+        if (errorName === 'NotReadableError' || errorName === 'TrackStartError') {
+            return 'Camera is busy or Windows could not start it. Close other camera apps and try again.';
+        }
+        if (errorName === 'NotFoundError' || errorName === 'DevicesNotFoundError') {
+            return 'No camera was found.';
+        }
+        return 'Camera preview could not start.';
+    }, []);
+
     const startCameraPreview = useCallback(async () => {
         const requestId = ++previewRequestIdRef.current;
         setIsPreviewStarting(true);
+        setPreviewError(null);
         replacePreviewStream(null);
         clearPreviewElement();
 
         try {
-            const mediaStream = await navigator.mediaDevices.getUserMedia({
-                video: { width: { ideal: 320 }, height: { ideal: 240 } },
-                audio: false,
-            });
+            const mediaStream = await getUserMediaWithFallback(
+                [
+                    {
+                        video: { width: { ideal: 320 }, height: { ideal: 240 } },
+                        audio: false,
+                    },
+                    { video: true, audio: false },
+                ],
+                'Recording setup preview',
+                CAMERA_START_RETRY_DELAYS_MS,
+            );
 
             if (previewRequestIdRef.current !== requestId || !isVisible || !cameraEnabled) {
                 setIsPreviewStarting(false);
@@ -133,18 +174,26 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
             setIsPreviewStarting(false);
         } catch (err) {
             setIsPreviewStarting(false);
-            console.error('Failed to start camera preview:', err);
+            setPreviewError(getCameraPreviewErrorMessage(err));
+            console.error('Failed to start camera preview:', describeMediaError(err), err);
         }
-    }, [cameraEnabled, clearPreviewElement, isVisible, replacePreviewStream, stopStreamTracks]);
+    }, [cameraEnabled, clearPreviewElement, getCameraPreviewErrorMessage, isVisible, replacePreviewStream, stopStreamTracks]);
 
     const stopCameraPreview = useCallback(() => {
         previewRequestIdRef.current += 1;
         setIsPreviewStarting(false);
+        setPreviewError(null);
         replacePreviewStream(null);
         clearPreviewElement();
     }, [clearPreviewElement, replacePreviewStream]);
 
     useEffect(() => {
+        if (isVisible && !wasVisibleRef.current) {
+            setCameraEnabled(true);
+            setCaptureCursorData(true);
+        }
+        wasVisibleRef.current = isVisible;
+
         if (!isVisible) {
             stopCameraPreview();
             setCountdown(null);
@@ -186,22 +235,28 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
     useEffect(() => {
         if (countdown === null) return;
         if (countdown === 0) {
+            if (recordingStartInFlightRef.current) return;
+            recordingStartInFlightRef.current = true;
             stopCameraPreview();
-            const effectiveMagnifier = FEATURES.ENABLE_LIVE_MAGNIFIER ? liveMagnifierEnabled : false;
-            const effectiveTeleprompter = FEATURES.ENABLE_TELEPROMPTER ? teleprompterEnabled : false;
-            onStartRecording({
-                cameraEnabled, micEnabled, cameraShape, cameraSize, cameraBorderColor,
-                cameraBorderWidth, cameraGlowEnabled, cameraAudioMeterEnabled,
-                teleprompterEnabled: effectiveTeleprompter,
-                teleprompterText, teleprompterSpeed,
-                liveMagnifierEnabled: effectiveMagnifier,
-                captureCursorData, presenterNameEnabled, presenterName, recordingMode,
-                windowId: selectedWindowId || undefined,
-                recordingPadding: 0,
-                editAfterRecording,
-            });
             setCountdown(null);
-            onClose();
+            void (async () => {
+                await wait(CAMERA_RELEASE_DELAY_MS);
+                const effectiveMagnifier = FEATURES.ENABLE_LIVE_MAGNIFIER ? liveMagnifierEnabled : false;
+                const effectiveTeleprompter = FEATURES.ENABLE_TELEPROMPTER ? teleprompterEnabled : false;
+                onStartRecording({
+                    cameraEnabled, micEnabled, cameraShape, cameraSize, cameraBorderColor,
+                    cameraBorderWidth, cameraGlowEnabled, cameraAudioMeterEnabled,
+                    teleprompterEnabled: effectiveTeleprompter,
+                    teleprompterText, teleprompterSpeed,
+                    liveMagnifierEnabled: effectiveMagnifier,
+                    captureCursorData, presenterNameEnabled, presenterName, recordingMode,
+                    windowId: selectedWindowId || undefined,
+                    recordingPadding: 0,
+                    editAfterRecording,
+                });
+                recordingStartInFlightRef.current = false;
+                onClose();
+            })();
             return;
         }
         const timer = setTimeout(() => setCountdown(prev => (prev !== null ? prev - 1 : null)), 1000);
@@ -285,11 +340,12 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
                 </div>
 
                 <div className={styles.content}>
-                    {showRecordingTip && (
+                    {shouldShowLauncherTip && (
                         <div className={styles.onboardingTip}>
                             <Lightbulb size={14} />
+                            <span>Print Screen opens AgeofScreen. If Windows takes that key, use the thin top trigger. Record - Trim - Export.</span>
                             <span>Record → Trim → Export. Your recording opens in the editor when you stop.</span>
-                            <button type="button" className={styles.tipDismiss} onClick={() => { setShowRecordingTip(false); localStorage.setItem('ageofscreen-hasSeenRecordingTip', '1'); }} aria-label="Dismiss"><X size={12} /></button>
+                            <button type="button" className={styles.tipDismiss} onClick={dismissLauncherTip} aria-label="Dismiss"><X size={12} /></button>
                         </div>
                     )}
                     <PreviewPane
@@ -301,6 +357,7 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
                         cameraAudioMeterEnabled={cameraAudioMeterEnabled}
                         micEnabled={micEnabled}
                         isPreviewStarting={isPreviewStarting}
+                        previewError={previewError}
                         presenterNameEnabled={presenterNameEnabled} presenterName={presenterName}
                     />
 

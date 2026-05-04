@@ -40,7 +40,8 @@ export const ConfigToggles: React.FC<ConfigTogglesProps> = ({
             <div
                 className={`${styles.toggleCard} ${cameraEnabled ? styles.active : ''}`}
                 onClick={() => setCameraEnabled(!cameraEnabled)}
-                title="Toggle Webcam Preview"
+                aria-label="Toggle Webcam Preview"
+                data-tooltip="Webcam preview"
             >
                 <div className={styles.toggleIcon}>
                     <Camera size={16} strokeWidth={2} />
@@ -50,7 +51,8 @@ export const ConfigToggles: React.FC<ConfigTogglesProps> = ({
             <div
                 className={`${styles.toggleCard} ${micEnabled ? styles.active : ''}`}
                 onClick={() => setMicEnabled(!micEnabled)}
-                title="Toggle Microphone"
+                aria-label="Toggle Microphone"
+                data-tooltip="Microphone"
             >
                 <div className={styles.toggleIcon}>
                     <Mic size={16} strokeWidth={2} />
@@ -60,7 +62,8 @@ export const ConfigToggles: React.FC<ConfigTogglesProps> = ({
             <div
                 className={`${styles.toggleCard} ${captureCursorData ? styles.active : ''}`}
                 onClick={() => setCaptureCursorData(!captureCursorData)}
-                title="Capture cursor & clicks"
+                aria-label="Capture cursor and clicks"
+                data-tooltip="Cursor clicks"
             >
                 <div className={styles.toggleIcon}>
                     <MousePointer size={16} strokeWidth={2} />
@@ -71,7 +74,8 @@ export const ConfigToggles: React.FC<ConfigTogglesProps> = ({
                 <div
                     className={`${styles.toggleCard} ${liveMagnifierEnabled ? styles.active : ''}`}
                     onClick={() => setLiveMagnifierEnabled(!liveMagnifierEnabled)}
-                    title="Live Magnifier (Alt+1)"
+                    aria-label="Live Magnifier"
+                    data-tooltip="Live magnifier"
                 >
                     <div className={styles.toggleIcon}>
                         <Zap size={16} strokeWidth={2} />
@@ -82,7 +86,8 @@ export const ConfigToggles: React.FC<ConfigTogglesProps> = ({
             <div
                 className={`${styles.toggleCard} ${presenterNameEnabled ? styles.active : ''}`}
                 onClick={() => setPresenterNameEnabled(!presenterNameEnabled)}
-                title="Show Name Tag"
+                aria-label="Show Name Tag"
+                data-tooltip="Name tag"
             >
                 <div className={styles.toggleIcon}>
                     <User size={16} strokeWidth={2} />
@@ -92,7 +97,8 @@ export const ConfigToggles: React.FC<ConfigTogglesProps> = ({
             <div
                 className={`${styles.toggleCard} ${editAfterRecording ? styles.active : ''}`}
                 onClick={() => setEditAfterRecording(!editAfterRecording)}
-                title="Open Editor after stop"
+                aria-label="Open Editor after stop"
+                data-tooltip="Edit after stop"
             >
                 <div className={styles.toggleIcon}>
                     <Scissors size={16} strokeWidth={2} />
@@ -103,7 +109,8 @@ export const ConfigToggles: React.FC<ConfigTogglesProps> = ({
                 <div
                     className={`${styles.toggleCard} ${teleprompterEnabled ? styles.active : ''}`}
                     onClick={() => setTeleprompterEnabled(!teleprompterEnabled)}
-                    title="Show Teleprompter Script"
+                    aria-label="Show Teleprompter Script"
+                    data-tooltip="Teleprompter"
                 >
                     <div className={styles.toggleIcon}>
                         <MessageSquare size={16} strokeWidth={2} />

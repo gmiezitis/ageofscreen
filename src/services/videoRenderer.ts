@@ -15,6 +15,7 @@ import { perfMark } from '../utils/perf';
 import { fromMediaFileUrl } from '../shared/mediaPaths';
 import { isSupportedMediaFilePath } from '../shared/pathSecurity';
 import { normalizeArea, resolveBackgroundFFmpeg, CINEMATIC_CSS, computeBaseZoom, computeEffectFadeRatio, PREVIEW_ZOOM_CENTER_STRENGTH, TILT_RANGE, ZOOM_EASE_IN, ZOOM_EASE_OUT } from '../videoEditor/effectMath';
+import { buildFfmpegEffectEnvelopeExpr } from '../videoEditor/ffmpegExpressions';
 import { DEFAULT_ZOOM_INTENSITY, getEffectIntensity } from '../videoEditor/effectIntensity';
 import { buildResolvedTimelineTransitions, VISUAL_TRANSITION_GAP_TOLERANCE, VISUAL_TRANSITION_PREFERRED_DURATION } from '../videoEditor/timelineScene';
 import type { ClipTransition, TransitionType } from '../videoEditor/types';
@@ -139,8 +140,9 @@ const sampleTimedTrack = <T extends { time: number }>(points: T[], maxPoints: nu
 
     return result;
 };
-const MAX_CURSOR_OVERLAY_EXPR_POINTS = 72;
-const MAX_FOLLOW_CURSOR_EXPR_POINTS = 18;
+const MAX_FOLLOW_CURSOR_EXPR_POINTS = 128;
+const FOLLOW_CURSOR_EXPR_POINTS_PER_SECOND = 45;
+const FOLLOW_CURSOR_EXPR_MIN_POINTS = 24;
 // Breathing currently stays preview-only so it cannot destabilize FFmpeg export
 // or interfere with zoom-area targeting in the rendered file.
 const EXPORT_SAFE_EFFECT_TYPES = new Set(['zoom', '3d_tilt', 'card_flip', 'slow_zoom', 'blur_area', 'exposure']);
@@ -392,8 +394,7 @@ export class VideoRenderer {
         exportedEffectTypes: string[];
         fallbackMode: 'none' | 'reliable_subset' | 'no_effects';
         transitionFallbackMode: 'none' | 'cut';
-        cursorFallbackMode: 'none' | 'disabled';
-    } = { requestedEffectTypes: [], exportedEffectTypes: [], fallbackMode: 'none', transitionFallbackMode: 'none', cursorFallbackMode: 'none' };
+    } = { requestedEffectTypes: [], exportedEffectTypes: [], fallbackMode: 'none', transitionFallbackMode: 'none' };
 
     isAvailable(): boolean {
         // Re-check on each call in case FFmpeg was installed after startup
@@ -413,7 +414,7 @@ export class VideoRenderer {
 
     /**
      * Process video with trim, crop, frame/padding, audio overlays, effects, and optional watermark.
-     * When addWatermark is true, adds the branded export watermark at bottom-right (free plan).
+     * When addWatermark is true, adds the branded export watermark at bottom-right.
      */
     async processVideo(
         inputPath: string,
@@ -425,7 +426,7 @@ export class VideoRenderer {
         outputFrameSize?: { width: number; height: number } | null,
         audioSegments?: Array<{ file: string; startTime: number; duration: number; volume: number }>,
         addWatermark?: boolean,
-        smartEffects?: Array<{ type: string; startTime: number; duration: number; intensity: number; tilt?: number; zoomArea?: { x: number; y: number; width: number; height: number } | null; followCursor?: boolean; followCursorIntensity?: number; cursorTrack?: Array<{ time: number; x: number; y: number }> }>,
+        smartEffects?: Array<{ type: string; startTime: number; duration: number; intensity: number; tilt?: number; zoomArea?: { x: number; y: number; width: number; height: number } | null; followCursor?: boolean; followCursorIntensity?: number; cursorTrack?: Array<{ time: number; x: number; y: number }>; renderOrder?: number }>,
         quality?: 'fast' | 'balanced' | 'high',
         transitionType?: 'cut' | 'crossfade' | 'dip_to_black',
         textOverlays?: any[],
@@ -433,29 +434,10 @@ export class VideoRenderer {
         imageOverlays?: Array<{ file: string; startTime: number; duration: number; x: number; y: number; width: number; height: number; renderMode?: 'overlay' | 'fullscreen' }>,
         imageClips?: Array<{ id?: string; file: string; startTime: number; duration: number }>,
         clipTransitions?: ClipTransition[],
-        cursorOverlay?: {
-            backdropFile?: string;
-            backdropWidth?: number;
-            backdropHeight?: number;
-            backdropHotspotX?: number;
-            backdropHotspotY?: number;
-            cursorFile?: string;
-            cursorWidth?: number;
-            cursorHeight?: number;
-            cursorHotspotX?: number;
-            cursorHotspotY?: number;
-            rippleFile?: string;
-            rippleSize?: number;
-            disabledRanges?: Array<{ startTime: number; endTime: number }>;
-            backdropOpacity?: number;
-            track: Array<{ time: number; x: number; y: number }>;
-            clicks: Array<{ time: number; x: number; y: number }>;
-        } | null,
         colorGrade?: string,
         premiumVoice?: boolean,
         renderOptions?: {
             forceCutTransitions?: boolean;
-            disableCursorOverlay?: boolean;
             onProgress?: (fraction: number, progressSeconds: number, durationSeconds: number) => void;
         }
     ): Promise<string> {
@@ -518,24 +500,31 @@ export class VideoRenderer {
         const hasCrop = crop && (crop.x > 0.5 || crop.y > 0.5 || crop.width < 99 || crop.height < 99);
         const hasFrame = padding > 0;
         const audios = audioSegments || [];
-        const requestedEffects = smartEffects || [];
+        const requestedEffects = (smartEffects || [])
+            .map((effect, index) => ({
+                ...effect,
+                renderOrder: Number.isFinite(effect.renderOrder) ? Number(effect.renderOrder) : index,
+            }))
+            .sort((a, b) => {
+                const renderOrderDelta = (a.renderOrder ?? 0) - (b.renderOrder ?? 0);
+                if (renderOrderDelta !== 0) {
+                    return renderOrderDelta;
+                }
+                return a.startTime - b.startTime;
+            });
         const effects = requestedEffects.filter((fx) => EXPORT_SAFE_EFFECT_TYPES.has(fx.type));
         const skippedEffects = requestedEffects.filter((fx) => !EXPORT_SAFE_EFFECT_TYPES.has(fx.type));
         const forceCutTransitions = renderOptions?.forceCutTransitions === true;
-        const disableCursorOverlay = renderOptions?.disableCursorOverlay === true;
         const onProgress = renderOptions?.onProgress;
-        const effectiveCursorOverlay = disableCursorOverlay ? null : cursorOverlay;
         const buildRenderInfo = (
             fallbackMode: 'none' | 'reliable_subset' | 'no_effects',
             exportedEffectTypes: string[] = effects.map((fx) => fx.type),
             transitionFallbackMode: 'none' | 'cut' = forceCutTransitions ? 'cut' : 'none',
-            cursorFallbackMode: 'none' | 'disabled' = disableCursorOverlay ? 'disabled' : 'none',
         ) => ({
             requestedEffectTypes: requestedEffects.map((fx) => fx.type),
             exportedEffectTypes,
             fallbackMode,
             transitionFallbackMode,
-            cursorFallbackMode,
         });
         if (skippedEffects.length > 0) {
             console.warn('[VideoRenderer] Skipping export-unsafe effects:', skippedEffects.map((fx) => fx.type));
@@ -703,33 +692,6 @@ export class VideoRenderer {
             args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
             nextInputIdx += 1;
         }
-        let cursorBackdropInputIdx = -1;
-        if (effectiveCursorOverlay?.backdropFile) {
-            const resolvedPath = await resolveOverlayInputPath(effectiveCursorOverlay.backdropFile, imageClipInputs.length + textImageInputs.length + annotationInputs.length + imageOverlayInputs.length);
-            args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
-            cursorBackdropInputIdx = nextInputIdx;
-            nextInputIdx += 1;
-        }
-        let cursorInputIdx = -1;
-        if (effectiveCursorOverlay?.cursorFile) {
-            const resolvedPath = await resolveOverlayInputPath(
-                effectiveCursorOverlay.cursorFile,
-                imageClipInputs.length + textImageInputs.length + annotationInputs.length + imageOverlayInputs.length + (cursorBackdropInputIdx !== -1 ? 1 : 0),
-            );
-            args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
-            cursorInputIdx = nextInputIdx;
-            nextInputIdx += 1;
-        }
-        let rippleInputIdx = -1;
-        if (effectiveCursorOverlay?.rippleFile) {
-            const resolvedPath = await resolveOverlayInputPath(
-                effectiveCursorOverlay.rippleFile,
-                imageClipInputs.length + textImageInputs.length + annotationInputs.length + imageOverlayInputs.length + (cursorBackdropInputIdx !== -1 ? 1 : 0) + (cursorInputIdx !== -1 ? 1 : 0),
-            );
-            args.push('-loop', '1', '-t', exportDurationLabel, '-i', resolvedPath);
-            rippleInputIdx = nextInputIdx;
-            nextInputIdx += 1;
-        }
         let watermarkInputIdx = -1;
         if (addWatermark) {
             const watermarkLogoPath = resolveBrandingResourcePath(EXPORT_WATERMARK_FILE);
@@ -875,90 +837,6 @@ export class VideoRenderer {
                 audioOut = currentAudioLabel;
             }
         }
-        if ((cursorBackdropInputIdx !== -1 || cursorInputIdx !== -1) && effectiveCursorOverlay?.track?.length) {
-            const cursorExprBudget = getExpressionPointBudget(exportDuration, MAX_CURSOR_OVERLAY_EXPR_POINTS, 4, 18);
-            const normalizedTrack = sampleTimedTrack(effectiveCursorOverlay.track, cursorExprBudget).map((point) => ({
-                time: point.time,
-                x: clamp01(point.x / 100),
-                y: clamp01(point.y / 100),
-            }));
-            const cursorEnableExpr = (() => {
-                const ranges = Array.isArray(effectiveCursorOverlay.disabledRanges)
-                    ? effectiveCursorOverlay.disabledRanges
-                        .filter((range) => range && range.endTime > range.startTime)
-                        .map((range) => ({
-                            startTime: Math.max(0, Math.min(exportDuration, range.startTime)),
-                            endTime: Math.max(0, Math.min(exportDuration, range.endTime)),
-                        }))
-                    : [];
-
-                let expression = `between(t\\,0\\,${exportDuration.toFixed(3)})`;
-                for (const range of ranges) {
-                    expression += `*if(between(t\\,${range.startTime.toFixed(3)}\\,${range.endTime.toFixed(3)})\\,0\\,1)`;
-                }
-                return expression;
-            })();
-
-            const buildCursorCoordExpr = (axis: 'x' | 'y') => {
-                let expression = ff(normalizedTrack[normalizedTrack.length - 1][axis], 6);
-                for (let i = normalizedTrack.length - 2; i >= 0; i -= 1) {
-                    const current = normalizedTrack[i];
-                    const next = normalizedTrack[i + 1];
-                    const delta = next[axis] - current[axis];
-                    const segmentDuration = Math.max(0.001, next.time - current.time);
-                    const interpolated = `${ff(current[axis], 6)}+${ff(delta, 6)}*((t-${ff(current.time, 3)})/${ff(segmentDuration, 3)})`;
-                    expression = `if(between(t\\,${ff(current.time, 3)}\\,${ff(next.time, 3)})\\,${interpolated}\\,${expression})`;
-                }
-                return expression;
-            };
-
-            const cursorXExpr = buildCursorCoordExpr('x');
-            const cursorYExpr = buildCursorCoordExpr('y');
-            if (cursorBackdropInputIdx !== -1 && (effectiveCursorOverlay.backdropWidth ?? 0) > 0 && (effectiveCursorOverlay.backdropHeight ?? 0) > 0) {
-                const backdropBaseLabel = `[cursorbackdropbase]`;
-                const backdropNextLabel = `[cursorbackdropfx]`;
-                const backdropHotspotX = Number.isFinite(effectiveCursorOverlay.backdropHotspotX) ? effectiveCursorOverlay.backdropHotspotX : (effectiveCursorOverlay.backdropWidth ?? 0) / 2;
-                const backdropHotspotY = Number.isFinite(effectiveCursorOverlay.backdropHotspotY) ? effectiveCursorOverlay.backdropHotspotY : (effectiveCursorOverlay.backdropHeight ?? 0) / 2;
-                const backdropOpacity = clamp01(
-                    Number.isFinite(effectiveCursorOverlay.backdropOpacity)
-                        ? Number(effectiveCursorOverlay.backdropOpacity)
-                        : 1,
-                );
-                videoFilters.push(`[${cursorBackdropInputIdx}:v]format=rgba,scale=${effectiveCursorOverlay.backdropWidth}:${effectiveCursorOverlay.backdropHeight},colorchannelmixer=aa=${backdropOpacity.toFixed(3)}${backdropBaseLabel}`);
-                videoFilters.push(`${videoOut}${backdropBaseLabel}overlay=x='max(0\\,min(W-w\\,W*(${cursorXExpr})-${backdropHotspotX.toFixed(2)}))':y='max(0\\,min(H-h\\,H*(${cursorYExpr})-${backdropHotspotY.toFixed(2)}))':eval=frame:enable='${cursorEnableExpr}':shortest=1:eof_action=endall:format=auto${backdropNextLabel}`);
-                videoOut = backdropNextLabel;
-            }
-            if (cursorInputIdx !== -1 && (effectiveCursorOverlay.cursorWidth ?? 0) > 0 && (effectiveCursorOverlay.cursorHeight ?? 0) > 0) {
-                const cursorBaseLabel = `[cursorbase]`;
-                const cursorNextLabel = `[cursorfx]`;
-                const cursorHotspotX = Number.isFinite(effectiveCursorOverlay.cursorHotspotX) ? effectiveCursorOverlay.cursorHotspotX : (effectiveCursorOverlay.cursorWidth ?? 0) / 2;
-                const cursorHotspotY = Number.isFinite(effectiveCursorOverlay.cursorHotspotY) ? effectiveCursorOverlay.cursorHotspotY : (effectiveCursorOverlay.cursorHeight ?? 0) / 2;
-                videoFilters.push(`[${cursorInputIdx}:v]format=rgba,scale=${effectiveCursorOverlay.cursorWidth}:${effectiveCursorOverlay.cursorHeight}${cursorBaseLabel}`);
-                videoFilters.push(`${videoOut}${cursorBaseLabel}overlay=x='max(0\\,min(W-w\\,W*(${cursorXExpr})-${cursorHotspotX.toFixed(2)}))':y='max(0\\,min(H-h\\,H*(${cursorYExpr})-${cursorHotspotY.toFixed(2)}))':eval=frame:enable='${cursorEnableExpr}':shortest=1:eof_action=endall:format=auto${cursorNextLabel}`);
-                videoOut = cursorNextLabel;
-            }
-            if (rippleInputIdx !== -1 && effectiveCursorOverlay.clicks.length > 0 && (effectiveCursorOverlay.rippleSize ?? 0) > 0) {
-                const rippleLabels = effectiveCursorOverlay.clicks.map((_, index) => `[ripple${index}]`).join('');
-                videoFilters.push(`[${rippleInputIdx}:v]format=rgba,split=${effectiveCursorOverlay.clicks.length}${rippleLabels}`);
-
-                effectiveCursorOverlay.clicks.forEach((click, index) => {
-                    const start = click.time.toFixed(3);
-                    const end = (click.time + 0.55).toFixed(3);
-                    const progress = `max(0\\,min(1\\,(t-${start})/0.55))`;
-                    const scaleExpr = `${effectiveCursorOverlay.rippleSize}*(0.4+2.4*${progress})`;
-                    const scaledLabel = `[ripplescale${index}]`;
-                    const fadedLabel = `[ripplefade${index}]`;
-                    const nextLabel = `[ripplefx${index}]`;
-                    const xCoord = ff(clamp01(click.x / 100), 6);
-                    const yCoord = ff(clamp01(click.y / 100), 6);
-                    videoFilters.push(`[ripple${index}]scale=w='${scaleExpr}':h='${scaleExpr}':eval=frame${scaledLabel}`);
-                    videoFilters.push(`${scaledLabel}format=rgba,fade=t=out:st=${start}:d=0.55:alpha=1${fadedLabel}`);
-                    videoFilters.push(`${videoOut}${fadedLabel}overlay=x='max(0\\,min(W-w\\,W*${xCoord}-w/2))':y='max(0\\,min(H-h\\,H*${yCoord}-h/2))':eval=frame:enable='between(t\\,${start}\\,${end})':shortest=1:eof_action=endall:format=auto${nextLabel}`);
-                    videoOut = nextLabel;
-                });
-            }
-        }
-
         // 1. Separate content-level and window-level effects
         const contentEffects = effects.filter(e => !['3d_tilt', 'card_flip'].includes(e.type));
         const windowEffects = effects.filter(e => ['3d_tilt', 'card_flip'].includes(e.type));
@@ -993,17 +871,19 @@ export class VideoRenderer {
                     const attackSmooth = `pow(${attackProgress}\\,3)*(${attackProgress}*(${attackProgress}*6-15)+10)`;
                     const releaseSmooth = `pow(${releaseProgress}\\,3)*(${releaseProgress}*(${releaseProgress}*6-15)+10)`;
                     const zoomAttack = `if(lt(${progress}\\,${ff(ZOOM_EASE_IN)})\\,${attackSmooth}\\,if(gt(${progress}\\,${ff(ZOOM_EASE_OUT)})\\,${releaseSmooth}\\,1))`;
-                    const fadeInExpr = `if(lt(${progress}\\,${ff(fadeRatio)})\\,if(lt(${progress}/${ff(fadeRatio)}\\,0.5)\\,4*pow(${progress}/${ff(fadeRatio)}\\,3)\\,1-pow(-2*(${progress}/${ff(fadeRatio)})+2\\,3)/2)\\,1)`;
-                    const fadeOutProgress = `(1-${progress})/${ff(fadeRatio)}`;
-                    const fadeOutExpr = `if(gt(${progress}\\,${ff(1 - fadeRatio)})\\,if(lt(${fadeOutProgress}\\,0.5)\\,4*pow(${fadeOutProgress}\\,3)\\,1-pow(-2*(${fadeOutProgress})+2\\,3)/2)\\,1)`;
-                    const envelope = `${zoomAttack}*${fadeInExpr}*${fadeOutExpr}`;
+                    const envelope = `${zoomAttack}*${buildFfmpegEffectEnvelopeExpr(progress, fadeRatio)}`;
                     const area = normalizeArea(fx.zoomArea ?? { x: 25, y: 25, width: 50, height: 50 });
                     const baseZoom = computeBaseZoom(area);
                     const peakZoom = 1 + (baseZoom - 1) * mult;
                     const cursorTrack = Array.isArray((fx as any).cursorTrack) ? (fx as any).cursorTrack : [];
                     const buildCursorExpr = (axis: 'x' | 'y') => {
                         if (!fx.followCursor || cursorTrack.length === 0) return null;
-                        const followExprBudget = getExpressionPointBudget(fx.duration, MAX_FOLLOW_CURSOR_EXPR_POINTS, 3, 6);
+                        const followExprBudget = getExpressionPointBudget(
+                            fx.duration,
+                            MAX_FOLLOW_CURSOR_EXPR_POINTS,
+                            FOLLOW_CURSOR_EXPR_POINTS_PER_SECOND,
+                            FOLLOW_CURSOR_EXPR_MIN_POINTS,
+                        );
                         const normalized = sampleTimedTrack(cursorTrack, followExprBudget).map((point: { time: number; x: number; y: number }) => {
                             const safeCoord = clamp01((axis === 'x' ? point.x : point.y) / 100);
                             return {
@@ -1065,10 +945,7 @@ export class VideoRenderer {
                     const mult = getEffectIntensity(fx) / 100;
                     const fadeRatio = computeEffectFadeRatio(fx.duration);
                     const progress = `max(0\\,min(1\\,(t-${start})/${Math.max(0.001, fx.duration).toFixed(3)}))`;
-                    const fadeInExpr = `if(lt(${progress}\\,${ff(fadeRatio)})\\,if(lt(${progress}/${ff(fadeRatio)}\\,0.5)\\,4*pow(${progress}/${ff(fadeRatio)}\\,3)\\,1-pow(-2*(${progress}/${ff(fadeRatio)})+2\\,3)/2)\\,1)`;
-                    const fadeOutProgress = `(1-${progress})/${ff(fadeRatio)}`;
-                    const fadeOutExpr = `if(gt(${progress}\\,${ff(1 - fadeRatio)})\\,if(lt(${fadeOutProgress}\\,0.5)\\,4*pow(${fadeOutProgress}\\,3)\\,1-pow(-2*(${fadeOutProgress})+2\\,3)/2)\\,1)\\,1)`;
-                    const envelope = `${fadeInExpr}*${fadeOutExpr}`;
+                    const envelope = buildFfmpegEffectEnvelopeExpr(progress, fadeRatio);
 
                     if (fx.type === 'breathing') {
                         const breathMult = (0.04 * mult).toFixed(4);
@@ -1363,7 +1240,7 @@ export class VideoRenderer {
                 const nextLabel = `[annofx${i}]`;
                 const start = overlay.startTime.toFixed(3);
                 const end = (overlay.startTime + overlay.duration).toFixed(3);
-                videoFilters.push(`[${inputIdx}:v]format=rgba,scale=${effectW}:${effectH}${scaledLabel}`);
+                videoFilters.push(`[${inputIdx}:v]format=rgba,scale=${windowW}:${windowH}${scaledLabel}`);
                 videoFilters.push(`${videoOut}${scaledLabel}overlay=0:0:enable='between(t\\,${start}\\,${end})':shortest=1:eof_action=endall:format=auto${nextLabel}`);
                 videoOut = nextLabel;
             });
@@ -1422,10 +1299,10 @@ export class VideoRenderer {
             if (watermarkInputIdx !== -1) {
                 const rightMargin = Math.max(10, Math.round(shortEdge * 0.018));
                 const bottomMargin = Math.max(10, Math.round(shortEdge * 0.018));
-                const logoWidth = Math.max(88, Math.min(182, Math.round(shortEdge * 0.2)));
+                const logoWidth = Math.max(112, Math.min(260, Math.round(shortEdge * 0.28)));
                 const scaledLabel = '[wmbrandscale]';
                 const nextLabel = '[outwm]';
-                videoFilters.push(`[${watermarkInputIdx}:v]format=rgba,scale=${logoWidth}:-1:flags=lanczos,colorchannelmixer=aa=0.36${scaledLabel}`);
+                videoFilters.push(`[${watermarkInputIdx}:v]format=rgba,scale=${logoWidth}:-1:flags=lanczos,colorchannelmixer=aa=0.72${scaledLabel}`);
                 videoFilters.push(`${videoOut}${scaledLabel}overlay=x='W-w-${rightMargin}':y='H-h-${bottomMargin}':shortest=1:eof_action=endall:format=auto${nextLabel}`);
                 videoOut = nextLabel;
             }
@@ -1632,52 +1509,6 @@ export class VideoRenderer {
                         return;
                     }
 
-                    const cursorGraphFailure = !disableCursorOverlay
-                        && !!effectiveCursorOverlay?.track?.length
-                        && (stalled || /overlay|Invalid argument|Error while filtering|Undefined constant|missing \(|Failed to configure output pad|Error reinitializing filters|No such filter/i.test(stderr));
-                    if (cursorGraphFailure) {
-                        console.warn('[VideoRenderer] Cursor overlay failed during export; retrying without cursor overlay');
-                        try {
-                            const fallbackPath = await this.processVideo(
-                                inputPath,
-                                outputPath,
-                                segments,
-                                crop,
-                                backgroundColor,
-                                videoPadding,
-                                outputFrameSize,
-                                audioSegments,
-                                addWatermark,
-                                smartEffects,
-                                quality,
-                                transitionType,
-                                textOverlays,
-                                annotationImageOverlays,
-                                imageOverlays,
-                                imageClips,
-                                clipTransitions,
-                                cursorOverlay,
-                                colorGrade,
-                                premiumVoice,
-                                { forceCutTransitions, disableCursorOverlay: true, onProgress }
-                            );
-                            const retryInfo = this.getLastRenderInfo();
-                            this.lastRenderInfo = {
-                                requestedEffectTypes: requestedEffects.map((fx) => fx.type),
-                                exportedEffectTypes: retryInfo.exportedEffectTypes,
-                                fallbackMode: retryInfo.fallbackMode,
-                                transitionFallbackMode: retryInfo.transitionFallbackMode,
-                                cursorFallbackMode: 'disabled',
-                            };
-                            perf.end({ outputPath, cursorFallback: true, stalled });
-                            cleanupTempOverlays();
-                            resolve(fallbackPath);
-                            return;
-                        } catch (fallbackErr) {
-                            console.error('[VideoRenderer] Cursor overlay fallback failed:', fallbackErr);
-                        }
-                    }
-
                     const transitionFailure = canRetryWithCutTransitions
                         && (stalled || /xfade|acrossfade|concat|Error while filtering|Failed to configure output pad|non monotonically increasing dts|Error reinitializing filters/i.test(stderr));
                     if (transitionFailure) {
@@ -1701,7 +1532,6 @@ export class VideoRenderer {
                                 imageOverlays,
                                 imageClips,
                                 clipTransitions,
-                                cursorOverlay,
                                 colorGrade,
                                 premiumVoice,
                                 { forceCutTransitions: true, onProgress }
@@ -1712,7 +1542,6 @@ export class VideoRenderer {
                                 exportedEffectTypes: retryInfo.exportedEffectTypes,
                                 fallbackMode: retryInfo.fallbackMode,
                                 transitionFallbackMode: 'cut',
-                                cursorFallbackMode: retryInfo.cursorFallbackMode,
                             };
                             perf.end({ outputPath, transitionFallback: true, stalled });
                             cleanupTempOverlays();
@@ -1750,7 +1579,6 @@ export class VideoRenderer {
                                     imageOverlays,
                                     imageClips,
                                     clipTransitions,
-                                    cursorOverlay,
                                     colorGrade,
                                     premiumVoice,
                                     { forceCutTransitions, onProgress }
@@ -1761,7 +1589,6 @@ export class VideoRenderer {
                                     exportedEffectTypes: retryInfo.exportedEffectTypes,
                                     fallbackMode: retryInfo.fallbackMode === 'none' ? 'reliable_subset' : retryInfo.fallbackMode,
                                     transitionFallbackMode: retryInfo.transitionFallbackMode,
-                                    cursorFallbackMode: retryInfo.cursorFallbackMode,
                                 };
                                 perf.end({ outputPath, effectsFallback: true });
                                 cleanupTempOverlays();
@@ -1792,7 +1619,6 @@ export class VideoRenderer {
                                 imageOverlays,
                                 imageClips,
                                 clipTransitions,
-                                cursorOverlay,
                                 colorGrade,
                                 premiumVoice,
                                 { forceCutTransitions, onProgress }
@@ -1803,7 +1629,6 @@ export class VideoRenderer {
                                 exportedEffectTypes: retryInfo.exportedEffectTypes,
                                 fallbackMode: retryInfo.fallbackMode === 'none' ? 'no_effects' : retryInfo.fallbackMode,
                                 transitionFallbackMode: retryInfo.transitionFallbackMode,
-                                cursorFallbackMode: retryInfo.cursorFallbackMode,
                             };
                             perf.end({ outputPath, effectsFallback: true });
                             cleanupTempOverlays();

@@ -26,15 +26,18 @@ const drawLogoWatermark = (
     height: number,
 ) => {
     const shortEdge = Math.max(320, Math.min(width, height));
-    const margin = clamp(Math.round(shortEdge * 0.018), 10, 24);
-    const targetWidth = clamp(Math.round(shortEdge * 0.2), 88, 182);
+    const margin = clamp(Math.round(shortEdge * 0.016), 10, 22);
+    const targetWidth = clamp(Math.round(shortEdge * 0.19), 94, 190);
     const aspectRatio = logo.width > 0 && logo.height > 0 ? logo.width / logo.height : 1;
-    const targetHeight = Math.max(24, Math.round(targetWidth / Math.max(0.1, aspectRatio)));
+    const targetHeight = Math.max(22, Math.round(targetWidth / Math.max(0.1, aspectRatio)));
     const x = width - targetWidth - margin;
     const y = height - targetHeight - margin;
 
     ctx.save();
-    ctx.globalAlpha = 0.36;
+    ctx.shadowColor = "rgba(0, 0, 0, 0.42)";
+    ctx.shadowBlur = Math.max(5, Math.round(shortEdge * 0.008));
+    ctx.shadowOffsetY = 1;
+    ctx.globalAlpha = 0.74;
     ctx.drawImage(logo, x, y, targetWidth, targetHeight);
     ctx.restore();
 };

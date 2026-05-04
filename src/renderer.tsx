@@ -9,7 +9,7 @@ import { useRecordingManager } from "./components/RecordingManager";
 import { CanvasRenderer } from "./services/canvasRenderer";
 import { buildWatermarkedCanvas } from "./services/exportWatermark";
 import { penSizeValues, textSizeValues, highlighterSizeValues } from "./styles";
-import type { Tool, PenSize, BlurMode, AnnotationObject, ImageAnnotation } from "./types";
+import type { Tool, PenSize, BlurMode, AnnotationObject, ImageAnnotation, ArrowType, StepType } from "./types";
 import type { OnboardingState } from "./shared/licensing";
 
 type CropSelection = {
@@ -54,6 +54,18 @@ const createEditorSnapshot = (dataUrl: string, annotations: AnnotationObject[]):
     dataUrl,
     annotations: cloneAnnotations(annotations),
 });
+
+const createImageChangeSignature = (dataUrl: string | null): string | null => {
+    if (!dataUrl) {
+        return null;
+    }
+
+    return [
+        dataUrl.length,
+        dataUrl.slice(0, 96),
+        dataUrl.slice(-96),
+    ].join(":");
+};
 
 const deriveTextPreset = (fontSize: number): PenSize => (
     fontSize <= 14 ? "s" : fontSize <= 22 ? "m" : "l"
@@ -172,12 +184,14 @@ const App: React.FC = () => {
     const [textColor, setTextColor] = useState("#ff0000");
     const [selectedTextSize, setSelectedTextSize] = useState<PenSize>("m");
     const [defaultTextFontSize, setDefaultTextFontSize] = useState<number>(textSizeValues.m);
-    const [defaultTextBoxWidth, setDefaultTextBoxWidth] = useState<number>(240);
+    const [defaultIsPlainText, setDefaultIsPlainText] = useState<boolean>(false);
     const [stepColor, setStepColor] = useState("#ff0000");
     const [selectedStepSize, setSelectedStepSize] = useState<PenSize>("m");
     const [stepSymbol, setStepSymbol] = useState<string | undefined>(undefined);
     const [selectedSymbolText, setSelectedSymbolText] = useState("❤️");
     const [selectedBlurMode, setSelectedBlurMode] = useState<BlurMode>("spot");
+    const [selectedArrowType, setSelectedArrowType] = useState<ArrowType>("sharp");
+    const [selectedStepType, setSelectedStepType] = useState<StepType>("circle");
     const [scrollOffset, setScrollOffset] = useState({ x: 0, y: 0 });
     const [cropSelection, setCropSelection] = useState<CropSelection | null>(null);
     const [isDrawing, setIsDrawing] = useState(false);
@@ -192,7 +206,7 @@ const App: React.FC = () => {
     const statusTimeoutRef = useRef<number | null>(null);
     const allowWindowCloseRef = useRef(false);
     const hasUnsavedChangesRef = useRef(false);
-    const lastSavedSignatureRef = useRef(JSON.stringify({ capturedDataUrl: null, annotations: [] }));
+    const lastSavedSignatureRef = useRef(JSON.stringify({ image: null, annotations: [] }));
 
     // --- Annotation Manager ---
     const [annotationState, annotationActions] = useAnnotationManager();
@@ -380,7 +394,7 @@ const App: React.FC = () => {
     }, [annotationActions, selectedTextAnnotation]);
 
     const handleTextFontSizeChange = useCallback((fontSize: number) => {
-        const nextFontSize = Math.max(10, Math.min(96, Math.round(fontSize)));
+        const nextFontSize = Math.max(10, Math.min(160, Math.round(fontSize)));
         const nextPreset = deriveTextPreset(nextFontSize);
         setDefaultTextFontSize(nextFontSize);
         setSelectedTextSize(nextPreset);
@@ -404,22 +418,12 @@ const App: React.FC = () => {
         }
     }, [annotationActions, selectedTextAnnotation]);
 
-    const handleTextBoxWidthChange = useCallback((boxWidth: number) => {
-        const nextWidth = Math.max(120, Math.round(boxWidth));
-        setDefaultTextBoxWidth(nextWidth);
+    const handleTogglePlainText = useCallback((isPlain: boolean) => {
+        setDefaultIsPlainText(isPlain);
 
         if (selectedTextAnnotation) {
-            const textMeasureContext = canvasRef.current?.getContext("2d")
-                ?? previewCanvasRef.current?.getContext("2d")
-                ?? null;
-            const nextLayout = CanvasRenderer.getTextBoxLayout({
-                ...selectedTextAnnotation,
-                boxWidth: nextWidth,
-            }, textMeasureContext);
-
             annotationActions.updateAnnotationLive?.(selectedTextAnnotation.id, {
-                boxWidth: nextWidth,
-                boxHeight: nextLayout.boxHeight,
+                isPlainText: isPlain,
             });
         }
     }, [annotationActions, selectedTextAnnotation]);
@@ -433,11 +437,7 @@ const App: React.FC = () => {
 
     const [displayDimensions, setDisplayDimensions] = useState<{ width: string; height: string }>({ width: "auto", height: "auto" });
     const activeTextFontSize = selectedTextAnnotation ? parseFontSize(selectedTextAnnotation.font) : defaultTextFontSize;
-    const activeTextBoxWidth = selectedTextAnnotation?.boxWidth ?? defaultTextBoxWidth;
-    const textBoxWidthMax = Math.max(
-        260,
-        (canvasRef.current?.width ?? imageElementRef.current?.naturalWidth ?? 920) - 32,
-    );
+    const activeIsPlainText = selectedTextAnnotation ? !!selectedTextAnnotation.isPlainText : defaultIsPlainText;
     const displayWidthPx = useMemo(() => {
         const parsed = Number.parseFloat(displayDimensions.width);
         return Number.isFinite(parsed) ? parsed : 0;
@@ -446,10 +446,11 @@ const App: React.FC = () => {
         const parsed = Number.parseFloat(displayDimensions.height);
         return Number.isFinite(parsed) ? parsed : 0;
     }, [displayDimensions.height]);
+    const capturedImageSignature = useMemo(() => createImageChangeSignature(capturedDataUrl), [capturedDataUrl]);
     const currentEditorSignature = useMemo(() => JSON.stringify({
-        capturedDataUrl,
+        image: capturedImageSignature,
         annotations,
-    }), [annotations, capturedDataUrl]);
+    }), [annotations, capturedImageSignature]);
     const hasUnsavedChanges = Boolean(capturedDataUrl) && currentEditorSignature !== lastSavedSignatureRef.current;
 
     useEffect(() => {
@@ -604,16 +605,12 @@ const App: React.FC = () => {
                     previewCanvasRef.current.width = naturalWidth;
                     previewCanvasRef.current.height = naturalHeight;
                 }
-                // Prepare blurred version for focus blur
+                // Keep blur preparation lazy. Full-resolution blur can be expensive and
+                // most screenshot edits never use blur tools.
                 if (blurredImageCanvasRef.current) {
                     const blurCanvas = blurredImageCanvasRef.current;
-                    blurCanvas.width = naturalWidth;
-                    blurCanvas.height = naturalHeight;
-                    const ctx = blurCanvas.getContext("2d");
-                    if (ctx) {
-                        ctx.filter = "blur(10px)";
-                        ctx.drawImage(img, 0, 0);
-                    }
+                    blurCanvas.width = 0;
+                    blurCanvas.height = 0;
                 }
 
                 // Calculate display dimensions to fit 90vw/90vh while maintaining aspect ratio
@@ -1040,11 +1037,12 @@ const App: React.FC = () => {
                     onPenSizeSelect={handlePenSizeSelect}
                     hasSelectedTextAnnotation={!!selectedTextAnnotation}
                     textFontSize={activeTextFontSize}
-                    textBoxWidth={activeTextBoxWidth}
-                    textBoxWidthMax={textBoxWidthMax}
+                    isPlainText={activeIsPlainText}
+                    selectedArrowType={selectedArrowType}
+                    onArrowTypeChange={setSelectedArrowType}
                     onBeginTextAdjustment={beginTextBoxAdjustment}
                     onTextFontSizeChange={handleTextFontSizeChange}
-                    onTextBoxWidthChange={handleTextBoxWidthChange}
+                    onTogglePlainText={handleTogglePlainText}
                     selectedHighlighterSize={selectedHighlighterSize}
                     onHighlighterSizeSelect={handleHighlighterSizeSelect}
                     selectedStepSize={selectedStepSize}
@@ -1063,6 +1061,8 @@ const App: React.FC = () => {
                     onStepSymbolChange={handleStepSymbolChange}
                     selectedSymbolText={selectedSymbolText}
                     onSymbolTextChange={handleSymbolTextChange}
+                    selectedStepType={selectedStepType}
+                    onStepTypeChange={setSelectedStepType}
                     onClear={annotationActions.clearAnnotations}
                     isFullscreen={false}
                     isDarkMode={true}
@@ -1144,10 +1144,12 @@ const App: React.FC = () => {
                                 textColor={textColor}
                                 selectedTextSize={selectedTextSize}
                                 defaultTextFontSize={defaultTextFontSize}
-                                defaultTextBoxWidth={defaultTextBoxWidth}
+                                isPlainText={activeIsPlainText}
                                 stepColor={stepColor}
                                 selectedStepSize={selectedStepSize}
                                 selectedStepSymbol={stepSymbol}
+                                selectedArrowType={selectedArrowType}
+                                selectedStepType={selectedStepType}
                                 stepCounter={stepCounter}
                                 selectedSymbolText={selectedSymbolText}
                                 onStepCounterIncrement={() => { }} // No longer needed, handled by annotations update
@@ -1155,6 +1157,7 @@ const App: React.FC = () => {
                                 blurBrushSize={penSizeValues[selectedPenSize]}
                                 isDrawing={isDrawing}
                                 setIsDrawing={setIsDrawing}
+                                isDarkMode={true}
                                 lastPosition={lastPosition}
                                 setLastPosition={setLastPosition}
                                 annotations={annotations}

@@ -21,6 +21,11 @@ const CaptureUI: React.FC = () => {
     );
     const selectionDivRef = useRef<HTMLDivElement>(null);
 
+    useEffect(() => {
+        document.documentElement.style.background = "transparent";
+        document.body.style.background = "transparent";
+    }, []);
+
     // Function to send result and close window
     const sendResult = useCallback(
         (

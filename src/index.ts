@@ -3,7 +3,8 @@
  * Lightweight screen capture and focus tool
  */
 
-import { app, BrowserWindow, ipcMain, screen, desktopCapturer, nativeImage, Tray, dialog, globalShortcut, protocol, session, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, desktopCapturer, nativeImage, Tray, Menu, dialog, globalShortcut, protocol, session, shell } from "electron";
+import type { WebContents } from "electron";
 import path from "path";
 import { FEATURES } from "./config/features";
 import { PLAN_CONFIG, type PlanTier } from "./config/plan";
@@ -18,6 +19,7 @@ import { fromMediaFileUrl, toMediaFileUrl } from "./shared/mediaPaths";
 import { getCameraDimensionsForWidth, normalizeCameraShape, type CameraShape } from "./shared/cameraShapes";
 import { isPathInsideDirectory, isSupportedCaptureInvokeType, isSupportedMediaDialogType, isSupportedMediaFilePath } from "./shared/pathSecurity";
 import { buildSmartTrackingEffects, DEFAULT_SMART_TRACKING_PROFILE, remapSmartTrackingEffects } from "./videoEditor/smartTracking";
+import { resolveBackgroundFFmpeg } from "./videoEditor/effectMath";
 import type { SmartTrackingProfile } from "./videoEditor/types";
 import type { AgentJob, AgentJobResult, AgentRecordingRequest, AgentSummaryPayload, ShieldMode, ShieldState } from "./shared/agent";
 import { getWindowsRuntimeSupport, isWindowsStorePackage } from "./config/windowsSupport";
@@ -45,6 +47,44 @@ type AppPreferences = {
     devEntitlementOverride: PlanTier | null;
 };
 
+const smokeLogFile = process.env.AGEOFSCREEN_SMOKE_LOG_FILE?.trim();
+if (smokeLogFile) {
+    const originalConsole = {
+        log: console.log.bind(console),
+        warn: console.warn.bind(console),
+        error: console.error.bind(console),
+    };
+    const appendSmokeLog = (level: "log" | "warn" | "error", args: unknown[]) => {
+        try {
+            const rendered = args.map((value) => {
+                if (typeof value === "string") return value;
+                if (value instanceof Error) return value.stack || value.message;
+                try {
+                    return JSON.stringify(value);
+                } catch {
+                    return String(value);
+                }
+            }).join(" ");
+            fs.appendFileSync(smokeLogFile, `[${new Date().toISOString()}] ${level.toUpperCase()} ${rendered}\n`);
+        } catch {
+            // Keep smoke logging best-effort only.
+        }
+    };
+
+    console.log = (...args: unknown[]) => {
+        appendSmokeLog("log", args);
+        originalConsole.log(...args);
+    };
+    console.warn = (...args: unknown[]) => {
+        appendSmokeLog("warn", args);
+        originalConsole.warn(...args);
+    };
+    console.error = (...args: unknown[]) => {
+        appendSmokeLog("error", args);
+        originalConsole.error(...args);
+    };
+}
+
 
 
 const appPreferencesStore = new (Store as any)({
@@ -58,13 +98,13 @@ const appPreferencesStore = new (Store as any)({
 
 let entitlementLastSyncAt: string | null = null;
 let cachedEntitlementState: EntitlementState = {
-    tier: PLAN_CONFIG.defaultTier,
-    maxRecordingSeconds: PLAN_CONFIG.defaultTier === "free" ? PLAN_CONFIG.freeRecordingSeconds : null,
+    tier: "free",
+    maxRecordingSeconds: null,
     watermarkEnabled: true,
-    canUseAutoPolish: PLAN_CONFIG.defaultTier === "pro",
-    canUseStudioVoice: PLAN_CONFIG.defaultTier === "pro",
-    purchaseAvailable: PLAN_CONFIG.allowManualTierOverride && RELEASE_PROFILE.name === "dev",
-    provider: PLAN_CONFIG.allowManualTierOverride && RELEASE_PROFILE.name === "dev" ? "manual" : (isWindowsStorePackage() ? "store_stub" : "manual"),
+    canUseAutoPolish: true,
+    canUseStudioVoice: false,
+    purchaseAvailable: false,
+    provider: isWindowsStorePackage() ? "store_stub" : "manual",
     lastSyncAt: null,
 };
 
@@ -92,31 +132,26 @@ const buildEntitlementState = (
     provider: EntitlementState["provider"],
     purchaseAvailable: boolean,
 ): EntitlementState => ({
-    tier,
-    maxRecordingSeconds: tier === "free" ? PLAN_CONFIG.freeRecordingSeconds : null,
+    tier: "free",
+    maxRecordingSeconds: null,
     watermarkEnabled: true,
-    canUseAutoPolish: tier === "pro",
-    canUseStudioVoice: tier === "pro",
-    purchaseAvailable,
+    canUseAutoPolish: true,
+    canUseStudioVoice: false,
+    purchaseAvailable: false,
     provider,
     lastSyncAt: entitlementLastSyncAt,
 });
 
 const resolveManualEntitlementState = (): EntitlementState => {
-    const overrideTier = PLAN_CONFIG.devOverrideTier ?? resolveStoredTierOverride();
-    if (overrideTier === "pro") {
-        return buildEntitlementState("pro", "dev_override", true);
-    }
-
     if (canUseManualEntitlementOverride()) {
-        return buildEntitlementState(PLAN_CONFIG.defaultTier, "manual", true);
+        return buildEntitlementState("free", "manual", false);
     }
 
     if (isWindowsStorePackage()) {
-        return buildEntitlementState(PLAN_CONFIG.defaultTier, "store_stub", false);
+        return buildEntitlementState("free", "store_stub", false);
     }
 
-    return buildEntitlementState(PLAN_CONFIG.defaultTier, "manual", false);
+    return buildEntitlementState("free", "manual", false);
 };
 
 const broadcastLicenseState = (state: EntitlementState = cachedEntitlementState) => {
@@ -174,26 +209,12 @@ const manualEntitlementProvider: EntitlementProvider = {
         return cachedEntitlementState;
     },
     async purchasePro(source: UpgradeSource = "generic"): Promise<PurchaseProResult> {
-        if (canUseManualEntitlementOverride()) {
-            writeAppPreference("devEntitlementOverride", "pro");
-            const state = await this.refresh();
-            return {
-                success: true,
-                state,
-                message: "Pro unlocked for this development build.",
-                source,
-            };
-        }
-
         const state = await this.refresh();
-        const message = isWindowsStorePackage()
-            ? "Microsoft Store purchase flow is not enabled in this build yet."
-            : "Purchasing is not available in this build yet.";
 
         return {
             success: false,
             state,
-            message,
+            message: "This release is free and does not include paid upgrades.",
             source,
         };
     },
@@ -212,8 +233,8 @@ const refreshEntitlementState = async (): Promise<EntitlementState> => {
 };
 
 const getCurrentEntitlementState = (): EntitlementState => cachedEntitlementState;
-const getAutoPolishUpgradeMessage = () => "Auto-Polish is a Pro feature. Upgrade to Pro to unlock it.";
-const getStudioVoiceUpgradeMessage = () => "Studio Voice is a Pro feature. Upgrade to Pro to unlock it.";
+const getAutoPolishUpgradeMessage = () => "Auto-Polish is unavailable for this clip.";
+const getStudioVoiceUpgradeMessage = () => "Studio Voice is not enabled in this free release.";
 
 const isCursorMetadataEvent = (event: any): boolean => (
     !!event
@@ -351,26 +372,18 @@ const normalizeTempRecordingForEditor = async (sourcePath: string): Promise<stri
         return sourcePath;
     }
 
+    const remuxedPath = sourcePath.replace(/\.[^.]+$/, '.fixed.webm');
     const normalizedPath = sourcePath.replace(/\.[^.]+$/, '.mp4');
     console.log('[ageofscreen] Recording duration metadata missing; normalizing temp recording for editor', {
         sourcePath,
+        remuxedPath,
         normalizedPath,
     });
 
-    await new Promise<void>((resolve, reject) => {
+    const runFfmpeg = (args: string[]) => new Promise<void>((resolve, reject) => {
         const proc = spawn(ffmpegPath, [
             '-y',
-            '-i', sourcePath,
-            '-map', '0:v:0',
-            '-map', '0:a:0?',
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-crf', '18',
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            '-c:a', 'aac',
-            '-b:a', '160k',
-            normalizedPath,
+            ...args,
         ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
         let stderr = '';
@@ -386,6 +399,43 @@ const normalizeTempRecordingForEditor = async (sourcePath: string): Promise<stri
             reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
         });
     });
+
+    try {
+        await runFfmpeg([
+            '-fflags', '+genpts',
+            '-i', sourcePath,
+            '-map', '0:v:0',
+            '-map', '0:a:0?',
+            '-c', 'copy',
+            remuxedPath,
+        ]);
+
+        const remuxedDuration = await probeMediaDuration(remuxedPath, ffmpegPath);
+        if (remuxedDuration && remuxedDuration > 0) {
+            try {
+                await fs.promises.unlink(sourcePath);
+            } catch {
+                // Keep the original temp file if cleanup fails.
+            }
+            return remuxedPath;
+        }
+    } catch (error) {
+        console.warn('[ageofscreen] Fast WebM duration repair failed; falling back to MP4 transcode.', error);
+    }
+
+    await runFfmpeg([
+            '-i', sourcePath,
+            '-map', '0:v:0',
+            '-map', '0:a:0?',
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-crf', '18',
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            '-c:a', 'aac',
+            '-b:a', '160k',
+            normalizedPath,
+    ]);
 
     const normalizedDuration = await probeMediaDuration(normalizedPath, ffmpegPath);
     if (!normalizedDuration || normalizedDuration <= 0) {
@@ -586,6 +636,7 @@ let recordingWidget: BrowserWindow | null = null;
 let teleprompterWindow: BrowserWindow | null = null;
 let drawingOverlayWindow: BrowserWindow | null = null;
 let videoEditorWindow: BrowserWindow | null = null;
+let introWindow: BrowserWindow | null = null;
 let _tray: Tray | null = null;
 let wasWebcamVisibleBeforeDrawing = false;
 let shouldRestoreEditorAfterCaptureCancel = false;
@@ -688,13 +739,38 @@ const installShieldRequestFilter = () => {
     console.log("[ageofscreen] Shield filter installed. Initial mode:", shieldMode);
 };
 
+const installMediaPermissionHandlers = () => {
+    const defaultSession = session.defaultSession;
+    if (!defaultSession) {
+        console.warn("[ageofscreen] Media permission handlers skipped: no defaultSession");
+        return;
+    }
+
+    const isTrustedWebContents = (webContents: WebContents | null | undefined): boolean => {
+        if (!webContents || webContents.isDestroyed()) {
+            return false;
+        }
+
+        const ownerWindow = BrowserWindow.fromWebContents(webContents);
+        return !!ownerWindow;
+    };
+
+    defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+        const allowed = isTrustedWebContents(webContents) && permission === "media";
+        callback(allowed);
+    });
+
+    defaultSession.setPermissionCheckHandler((webContents, permission) => {
+        return isTrustedWebContents(webContents) && permission === "media";
+    });
+};
+
 // Temp recorded video for editing
 let pendingVideoDataUrl: string | null = null;
 let pendingMediaName: string | null = null;
 let pendingAgentSummary: AgentSummaryPayload | null = null;
 let latestAgentVideoPath: string | null = null;
 let pendingVideoDeliveryInFlight = false;
-let recordingCursorReplacementSafe = false;
 let agentAutoRecordingRequested = false;
 let _latestCaptureHealth: { droppedFrames: number; bufferErrors: number; effectiveFps: number | null; status: string } | null = null;
 let _latestSourceStatus: { screen: boolean; camera: boolean; mic: boolean } | null = null;
@@ -709,6 +785,41 @@ const DEFAULT_AGENT_RECORDING_REQUEST: AgentRecordingRequest = {
 };
 
 const shouldAutoSaveToDownloads = () => shieldMode === "agent_local";
+const resolveAutomatedExportPath = (defaultFolder: string, defaultFileName: string): string | null => {
+    const smokeExportDir = process.env.AGEOFSCREEN_SMOKE_EXPORT_DIR?.trim();
+    if (!smokeExportDir) {
+        return null;
+    }
+
+    const targetDir = path.resolve(smokeExportDir);
+    fs.mkdirSync(targetDir, { recursive: true });
+    return path.join(targetDir, defaultFileName);
+};
+const resolveExportSavePath = async ({
+    defaultFolder,
+    defaultFileName,
+    filters,
+}: {
+    defaultFolder: string;
+    defaultFileName: string;
+    filters: Electron.FileFilter[];
+}): Promise<string | null> => {
+    const automatedPath = resolveAutomatedExportPath(defaultFolder, defaultFileName);
+    if (automatedPath) {
+        return automatedPath;
+    }
+
+    const { filePath, canceled } = await dialog.showSaveDialog({
+        defaultPath: path.join(defaultFolder, defaultFileName),
+        filters,
+    });
+
+    if (canceled || !filePath) {
+        return null;
+    }
+
+    return filePath;
+};
 
 // Recording Widget Dimensions
 const RECORDING_WIDGET_WIDTH = 220;
@@ -723,7 +834,7 @@ let teleprompterSpeed = 90;
 let isAutoZoomEnabled = false;
 let lastMousePos = { x: 0, y: 0 };
 let mouseTrackInterval: NodeJS.Timeout | null = null;
-const TRIGGER_WINDOW_WIDTH = 18;
+const TRIGGER_WINDOW_WIDTH = 40;
 const TRIGGER_WINDOW_HEIGHT = 2;
 const TRIGGER_WINDOW_TOP_OFFSET = 0;
 const MENU_WINDOW_TOP_OFFSET = TRIGGER_WINDOW_HEIGHT + 1;
@@ -739,6 +850,7 @@ let isWebcamSmall = false; // Toggle for webcam size
 let isWebcamZoomed = false; // Track zoom status for manual toggle
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const hideWindowForCapture = (windowRef: BrowserWindow | null): boolean => {
     if (!windowRef || windowRef.isDestroyed() || !windowRef.isVisible()) {
         return false;
@@ -756,6 +868,60 @@ const shouldUseTriggerLine = (): boolean => (
 const shouldUsePrintScreenShortcut = (): boolean => (
     readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "print_screen"
 );
+
+const resolveAppIconPath = (fileName = "app-icon.png"): string | null => {
+    const candidates = [
+        path.join(process.resourcesPath, fileName),
+        path.join(app.getAppPath(), "resources", fileName),
+        path.join(__dirname, "..", "resources", fileName),
+        path.join(__dirname, "..", "..", "resources", fileName),
+        path.resolve(process.cwd(), "resources", fileName),
+    ];
+
+    return candidates.find((candidate) => {
+        try {
+            return fs.existsSync(candidate);
+        } catch {
+            return false;
+        }
+    }) ?? null;
+};
+
+const getAppWindowIcon = () => {
+    const iconPath = resolveAppIconPath(process.platform === "win32" ? "app-icon.ico" : "app-icon.png");
+    return iconPath ? nativeImage.createFromPath(iconPath) : undefined;
+};
+
+const openAgeofScreenLauncher = () => {
+    createTriggerWindow();
+    restoreTriggerWindowIfEnabled(40);
+    createMenuWindow({
+        openReason: "manual",
+        bypassReopenGuard: true,
+    });
+};
+
+const createAppTray = () => {
+    if (_tray) {
+        return;
+    }
+
+    const iconPath = resolveAppIconPath("app-icon.png");
+    const trayIcon = iconPath
+        ? nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
+        : nativeImage.createEmpty();
+
+    _tray = new Tray(trayIcon);
+    _tray.setToolTip("AgeofScreen");
+    _tray.setContextMenu(Menu.buildFromTemplate([
+        { label: "Launch AgeofScreen", click: openAgeofScreenLauncher },
+        { label: "Open Media Editor", click: () => createVideoEditorWindow() },
+        { type: "separator" },
+        { label: "Quit", click: () => app.quit() },
+    ]));
+    _tray.on("click", openAgeofScreenLauncher);
+    _tray.on("double-click", openAgeofScreenLauncher);
+};
 
 const clearTriggerMouseReset = () => {
     if (triggerMouseResetTimeout) {
@@ -916,14 +1082,26 @@ declare const VIDEO_EDITOR_WINDOW_WEBPACK_ENTRY: string;
 declare const VIDEO_EDITOR_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
 // --- Editor Window (Main Annotation App) ---
-const createEditorWindow = (initialDataUrl?: string) => {
+const createEditorWindow = (initialDataUrl?: string, options: { showWhenReady?: boolean } = {}) => {
+    const { showWhenReady = true } = options;
     if (editorWindow && !editorWindow.isDestroyed()) {
-        if (initialDataUrl) {
-            editorWindow.webContents.send("capture-data", { success: true, dataUrl: initialDataUrl });
-        }
         hideTriggerWindow();
-        editorWindow.show();
-        editorWindow.focus();
+        if (showWhenReady) {
+            editorWindow.show();
+            editorWindow.focus();
+        }
+        if (initialDataUrl) {
+            const sendCaptureData = () => {
+                if (editorWindow && !editorWindow.isDestroyed()) {
+                    editorWindow.webContents.send("capture-data", { success: true, dataUrl: initialDataUrl });
+                }
+            };
+            if (editorWindow.webContents.isLoadingMainFrame()) {
+                editorWindow.webContents.once("did-finish-load", sendCaptureData);
+            } else {
+                sendCaptureData();
+            }
+        }
         return;
     }
 
@@ -935,6 +1113,7 @@ const createEditorWindow = (initialDataUrl?: string) => {
         height: 800,
         frame: false,
         backgroundColor: "#0f0f17",
+        icon: getAppWindowIcon(),
         show: false,
         webPreferences: {
             preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
@@ -948,7 +1127,9 @@ const createEditorWindow = (initialDataUrl?: string) => {
     editorWindow.once("ready-to-show", () => {
         if (editorWindow) {
             hideTriggerWindow();
-            editorWindow.show();
+            if (showWhenReady) {
+                editorWindow.show();
+            }
             if (initialDataUrl) {
                 editorWindow.webContents.send("capture-data", { success: true, dataUrl: initialDataUrl });
             }
@@ -1191,6 +1372,7 @@ const createMenuWindow = (
         alwaysOnTop: true,
         skipTaskbar: true,
         resizable: false,
+        icon: getAppWindowIcon(),
         show: false,
         webPreferences: {
             preload: MENU_WINDOW_PRELOAD_WEBPACK_ENTRY,
@@ -1231,6 +1413,209 @@ const createMenuWindow = (
             menuTriggerRearmTimeout = null;
         }
         menuWindow = null;
+    });
+};
+
+const getIntroHtml = () => `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:;" />
+  <title>AgeofScreen</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body {
+      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      color: #f8fafc;
+      background:
+        radial-gradient(circle at 18% 12%, rgba(125, 211, 252, 0.28), transparent 28%),
+        radial-gradient(circle at 86% 78%, rgba(34, 197, 94, 0.16), transparent 34%),
+        linear-gradient(145deg, #070a12, #111827 52%, #080b12);
+      overflow: hidden;
+    }
+    .shell {
+      width: 100%;
+      height: 100%;
+      padding: 34px;
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      gap: 28px;
+      align-items: center;
+    }
+    .mark {
+      width: 120px;
+      height: 120px;
+      border-radius: 36px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, rgba(56, 189, 248, 0.15), rgba(15, 23, 42, 0.95));
+      border: 1px solid rgba(125, 211, 252, 0.2);
+      box-shadow: 0 32px 84px rgba(0, 0, 0, 0.4);
+      margin-bottom: 28px;
+      position: relative;
+    }
+    .focus-icon {
+      width: 64px;
+      height: 64px;
+      position: relative;
+    }
+    .corner {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      border: 3.5px solid #7dd3fc;
+      opacity: 0.9;
+    }
+    .top-left { top: 0; left: 0; border-right: none; border-bottom: none; border-top-left-radius: 8px; }
+    .top-right { top: 0; right: 0; border-left: none; border-bottom: none; border-top-right-radius: 8px; }
+    .bottom-left { bottom: 0; left: 0; border-right: none; border-top: none; border-bottom-left-radius: 8px; }
+    .bottom-right { bottom: 0; right: 0; border-left: none; border-top: none; border-bottom-right-radius: 8px; }
+    .center-dot {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 12px;
+      height: 12px;
+      background: #7dd3fc;
+      border-radius: 50%;
+      box-shadow: 0 0 24px rgba(125, 211, 252, 0.8);
+    }
+    h1 { margin: 0; font-size: 42px; line-height: 1.0; font-weight: 800; letter-spacing: -0.02em; color: #fff; }
+    p { margin: 20px 0 0; color: rgba(226, 232, 240, 0.75); font-size: 16px; line-height: 1.6; }
+    .actions { display: flex; gap: 14px; margin-top: 36px; }
+    a {
+      text-decoration: none;
+      border-radius: 14px;
+      padding: 14px 24px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #06111f;
+      background: #7dd3fc;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 20px 40px rgba(14, 165, 233, 0.25);
+      transition: all 0.2s ease;
+    }
+    a:hover { transform: translateY(-2px); box-shadow: 0 24px 48px rgba(14, 165, 233, 0.35); filter: brightness(1.1); }
+    a.secondary {
+      color: #e2e8f0;
+      background: rgba(255,255,255,0.06);
+      box-shadow: none;
+    }
+    .panel {
+      border-radius: 22px;
+      padding: 22px;
+      background: rgba(15, 23, 42, 0.58);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      box-shadow: 0 28px 90px rgba(2, 6, 23, 0.44);
+      backdrop-filter: blur(22px);
+    }
+    .item { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 14px 0; border-bottom: 1px solid rgba(148, 163, 184, 0.12); }
+    .item:last-child { border-bottom: none; }
+    .num { width: 28px; height: 28px; border-radius: 10px; display: grid; place-items: center; background: rgba(125, 211, 252, 0.12); color: #bae6fd; font-size: 12px; font-weight: 800; }
+    .title { font-size: 14px; font-weight: 800; }
+    .copy { margin-top: 4px; font-size: 12px; color: rgba(203, 213, 225, 0.72); line-height: 1.45; }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section>
+      <div class="mark">
+        <div class="focus-icon">
+          <div class="corner top-left"></div>
+          <div class="corner top-right"></div>
+          <div class="corner bottom-left"></div>
+          <div class="corner bottom-right"></div>
+          <div class="center-dot"></div>
+        </div>
+      </div>
+      <h1>AgeofScreen is ready.</h1>
+      <p>Your screen capture launcher lives at the top edge. The AgeofScreen icon also stays in the Windows tray so it is always easy to reopen.</p>
+      <div class="actions">
+        <a href="ageofscreen-intro://launch">Launch</a>
+        <a class="secondary" href="ageofscreen-intro://media">Open editor</a>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="item"><div class="num">1</div><div><div class="title">Use the top trigger line</div><div class="copy">Move your mouse to the thin strip at the top of the screen to open the capture menu.</div></div></div>
+      <div class="item"><div class="num">2</div><div><div class="title">Capture or record</div><div class="copy">Start a snip, screen capture, window capture, or recording from the hex launcher.</div></div></div>
+      <div class="item"><div class="num">3</div><div><div class="title">Find it in the tray</div><div class="copy">Click the AgeofScreen icon in the bottom-right Windows tray to launch it again.</div></div></div>
+    </section>
+  </main>
+</body>
+</html>`;
+
+const handleIntroAction = (rawUrl: string) => {
+    if (!rawUrl.startsWith("ageofscreen-intro://")) {
+        return false;
+    }
+
+    const action = rawUrl.replace("ageofscreen-intro://", "").replace(/\/$/, "");
+    if (action === "launch") {
+        completeOnboarding();
+        introWindow?.close();
+        openAgeofScreenLauncher();
+        return true;
+    }
+    if (action === "media") {
+        completeOnboarding();
+        introWindow?.close();
+        createTriggerWindow();
+        restoreTriggerWindowIfEnabled(40);
+        createVideoEditorWindow();
+        return true;
+    }
+    if (action === "quit") {
+        app.quit();
+        return true;
+    }
+    return false;
+};
+
+const createIntroWindow = () => {
+    if (introWindow && !introWindow.isDestroyed()) {
+        introWindow.show();
+        introWindow.focus();
+        return;
+    }
+
+    introWindow = new BrowserWindow({
+        width: 860,
+        height: 560,
+        minWidth: 760,
+        minHeight: 500,
+        title: "AgeofScreen",
+        backgroundColor: "#070a12",
+        icon: getAppWindowIcon(),
+        show: false,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+        },
+    });
+
+    introWindow.removeMenu();
+    introWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(getIntroHtml())}`);
+
+    introWindow.webContents.on("will-navigate", (event, url) => {
+        if (handleIntroAction(url)) {
+            event.preventDefault();
+        }
+    });
+    introWindow.webContents.setWindowOpenHandler(({ url }) => {
+        handleIntroAction(url);
+        return { action: "deny" };
+    });
+
+    introWindow.once("ready-to-show", () => {
+        introWindow?.show();
+        introWindow?.focus();
+    });
+
+    introWindow.on("closed", () => {
+        introWindow = null;
+        restoreTriggerWindowIfEnabled(120);
     });
 };
 
@@ -1288,6 +1673,10 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
         return;
     }
 
+    if (type === "region" && tempScreenshotDataUrl && (!editorWindow || editorWindow.isDestroyed())) {
+        createEditorWindow(undefined, { showWhenReady: false });
+    }
+
     const createdCaptureWindow = new BrowserWindow({
         x: primaryDisplay.bounds.x,
         y: primaryDisplay.bounds.y,
@@ -1295,14 +1684,17 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
         height,
         frame: false,
         transparent: true,
+        backgroundColor: "#00000000",
         alwaysOnTop: true,
         skipTaskbar: true,
         autoHideMenuBar: true,
         show: false,
+        paintWhenInitiallyHidden: false,
         webPreferences: {
             preload: CAPTURE_WINDOW_PRELOAD_WEBPACK_ENTRY,
             nodeIntegration: false,
             contextIsolation: true,
+            backgroundThrottling: false,
         },
     });
     captureWindow = createdCaptureWindow;
@@ -1420,6 +1812,8 @@ const createRecordingWidget = () => {
 
 // Recording state
 let isRecordingActive = false;
+
+const isDrawingOverlayActive = () => !!(drawingOverlayWindow && !drawingOverlayWindow.isDestroyed());
 
 // Helper to stop recording from ESC or widget
 const triggerStopRecording = () => {
@@ -1793,12 +2187,10 @@ const startMouseTracking = (bounds?: { x: number; y: number; width: number; heig
 
     // Reset data
     recordedCursorData = [];
-    recordingCursorReplacementSafe = false;
 
     if (smartFeaturesConfig.captureCursorData) {
         startMetadataRecording(bounds);
         setRecordingCaptureMetadata({
-            nativeCursorSuppressed: recordingCursorReplacementSafe,
             capturePlatform: process.platform,
         });
     }
@@ -1959,9 +2351,21 @@ const closeTeleprompterWindow = () => {
 };
 
 // --- Drawing Overlay Window ---
+const raiseWebcamAboveDrawingOverlay = () => {
+    if (!webcamWindow || webcamWindow.isDestroyed() || !wasWebcamVisibleBeforeDrawing) {
+        return;
+    }
+
+    webcamWindow.showInactive();
+    webcamWindow.setAlwaysOnTop(true, 'screen-saver', 2);
+    webcamWindow.moveTop();
+};
+
 const createDrawingOverlayWindow = () => {
     if (drawingOverlayWindow && !drawingOverlayWindow.isDestroyed()) {
         drawingOverlayWindow.show();
+        drawingOverlayWindow.focus();
+        setTimeout(raiseWebcamAboveDrawingOverlay, 0);
         return;
     }
 
@@ -1983,6 +2387,7 @@ const createDrawingOverlayWindow = () => {
             preload: DRAWING_OVERLAY_WINDOW_PRELOAD_WEBPACK_ENTRY,
             nodeIntegration: false,
             contextIsolation: true,
+            backgroundThrottling: false,
         },
     });
 
@@ -1996,6 +2401,7 @@ const createDrawingOverlayWindow = () => {
     drawingOverlayWindow.once('ready-to-show', () => {
         drawingOverlayWindow?.show();
         drawingOverlayWindow?.focus();
+        setTimeout(raiseWebcamAboveDrawingOverlay, 0);
     });
 
     drawingOverlayWindow.on('closed', () => {
@@ -2020,7 +2426,6 @@ const restoreAfterDrawingOverlay = () => {
             webcamWindow.hide();
         }
         webcamWindow.setAlwaysOnTop(true, 'screen-saver');
-        webcamWindow.webContents.send('drawing-status', false);
     }
 
     if (recordingWidget && !recordingWidget.isDestroyed()) {
@@ -2028,6 +2433,32 @@ const restoreAfterDrawingOverlay = () => {
         recordingWidget.webContents.send('drawing-toggled', false);
         recordingWidget.hide();
     }
+};
+
+const showRecordingWidgetForDrawing = () => {
+    if (!recordingWidget || recordingWidget.isDestroyed()) {
+        createRecordingWidget();
+    }
+
+    if (!recordingWidget || recordingWidget.isDestroyed()) {
+        return;
+    }
+
+    if (webcamWindow && !webcamWindow.isDestroyed()) {
+        const camBounds = webcamWindow.getBounds();
+        const widgetBounds = recordingWidget.getBounds();
+        const primaryDisplay = screen.getDisplayMatching(camBounds);
+        const workArea = primaryDisplay.workArea;
+        const x = Math.round(camBounds.x + (camBounds.width / 2) - (widgetBounds.width / 2));
+        const y = Math.round(camBounds.y + camBounds.height);
+        recordingWidget.setPosition(
+            Math.max(workArea.x, Math.min(workArea.x + workArea.width - widgetBounds.width, x)),
+            Math.max(workArea.y, Math.min(workArea.y + workArea.height - widgetBounds.height, y)),
+        );
+    }
+    recordingWidget.setAlwaysOnTop(true, 'screen-saver', 2);
+    recordingWidget.showInactive();
+    recordingWidget.webContents.send('drawing-toggled', true);
 };
 
 const sendPendingMediaToVideoEditor = (reason: string) => {
@@ -2076,6 +2507,7 @@ const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
 
         // Store the video data for when the window is ready
         if (videoDataUrl !== undefined) {
+            approveMediaPath(videoDataUrl);
             pendingVideoDataUrl = videoDataUrl;
             pendingVideoDeliveryInFlight = false;
         }
@@ -2110,6 +2542,7 @@ const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
             y: Math.round((height - Math.min(800, height - 100)) / 2),
             frame: false,
             backgroundColor: "#0a0a0f",
+            icon: getAppWindowIcon(),
             show: true, // Show immediately
             webPreferences: {
                 preload: VIDEO_EDITOR_WINDOW_PRELOAD_WEBPACK_ENTRY,
@@ -2263,6 +2696,7 @@ const createWebcamWindow = (shape?: CameraShape, size?: number, name?: string, b
             preload: WEBCAM_WINDOW_PRELOAD_WEBPACK_ENTRY,
             nodeIntegration: false,
             contextIsolation: true,
+            backgroundThrottling: false,
         },
         title: "Webcam",
     });
@@ -2478,9 +2912,10 @@ const runAutoPolishPreview = async ({
         const isAlreadyPolished = sourcePath.toLowerCase().includes('autopolish-preview');
         const skipStyle = isAlreadyPolished;
 
-        const rawBg = backgroundColor || '#1a1a1f';
+        const rawBg = backgroundColor || 'bg_starlight_blur';
         const requestedPadding = Math.max(0, padding ?? 0);
-        const hexMatch = rawBg.match(/#([0-9A-Fa-f]{6})/);
+        const resolvedBg = resolveBackgroundFFmpeg(rawBg);
+        const hexMatch = resolvedBg.match(/#([0-9A-Fa-f]{6})/);
         let solidBg = hexMatch ? `#${hexMatch[1]}` : '#1a1a1f';
         if (!backgroundColor || backgroundColor === 'transparent' || backgroundColor === '#000000') {
             solidBg = '#1a1a1f';
@@ -2868,6 +3303,11 @@ const registerIpcHandlers = () => {
     function updateWidgetVisibility() {
         if (!isRecordingActive) return;
 
+        if (isDrawingOverlayActive()) {
+            showRecordingWidgetForDrawing();
+            return;
+        }
+
         if (isWebcamHovered || isWidgetHovered) {
             if (hideWidgetTimeout) clearTimeout(hideWidgetTimeout);
             if (recordingWidget && !recordingWidget.isDestroyed()) {
@@ -2925,8 +3365,14 @@ const registerIpcHandlers = () => {
             }));
         }
 
+        if (type !== "region" && type !== "fullscreen" && type !== "window") {
+            console.warn("[ageofscreen] Unsupported capture request ignored:", type);
+            return null;
+        }
+
         console.log("[ageofscreen] Invoke capture requested from renderer:", type);
         createCaptureWindow(type as any);
+        return null;
     });
 
     // Capture result
@@ -3118,21 +3564,13 @@ const registerIpcHandlers = () => {
             createDrawingOverlayWindow();
             // After overlay is created, raise webcam + widget above it (z-level 2 > overlay's 1)
             setTimeout(() => {
-                if (webcamWindow && !webcamWindow.isDestroyed()) {
-                    webcamWindow.show();
-                    webcamWindow.setAlwaysOnTop(true, 'screen-saver', 2);
-                    webcamWindow.webContents.send('drawing-status', true);
-                }
-                if (recordingWidget && !recordingWidget.isDestroyed()) {
-                    recordingWidget.setAlwaysOnTop(true, 'screen-saver', 2);
-                    recordingWidget.webContents.send('drawing-toggled', true);
-                    // We don't explicitly show the widget here anymore to avoid 'popping up'
-                    // The user can hover under the camera to see controls
-                }
-                // Refocus drawing overlay so it can receive mouse events
+                // Focus first, then raise utility windows. On Windows, focusing the overlay after
+                // the camera can push the camera behind the transparent drawing surface.
                 if (drawingOverlayWindow && !drawingOverlayWindow.isDestroyed()) {
                     drawingOverlayWindow.focus();
                 }
+                raiseWebcamAboveDrawingOverlay();
+                showRecordingWidgetForDrawing();
             }, 100);
         } else {
             restoreAfterDrawingOverlay();
@@ -3187,30 +3625,6 @@ const registerIpcHandlers = () => {
         console.log('[ageofscreen] Set drawing color:', color);
         if (drawingOverlayWindow && !drawingOverlayWindow.isDestroyed()) {
             drawingOverlayWindow.webContents.send('set-drawing-color', color);
-        }
-    });
-
-    // Forward scroll events from drawing overlay to underlying windows
-    let scrollPassthroughTimeout: NodeJS.Timeout | null = null;
-
-    ipcMain.on("forward-scroll", (_event, _data: { deltaX: number; deltaY: number }) => {
-        // Temporarily set the drawing overlay to ignore mouse events for scrolling
-        if (drawingOverlayWindow && !drawingOverlayWindow.isDestroyed()) {
-            // Enable passthrough mode
-            drawingOverlayWindow.setIgnoreMouseEvents(true, { forward: true });
-
-            // Clear existing timeout
-            if (scrollPassthroughTimeout) {
-                clearTimeout(scrollPassthroughTimeout);
-            }
-
-            // Re-enable mouse events after scrolling stops (with debounce)
-            scrollPassthroughTimeout = setTimeout(() => {
-                if (drawingOverlayWindow && !drawingOverlayWindow.isDestroyed()) {
-                    drawingOverlayWindow.setIgnoreMouseEvents(false);
-                }
-                scrollPassthroughTimeout = null;
-            }, 300);
         }
     });
 
@@ -3638,15 +4052,6 @@ const registerIpcHandlers = () => {
         // Do not send window background - user controls padding bg only via palette
     });
 
-    ipcMain.on("recording-cursor-replacement-safe", (_event, safe: boolean) => {
-        recordingCursorReplacementSafe = !!safe;
-        setRecordingCaptureMetadata({
-            nativeCursorSuppressed: recordingCursorReplacementSafe,
-            capturePlatform: process.platform,
-        });
-        console.log('[ageofscreen] Cursor replacement safety updated for active recording:', recordingCursorReplacementSafe);
-    });
-
     ipcMain.on("video-editor-media-consumed", (_event, consumedUrl?: string) => {
         if (!pendingVideoDataUrl) return;
         if (consumedUrl && consumedUrl !== pendingVideoDataUrl) return;
@@ -3747,7 +4152,6 @@ const registerIpcHandlers = () => {
             const hasImageClips = (trimData.imageClips || []).length > 0;
             const hasTextOverlays = (trimData.textOverlays || []).length > 0;
             const hasAnnotationOverlays = (trimData.annotationImageOverlays || []).length > 0;
-            const hasCursorOverlay = !!(trimData.cursorOverlay?.track?.length && (trimData.cursorOverlay?.backdropFile || trimData.cursorOverlay?.cursorFile));
             const hasEffects = (trimData.smartEffects || []).length > 0;
             const requestedPremiumVoice = Boolean(trimData.premiumVoice);
             const needsVoice = requestedPremiumVoice && entitlementState.canUseStudioVoice;
@@ -3755,21 +4159,21 @@ const registerIpcHandlers = () => {
             // Check if segments actually trim the video (not just full export)
             const isTrimmed = segments.length > 1 ||
                 (segments.length === 1 && (segments[0].startSeconds > 0.1 || (segments[0].endSeconds < 999990)));
-            const needsProcessing = isTrimmed || hasCrop || hasFrame || hasAudioOverlays || hasImageOverlays || hasImageClips || hasTextOverlays || hasAnnotationOverlays || hasCursorOverlay || hasEffects || needsVoice || needsColorGrade;
+            const needsProcessing = isTrimmed || hasCrop || hasFrame || hasAudioOverlays || hasImageOverlays || hasImageClips || hasTextOverlays || hasAnnotationOverlays || hasEffects || needsVoice || needsColorGrade;
 
             // Determine source path
             const isDataUrl = videoSrc.startsWith('data:');
             const sourcePath = isDataUrl ? videoSrc : ensurePhysicalMediaPath(videoSrc);
 
             // Determine extension - use FFmpeg when processing needed OR when free plan (watermark)
-            if (entitlementState.watermarkEnabled && !ffmpegAvailable) {
+            if (!ffmpegAvailable) {
                 return {
                     success: false,
-                    error: 'FFmpeg is required for free exports so ageofscreen can apply the watermark.',
+                    error: 'FFmpeg is required for exports so ageofscreen can apply the watermark.',
                 };
             }
 
-            const addWatermark = entitlementState.watermarkEnabled && ffmpegAvailable;
+            const addWatermark = ffmpegAvailable;
             const canUseFFmpeg = ffmpegAvailable && (needsProcessing || addWatermark);
             const sourceExt = isDataUrl
                 ? (videoSrc.match(/^data:video\/([a-zA-Z0-9]+)/)?.[1]?.toLowerCase() || 'webm')
@@ -3779,16 +4183,11 @@ const registerIpcHandlers = () => {
             // Default to Videos folder for manual exports, Downloads for agent mode.
             const exportFolder = shouldAutoSaveToDownloads() ? app.getPath('downloads') : app.getPath('videos');
             const defaultFileName = `ageofscreen-${trimData.platform || 'export'}-${Date.now()}.${extension}`;
-            const defaultPath = path.join(exportFolder, defaultFileName);
-            const savePath = await (async () => {
-                const { filePath: nextPath, canceled } = await dialog.showSaveDialog({
-                    defaultPath: defaultPath,
-                    filters: [{ name: "Videos", extensions: [extension, 'mp4', 'webm', 'mov'] }],
-                });
-
-                if (canceled || !nextPath) return null;
-                return nextPath;
-            })();
+            const savePath = await resolveExportSavePath({
+                defaultFolder: exportFolder,
+                defaultFileName,
+                filters: [{ name: "Videos", extensions: [extension, 'mp4', 'webm', 'mov'] }],
+            });
 
             if (!savePath) return { success: false, canceled: true };
 
@@ -3809,7 +4208,6 @@ const registerIpcHandlers = () => {
                 hasImageClips,
                 hasTextOverlays,
                 hasAnnotationOverlays,
-                hasCursorOverlay,
                 segments: segments.length,
                 requestedEffectTypes,
                 skippedEffectTypes
@@ -3846,14 +4244,13 @@ const registerIpcHandlers = () => {
                     trimData.audioSegments || [],
                     addWatermark,
                     trimData.smartEffects || [],
-                    trimData.quality || 'high',
+                    trimData.quality === 'high' ? 'balanced' : (trimData.quality || 'balanced'),
                     trimData.transitionType || 'cut',
                     trimData.textOverlays || [],
                     trimData.annotationImageOverlays || [],
                     trimData.imageOverlays || [],
                     trimData.imageClips || [],
                     trimData.clipTransitions || [],
-                    trimData.cursorOverlay || null,
                     trimData.colorGrade || 'none',
                     needsVoice,
                     {
@@ -3876,11 +4273,11 @@ const registerIpcHandlers = () => {
                 sendExportProgress(100, "done");
 
                 // Notify user if features were not applied
-                if (hasCrop || hasFrame || hasAudioOverlays || hasImageOverlays || hasImageClips || hasTextOverlays || hasAnnotationOverlays || hasCursorOverlay || isTrimmed) {
+                if (hasCrop || hasFrame || hasAudioOverlays || hasImageOverlays || hasImageClips || hasTextOverlays || hasAnnotationOverlays || isTrimmed) {
                     return {
                         success: true,
                         filePath: savePath,
-                        warning: 'Some features (trim, crop, frame, overlays, cursor highlight, audio) were not applied - FFmpeg is required. Install FFmpeg and try again.'
+                        warning: 'Some features (trim, crop, frame, overlays, audio) were not applied - FFmpeg is required. Install FFmpeg and try again.'
                     };
                 }
             }
@@ -3895,10 +4292,6 @@ const registerIpcHandlers = () => {
             if (renderInfo?.transitionFallbackMode === 'cut') {
                 warnings.push('Some clip transitions were simplified to cuts during export fallback for reliability.');
             }
-            if (renderInfo?.cursorFallbackMode === 'disabled') {
-                warnings.push('Cursor highlight could not be rendered reliably and was omitted during export fallback.');
-            }
-
             if (renderInfo?.fallbackMode === 'reliable_subset') {
                 const exported = new Set(renderInfo.exportedEffectTypes);
                 const dropped = renderInfo.requestedEffectTypes.filter((type: string) => !exported.has(type));
@@ -3989,17 +4382,11 @@ const registerIpcHandlers = () => {
                 : mediaType === "audio"
                     ? app.getPath("music")
                     : app.getPath("videos");
-            const savePath = await (async () => {
-                const { filePath: nextPath, canceled } = await dialog.showSaveDialog({
-                    defaultPath: path.join(defaultFolder, defaultName),
-                    filters: filterMap[mediaType] || []
-                });
-
-                if (canceled || !nextPath) {
-                    return null;
-                }
-                return nextPath;
-            })();
+            const savePath = await resolveExportSavePath({
+                defaultFolder,
+                defaultFileName: defaultName,
+                filters: filterMap[mediaType] || [],
+            });
 
             if (!savePath) {
                 return { success: false, canceled: true };
@@ -4027,8 +4414,12 @@ app.on('web-contents-created', (_event, contents) => {
 });
 
 app.whenReady().then(async () => {
+    if (process.platform === "win32") {
+        app.setAppUserModelId("com.ageofscreen.app");
+    }
     // Install privacy filter before any windows are created
     installShieldRequestFilter();
+    installMediaPermissionHandlers();
     protocol.handle('ageofscreen-media', async (request) => {
         try {
             const url = request.url;
@@ -4066,13 +4457,17 @@ app.whenReady().then(async () => {
     cachedEntitlementState = await getEntitlementProvider().restoreIfNeeded();
     broadcastLicenseState(cachedEntitlementState);
     registerCaptureShortcut();
+    createAppTray();
     createTriggerWindow();
 
     const onboardingState = getOnboardingState();
-    const shouldStartInBackground = RELEASE_PROFILE.name === "dev" || onboardingState.hasCompletedOnboarding;
-    if (!shouldStartInBackground) {
+    if (!onboardingState.hasCompletedOnboarding && RELEASE_PROFILE.name !== "dev") {
         setTimeout(() => {
-            createMenuWindow({ bypassReopenGuard: true });
+            createIntroWindow();
+        }, 220);
+    } else if (RELEASE_PROFILE.name !== "dev") {
+        setTimeout(() => {
+            openAgeofScreenLauncher();
         }, 280);
     } else {
         setTimeout(() => {

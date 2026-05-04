@@ -9,6 +9,7 @@ import { RecordingEngine } from '../services/recording/RecordingEngine';
 import { RecordingConfig } from './RecordingSetup';
 import type { EntitlementState, UpgradeSource } from '../shared/licensing';
 import { getCameraDimensionsForWidth, normalizeCameraShape } from '../shared/cameraShapes';
+import { describeMediaError, getUserMediaWithFallback } from '../shared/mediaDeviceAccess';
 
 interface RecordingManagerProps {
   onMessage: (message: string) => void;
@@ -26,6 +27,7 @@ const DIRECT_RECORDING_MIME_TYPES = [
   'video/webm;codecs=vp8,opus',
   'video/webm',
 ];
+const CAMERA_START_RETRY_DELAYS_MS = [0, 500, 1000, 2000];
 
 const getDirectRecordingMimeType = (): string | undefined => {
   if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
@@ -41,44 +43,21 @@ const buildDesktopVideoConstraints = (sourceId: string) => ({
     minFrameRate: 24,
     maxFrameRate: 30,
   },
-  cursor: 'never',
+  cursor: 'always',
 } as any);
 
-const suppressCapturedCursor = async (screenStream: MediaStream): Promise<boolean> => {
-  const screenTrack = screenStream.getVideoTracks()[0];
-  if (!screenTrack || typeof screenTrack.applyConstraints !== 'function') return false;
-
-  const readCursorMode = () => {
-    try {
-      const settings = typeof screenTrack.getSettings === 'function' ? (screenTrack.getSettings() as any) : null;
-      if (typeof settings?.cursor === 'string') return settings.cursor;
-    } catch {
-      // Ignore unsupported settings reads.
-    }
-
-    try {
-      const constraints = typeof screenTrack.getConstraints === 'function' ? (screenTrack.getConstraints() as any) : null;
-      if (typeof constraints?.cursor === 'string') return constraints.cursor;
-    } catch {
-      // Ignore unsupported constraints reads.
-    }
-
-    return null;
-  };
-
-  try {
-    await screenTrack.applyConstraints({ cursor: 'never' } as any);
-    const cursorMode = readCursorMode();
-    const nativeCursorSuppressed = cursorMode === 'never';
-    console.log('[RecordingManager] Requested native desktop cursor suppression for styled cursor overlays', {
-      cursorMode: cursorMode ?? 'unknown',
-      nativeCursorSuppressed,
-    });
-    return nativeCursorSuppressed;
-  } catch (error) {
-    console.warn('[RecordingManager] Native cursor suppression is not supported for this capture path:', error);
-    return false;
-  }
+const getWindowModeWebcamStream = async (): Promise<MediaStream> => {
+  return getUserMediaWithFallback(
+    [
+      {
+        video: { width: { ideal: 160 }, height: { ideal: 160 }, frameRate: { ideal: 15, max: 20 } },
+        audio: false,
+      },
+      { video: true, audio: false },
+    ],
+    'Window-mode recording',
+    CAMERA_START_RETRY_DELAYS_MS,
+  );
 };
 
 export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgradePrompt }: RecordingManagerProps) => {
@@ -112,10 +91,11 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
   }, []);
 
   const finalizeRecordingBlob = useCallback(async (videoBlob: Blob, targetSource?: any): Promise<PendingEditorLaunch | null> => {
-    const buffer = await videoBlob.arrayBuffer();
     if (editAfterRecordingRef.current) {
       if (!window.electronAPI.saveTempVideo) return null;
 
+      window.electronAPI.showVideoEditorShell?.();
+      const buffer = await videoBlob.arrayBuffer();
       const { filePath, error } = await window.electronAPI.saveTempVideo(buffer);
       if (filePath) {
         const captureName = targetSource?.name || `Recording ${new Date().toLocaleTimeString()}`;
@@ -129,6 +109,7 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
 
     if (!window.electronAPI.saveVideo) return null;
 
+    const buffer = await videoBlob.arrayBuffer();
     const saveResult = await window.electronAPI.saveVideo(buffer);
     if (saveResult?.success) {
       onMessage(saveResult.filePath ? `Video saved to ${saveResult.filePath}` : 'Video saved successfully!');
@@ -168,11 +149,6 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
     }
   }, []);
 
-  const emitUpgradePrompt = useCallback((source: UpgradeSource, message: string) => {
-    onMessage(message);
-    onUpgradePrompt?.(source, message);
-  }, [onMessage, onUpgradePrompt]);
-
   const startRecordingProgress = useCallback((stop: () => void, maxRecordingSeconds: number | null | undefined) => {
     const startTime = Date.now();
     window.electronAPI?.sendRecordingProgress?.(0);
@@ -186,7 +162,7 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
       window.electronAPI?.sendRecordingProgress?.(progress);
       if (progress >= 1) {
         stopReasonRef.current = 'recording_limit';
-        onMessage('Free plan limit reached. Finalizing recording...');
+        onMessage('Recording duration limit reached. Finalizing recording...');
         stop();
       }
     }, 1000);
@@ -215,7 +191,7 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
         window.menuAPI.hideMenu();
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await new Promise((resolve) => setTimeout(resolve, 120));
 
       const sources = await window.electronAPI.getScreenSources();
       const targetSource = smartFeatures?.windowId
@@ -251,9 +227,6 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
         }
       }
       activeStreamRef.current = screenStream;
-      const nativeCursorSuppressed = await suppressCapturedCursor(screenStream);
-      window.electronAPI?.setCursorReplacementSafe?.(nativeCursorSuppressed);
-
       const isWindowMode = smartFeatures?.recordingMode === 'window';
       const shouldEnableWebcam = smartFeatures?.cameraEnabled !== undefined ? smartFeatures.cameraEnabled : enableWebcam;
       const useCompositor = isWindowMode;
@@ -327,7 +300,7 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
             }
             if (stopReasonRef.current === 'recording_limit') {
               stopReasonRef.current = null;
-              emitUpgradePrompt('recording_limit', 'Free plan ends at 3:00. Upgrade to Pro for unlimited recording.');
+              onMessage('Recording duration limit reached. Saved what was captured.');
             }
           }
         };
@@ -359,10 +332,7 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
       let webcamVideo: HTMLVideoElement | null = null;
       if (isWindowMode && shouldEnableWebcam) {
         try {
-          const webcamStream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 160 }, height: { ideal: 160 }, frameRate: { ideal: 15, max: 20 } },
-            audio: false,
-          });
+          const webcamStream = await getWindowModeWebcamStream();
           webcamStreamRef.current = webcamStream;
           webcamVideo = document.createElement('video');
           webcamVideo.muted = true;
@@ -371,7 +341,7 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
           document.body.appendChild(webcamVideo);
           webcamVideo.play().catch((error) => console.error('[Recording] Webcam play failed:', error));
         } catch (camErr) {
-          console.warn('[Recording] Webcam failed, proceeding without:', camErr);
+          console.warn('[Recording] Webcam failed, proceeding without:', describeMediaError(camErr), camErr);
         }
       }
 
@@ -509,7 +479,7 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
               }
               if (stopReasonRef.current === 'recording_limit') {
                 stopReasonRef.current = null;
-                emitUpgradePrompt('recording_limit', 'Free plan ends at 3:00. Upgrade to Pro for unlimited recording.');
+                onMessage('Recording duration limit reached. Saved what was captured.');
               }
             }
           })();
@@ -537,7 +507,7 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
       window.electronAPI?.sendRecordingStatus?.(false);
       window.electronAPI?.sendRecordingProgress?.(0);
     }
-  }, [cleanupCaptureResources, emitUpgradePrompt, enableWebcam, finalizeRecordingBlob, getEntitlementState, onMessage, setActiveRecorder, setRecordingActive, startRecordingProgress]);
+  }, [cleanupCaptureResources, enableWebcam, finalizeRecordingBlob, getEntitlementState, onMessage, setActiveRecorder, setRecordingActive, startRecordingProgress]);
 
   const handleStopRecording = useCallback(() => {
     const activeRecorder = recorderRef.current;
@@ -571,7 +541,3 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
 
   return { isRecording, handleStartRecording, handleStopRecording };
 };
-
-
-
-
