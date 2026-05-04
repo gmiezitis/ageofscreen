@@ -198,6 +198,7 @@ export const renderTextOverlayToDataUrl = (
 
 export const renderTextOverlaySprite = (
     overlay: TextOverlay,
+    _maxWidth?: number,
 ): RenderedTextOverlaySprite | null => {
     if (typeof document === 'undefined') {
         return null;

@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 // Import shared types and styles
-import type { Tool, PenSize, BlurMode, DraggableCSSProperties } from "../types";
+import type { Tool, PenSize, BlurMode, DraggableCSSProperties, ArrowType, StepType } from "../types";
 
 
 // Props expected by the Toolbar component
@@ -66,14 +66,18 @@ interface ToolbarProps {
   // Pen/Shape size state and handler
   selectedPenSize: PenSize;
   onPenSizeSelect: (size: PenSize) => void; // Rename for consistency
+  selectedArrowType?: ArrowType;
+  onArrowTypeChange?: (type: ArrowType) => void;
   // Text size state and handler
   hasSelectedTextAnnotation: boolean;
   textFontSize: number;
-  textBoxWidth: number;
-  textBoxWidthMax: number;
+  isPlainText?: boolean;
+  textBoxWidth?: number;
+  textBoxWidthMax?: number;
   onBeginTextAdjustment: () => void;
   onTextFontSizeChange: (fontSize: number) => void;
-  onTextBoxWidthChange: (width: number) => void;
+  onTogglePlainText?: (isPlain: boolean) => void;
+  onTextBoxWidthChange?: (width: number) => void;
   // --- REMOVE sizePreviewStyle prop (calculate internally if needed) ---
   // sizePreviewStyle: React.CSSProperties;
   // Text color state and handler
@@ -93,6 +97,8 @@ interface ToolbarProps {
   onHighlighterSizeSelect: (size: PenSize) => void; // <<< NEW
   selectedStepSize: PenSize;
   onStepSizeSelect: (size: PenSize) => void;
+  selectedStepType?: StepType;
+  onStepTypeChange?: (type: StepType) => void;
   selectedStepSymbol?: string;
   onStepSymbolChange: (symbol: string | undefined) => void;
   selectedSymbolText: string;

@@ -600,7 +600,6 @@ const VideoEditorApp: React.FC = () => {
                         videoPadding={state.videoPadding}
                         mediaName={state.mediaName}
                         colorGrade={state.colorGrade}
-                        cursorHighlight={state.cursorHighlight}
                         onUpdateZoomArea={selectedZoomEffect ? (area) => updateEffect(selectedZoomEffect.id, { zoomArea: area, followCursor: false }) : undefined}
                         onUpdateBlurArea={selectedBlurEffect ? (area) => updateEffect(selectedBlurEffect.id, { zoomArea: area }) : undefined}
                         recordedCursorData={state.recordedCursorData}

@@ -10,6 +10,7 @@ interface Props {
     onMove: (x: number, y: number) => void;
     onMoveEnd?: () => void;
     visualFilter?: string;
+    maxWidth?: number;
 }
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
@@ -34,6 +35,7 @@ const TextOverlayDraggable: React.FC<Props> = ({
     onMove,
     onMoveEnd,
     visualFilter,
+    maxWidth,
 }) => {
     const onMoveRef = useRef(onMove);
     const onSelectRef = useRef(onSelect);
@@ -55,8 +57,9 @@ const TextOverlayDraggable: React.FC<Props> = ({
         && (shadowOffsetX !== 0 || shadowOffsetY !== 0),
     );
     const sprite = useMemo(
-        () => renderTextOverlaySprite(tov),
+        () => renderTextOverlaySprite(tov, maxWidth),
         [
+            maxWidth,
             tov.backgroundColor,
             tov.backgroundOpacity,
             tov.borderColor,
