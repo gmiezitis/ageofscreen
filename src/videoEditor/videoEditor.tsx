@@ -15,7 +15,7 @@ import { usePlaybackLoop } from './usePlaybackLoop';
 import { useVideoEditorHandlers } from './useVideoEditorHandlers';
 import { useVideoEditorState } from './useVideoEditorState';
 import { DEFAULT_ZOOM_INTENSITY, getDefaultEffectIntensity } from './effectIntensity';
-import { normalizeCursorHighlightSettings, PlatformPreset, SmartEffect } from './types';
+import { PlatformPreset, SmartEffect } from './types';
 import { normalizeAppliedCrop } from './useCrop';
 import './videoEditor.css';
 
@@ -52,7 +52,6 @@ const buildProjectSnapshot = (state: any) => ({
         backgroundColor: state.backgroundColor,
         videoPadding: state.videoPadding,
         colorGrade: state.colorGrade,
-        cursorHighlight: state.cursorHighlight,
         premiumVoice: state.premiumVoice,
         playbackSpeed: state.playbackSpeed,
         autoPolishTrackingProfile: state.autoPolishTrackingProfile,
@@ -220,7 +219,6 @@ const VideoEditorApp: React.FC = () => {
         state.backgroundColor,
         state.videoPadding,
         state.colorGrade,
-        state.cursorHighlight,
         state.premiumVoice,
         state.playbackSpeed,
         state.autoPolishTrackingProfile,
@@ -238,7 +236,6 @@ const VideoEditorApp: React.FC = () => {
     ]);
     const hasUnsavedChanges = currentHasProjectContent && currentProjectSignature !== lastSavedProjectSignatureRef.current;
     const hasRecordingMetadata = state.mediaType === 'video' && state.recordedCursorData.length > 0;
-    const canRenderCursorHighlight = hasRecordingMetadata;
 
     const totalKeptDuration = handlers.getTimelineDuration();
     const activeEffects = useMemo(
@@ -446,13 +443,6 @@ const VideoEditorApp: React.FC = () => {
         });
     }, [beginHistorySession, queueHistoryCommit, state]);
 
-    const setCursorHighlightWithHistory = React.useCallback((settings: typeof state.cursorHighlight) => {
-        const normalizedSettings = normalizeCursorHighlightSettings(settings);
-        beginHistorySession('cursorHighlight');
-        state.setCursorHighlight(normalizedSettings);
-        queueHistoryCommit('cursorHighlight', { cursorHighlight: normalizedSettings }, 260);
-    }, [beginHistorySession, queueHistoryCommit, state]);
-
     const setAnnotationOverlaysWithHistory = React.useCallback((annotations: typeof state.annotationOverlays) => {
         beginHistorySession('annotationOverlays');
         state.setAnnotationOverlays(annotations);
@@ -486,10 +476,7 @@ const VideoEditorApp: React.FC = () => {
                 setBackgroundColor={setBackgroundColorWithHistory}
                 videoPadding={state.videoPadding}
                 setVideoPadding={setVideoPaddingWithHistory}
-                cursorHighlight={state.cursorHighlight}
-                setCursorHighlight={setCursorHighlightWithHistory}
                 hasRecordingMetadata={hasRecordingMetadata}
-                canRenderCursorHighlight={canRenderCursorHighlight}
                 onUndo={handlers.undo}
                 onRedo={handlers.redo}
                 canUndo={handlers.canUndo}

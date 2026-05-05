@@ -1,8 +1,8 @@
 import { buildSmartTrackingEffects } from './smartTracking';
 import type { Segment, SmartEffect, SmartTrackingProfile } from './types';
 
-export const AUTO_POLISH_BACKGROUND = '#0f172a';
-export const AUTO_POLISH_PADDING = 6;
+export const AUTO_POLISH_BACKGROUND = 'bg_starlight_blur';
+export const AUTO_POLISH_PADDING = 8;
 export const AUTO_POLISH_COLOR_GRADE = 'studio_clean';
 const AUTO_POLISH_MAX_FOCUS_MOMENTS = 4;
 const MIN_EFFECT_DURATION = 0.45;
@@ -103,6 +103,16 @@ export const sourceTimeToTimelineTime = (sourceTime: number, segments: Segment[]
     for (const segment of sortSegments(segments)) {
         if (sourceTime < segment.startTime || sourceTime > segment.endTime) continue;
         return segment.timelineStart + (sourceTime - segment.startTime);
+    }
+    return null;
+};
+
+export const timelineTimeToSourceTime = (timelineTime: number, segments: Segment[]): number | null => {
+    for (const segment of sortSegments(segments)) {
+        const segmentDuration = Math.max(0, segment.endTime - segment.startTime);
+        const segmentEnd = segment.timelineStart + segmentDuration;
+        if (timelineTime < segment.timelineStart || timelineTime > segmentEnd) continue;
+        return segment.startTime + (timelineTime - segment.timelineStart);
     }
     return null;
 };

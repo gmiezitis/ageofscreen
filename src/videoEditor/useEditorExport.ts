@@ -1,10 +1,10 @@
 import { useCallback } from 'react';
-import { ExportQuality, Segment, SmartEffect, TextOverlay, TransitionType, normalizeCursorHighlightSettings } from './types';
+import { ExportQuality, Segment, SmartEffect, TextOverlay, TransitionType } from './types';
 import { fromMediaFileUrl } from '../shared/mediaPaths';
 import { CanvasRenderer } from '../services/canvasRenderer';
 import type { AnnotationObject } from '../types';
 import type { EntitlementState } from '../shared/licensing';
-import { buildCursorHighlightOverlayData, buildCursorTimedTrack, FOLLOW_CURSOR_TRACK_MAX_POINTS } from './cursorStyling';
+import { buildMappedCursorTimedTrack, FOLLOW_CURSOR_TRACK_MAX_POINTS } from './cursorStyling';
 import { DEFAULT_ZOOM_INTENSITY, getEffectIntensity } from './effectIntensity';
 import { getTimelineDuration as getTimelineDurationFromItems } from './timelineClips';
 import { getPreviewOverlayFrameSize, getRenderedVideoFrameSize, resolveExportOutputFrameSize, resolveRenderExportFrameStyle, scaleTextOverlayForExport } from './exportOverlayMath';
@@ -23,6 +23,7 @@ import {
     buildAutoPolishFocusEffects,
     getBaseTimelineSegments,
     getTimelineDurationFromSegments,
+    timelineTimeToSourceTime,
     stripAutoPolishEffects,
 } from './autoPolishPlan';
 
@@ -40,16 +41,55 @@ type AutoPolishPlanResponse = {
     error?: string;
 };
 
+type ExportSmartEffect = SmartEffect & {
+    packedStartTime: number;
+    packedDuration: number;
+    renderOrder: number;
+};
+
+export type ExportCursorPoint = {
+    time: number;
+    x: number;
+    y: number;
+};
+
 const DEFAULT_ENTITLEMENT_STATE: EntitlementState = {
     tier: 'free',
     maxRecordingSeconds: 180,
     watermarkEnabled: true,
-    canUseAutoPolish: false,
+    canUseAutoPolish: true,
     canUseStudioVoice: false,
     purchaseAvailable: false,
     provider: 'manual',
     lastSyncAt: null,
 };
+
+export const resolvePremiumVoiceEnabled = (
+    requestedPremiumVoice: boolean,
+    entitlementState: Pick<EntitlementState, 'canUseStudioVoice'>,
+) => requestedPremiumVoice && entitlementState.canUseStudioVoice;
+
+export const remapExportCursorTrack = (
+    points: ExportCursorPoint[],
+    remapExportTime: (time: number) => number,
+): ExportCursorPoint[] => points.reduce<ExportCursorPoint[]>((acc, point) => {
+    const remappedTime = Number(remapExportTime(point.time).toFixed(3));
+    const nextPoint = {
+        ...point,
+        time: remappedTime,
+    };
+    const previous = acc[acc.length - 1];
+    if (
+        previous
+        && Math.abs(previous.time - nextPoint.time) < 0.001
+        && Math.abs(previous.x - nextPoint.x) < 0.001
+        && Math.abs(previous.y - nextPoint.y) < 0.001
+    ) {
+        return acc;
+    }
+    acc.push(nextPoint);
+    return acc;
+}, []);
 
 /**
  * Handles video export and auto-polish operations.
@@ -82,33 +122,6 @@ export function useEditorExport(
         endTime: Number(segment.endTime.toFixed(3)),
         timelineStart: Number(segment.timelineStart.toFixed(3)),
     }));
-    const mergeTimeRanges = (ranges: Array<{ startTime: number; endTime: number }>) => {
-        const normalized = ranges
-            .map((range) => ({
-                startTime: Math.max(0, Number(range.startTime.toFixed(3))),
-                endTime: Math.max(0, Number(range.endTime.toFixed(3))),
-            }))
-            .filter((range) => range.endTime > range.startTime)
-            .sort((a, b) => a.startTime - b.startTime);
-
-        if (normalized.length === 0) {
-            return [];
-        }
-
-        return normalized.reduce<Array<{ startTime: number; endTime: number }>>((merged, range) => {
-            const previous = merged[merged.length - 1];
-            if (!previous || range.startTime > previous.endTime) {
-                merged.push({ ...range });
-                return merged;
-            }
-
-            previous.endTime = Math.max(previous.endTime, range.endTime);
-            return merged;
-        }, []);
-    };
-    const isTimeWithinRanges = (time: number, ranges: Array<{ startTime: number; endTime: number }>) => (
-        ranges.some((range) => time >= range.startTime && time <= range.endTime)
-    );
     const getOverlayEditorFrameSize = () => {
         const previewContainerWidth = Math.round(state.threeContainerRef?.current?.clientWidth || 0);
         const previewContainerHeight = Math.round(state.threeContainerRef?.current?.clientHeight || 0);
@@ -250,7 +263,7 @@ export function useEditorExport(
             .filter((item): item is { file: string; startTime: number; duration: number } => !!item)
     );
 
-    const handleExport = async () => {
+    const handleExport = async (platformOverride?: string) => {
         if (!mediaPath) {
             showNotification('error', 'Export Failed', 'No media file loaded');
             return;
@@ -263,12 +276,9 @@ export function useEditorExport(
         let wasCanceled = false;
 
         try {
-            const entitlementState = await getEntitlementState();
-            const requestedPremiumVoice = Boolean(state.premiumVoice);
-            const premiumVoiceEnabled = requestedPremiumVoice && entitlementState.canUseStudioVoice;
-            if (requestedPremiumVoice && !entitlementState.canUseStudioVoice) {
-                showNotification('warning', 'Studio Voice locked', 'Studio Voice is a Pro feature. Export will continue without it.');
-            }
+            const effectiveSelectedPlatform = platformOverride || state.selectedPlatform;
+            const requestedPremiumVoice = false;
+            const premiumVoiceEnabled = false;
 
             let exportSegments = segments.map((s: Segment) => ({
                 id: s.id,
@@ -306,14 +316,18 @@ export function useEditorExport(
             const packedSmartEffectsById = new Map(
                 packedScene.smartEffects.map((effect: SmartEffect) => [effect.id, effect]),
             );
-            const packedSmartEffects = smartEffects.map((effect: SmartEffect) => {
+            const packedSmartEffects: ExportSmartEffect[] = smartEffects.map((effect: SmartEffect, index: number) => {
                 const packedEffect = packedSmartEffectsById.get(effect.id);
                 const effectOnPackedTimeline = packedEffect
                     ? { ...effect, startTime: packedEffect.startTime, duration: packedEffect.duration }
                     : effect;
+                const exportRange = remapExportRange(effectOnPackedTimeline.startTime, effectOnPackedTimeline.duration);
                 return {
                     ...effectOnPackedTimeline,
-                    ...remapExportRange(effectOnPackedTimeline.startTime, effectOnPackedTimeline.duration),
+                    ...exportRange,
+                    packedStartTime: effectOnPackedTimeline.startTime,
+                    packedDuration: effectOnPackedTimeline.duration,
+                    renderOrder: index,
                 };
             });
             const exportAudioSegments = packedScene.audioSegments.map((segment: any) => ({
@@ -359,12 +373,12 @@ export function useEditorExport(
             const overlayEditorFrameSize = getOverlayEditorFrameSize();
             const renderedVideoFrameSize = getRenderedVideoExportFrameSize();
             const exportFrameStyle = resolveRenderExportFrameStyle({
-                selectedPlatform: state.selectedPlatform,
+                selectedPlatform: effectiveSelectedPlatform,
                 backgroundColor: state.backgroundColor,
                 videoPadding: state.videoPadding,
             });
             const exportOutputFrameSize = resolveExportOutputFrameSize({
-                selectedPlatform: state.selectedPlatform,
+                selectedPlatform: effectiveSelectedPlatform,
                 sourceFrameSize: renderedVideoFrameSize,
             });
             const scaledTextOverlays = exportTextOverlays.map((t: any) => (
@@ -406,60 +420,33 @@ export function useEditorExport(
                 exportDuration,
             );
             const imageOverlaysForExport = buildImageOverlays(exportOverlayImages);
-            const cursorHighlightSettings = normalizeCursorHighlightSettings(state.cursorHighlight);
-            const zoomCursorHighlightDisabledRanges = mergeTimeRanges(
-                packedSmartEffects
-                    .filter((effect: SmartEffect) => effect.type === 'zoom' && effect.duration > 0)
-                    .map((effect: SmartEffect) => ({
-                        startTime: Math.min(exportDuration, Math.max(0, effect.startTime)),
-                        endTime: Math.min(exportDuration, Math.max(effect.startTime, effect.startTime + effect.duration)),
-                    }))
-            );
-            const hasCursorMetadata = Array.isArray(recordedCursorData) && recordedCursorData.length > 0;
-            const baseCursorOverlay = hasCursorMetadata
-                ? buildCursorHighlightOverlayData(
-                    recordedCursorData,
-                    exportDuration,
-                    cursorHighlightSettings,
-                    state.crop.appliedCrop,
-                    renderedVideoFrameSize,
-                )
-                : null;
-            const cursorHighlightDisabledRanges = mergeTimeRanges([
-                ...zoomCursorHighlightDisabledRanges,
-                ...(baseCursorOverlay?.disabledRanges ?? []),
-            ]);
-            const cursorOverlay = baseCursorOverlay
-                ? {
-                    ...baseCursorOverlay,
-                    clicks: (baseCursorOverlay.clicks || []).filter((click) => !isTimeWithinRanges(click.time, cursorHighlightDisabledRanges)),
-                    disabledRanges: cursorHighlightDisabledRanges.length > 0 ? cursorHighlightDisabledRanges : undefined,
-                }
-                : null;
-            const buildCursorTrack = (effect: SmartEffect) => {
+            const buildCursorTrack = (effect: ExportSmartEffect) => {
                 if (!effect.followCursor || !Array.isArray(recordedCursorData) || recordedCursorData.length === 0) {
                     return [];
                 }
 
-                return buildCursorTimedTrack(
+                const packedTrack = buildMappedCursorTimedTrack(
                     recordedCursorData,
-                    effect.startTime,
-                    effect.startTime + effect.duration,
+                    effect.packedStartTime,
+                    effect.packedStartTime + effect.packedDuration,
+                    (packedTimelineTime) => timelineTimeToSourceTime(packedTimelineTime, packedScene.segments),
                     state.crop.appliedCrop,
                     FOLLOW_CURSOR_TRACK_MAX_POINTS,
                     'follow',
                     0,
                 );
+
+                return remapExportCursorTrack(packedTrack, remapExportTime);
             };
 
             const trimData = {
                 segments: exportSegments,
-                platform: state.selectedPlatform,
+                platform: effectiveSelectedPlatform,
                 aspectRatio: null as number | null,
                 outputWidth: exportOutputFrameSize?.width ?? null,
                 outputHeight: exportOutputFrameSize?.height ?? null,
                 crop: state.crop.appliedCrop,
-                quality: (state.exportQuality || 'high') as ExportQuality,
+                quality: (state.exportQuality === 'high' ? 'balanced' : (state.exportQuality || 'balanced')) as ExportQuality,
                 backgroundColor: exportFrameStyle.backgroundColor,
                 videoPadding: exportFrameStyle.videoPadding,
                 audioSegments: exportAudioSegments.map((a: any) => ({
@@ -482,7 +469,7 @@ export function useEditorExport(
                     type: transition.type,
                 })),
                 annotationImageOverlays,
-                smartEffects: packedSmartEffects.map((e: SmartEffect) => ({
+                smartEffects: packedSmartEffects.map((e: ExportSmartEffect) => ({
                     type: e.type,
                     startTime: e.startTime,
                     duration: e.duration,
@@ -494,9 +481,9 @@ export function useEditorExport(
                     cursorTrack: buildCursorTrack(e),
                     tiltDirection: e.tiltDirection ?? 'orbital',
                     tiltSnap: e.tiltSnap ?? 50,
+                    renderOrder: e.renderOrder,
                 })),
                 transitionType: exportTransitionType,
-                cursorOverlay,
                 colorGrade: state.colorGrade || 'none',
                 premiumVoice: premiumVoiceEnabled,
             };
@@ -545,11 +532,6 @@ export function useEditorExport(
     const handleAutoPolish = useCallback(async () => {
         if (!mediaPath || state.mediaType !== 'video') {
             showNotification('error', 'Auto-Polish', 'Load a video first');
-            return;
-        }
-        const entitlementState = await getEntitlementState();
-        if (!entitlementState.canUseAutoPolish) {
-            showNotification('warning', 'Auto-Polish locked', 'Auto-Polish is a Pro feature. Upgrade to Pro to unlock it.');
             return;
         }
         if (!Array.isArray(recordedCursorData) || recordedCursorData.length === 0) {
@@ -601,9 +583,7 @@ export function useEditorExport(
             const nextBackground = AUTO_POLISH_BACKGROUND;
             const nextPadding = AUTO_POLISH_PADDING;
             const nextColorGrade = AUTO_POLISH_COLOR_GRADE;
-            const nextPremiumVoice = entitlementState.canUseStudioVoice
-                ? (!!analysis?.hasAudio || state.premiumVoice)
-                : false;
+            const nextPremiumVoice = false;
 
             const segmentsChanged = stableSerialize(normalizeSegments(nextSegments)) !== stableSerialize(normalizeSegments(currentSegments));
             const effectsChanged = stableSerialize(nextEffects) !== stableSerialize(smartEffects);

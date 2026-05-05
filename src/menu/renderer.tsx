@@ -18,7 +18,6 @@ import {
     Scissors,
     Sparkles,
     Square,
-    Lightbulb,
 } from "lucide-react";
 
 const DEFAULT_SHIELD_STATE: ShieldState = {
@@ -53,7 +52,6 @@ const MenuApp: React.FC = () => {
     const [shieldState, setShieldState] = useState<ShieldState>(DEFAULT_SHIELD_STATE);
     const [shieldToast, setShieldToast] = useState<string | null>(null);
     const [onboardingState, setOnboardingState] = useState<OnboardingState>(DEFAULT_ONBOARDING_STATE);
-    const [firstRunTipDismissed, setFirstRunTipDismissed] = useState(false);
     const sleepRequestedRef = useRef(false);
     const sleepSuppressedUntilRef = useRef(0);
     const menuWakeZoneRef = useRef<HTMLDivElement | null>(null);
@@ -298,10 +296,8 @@ const MenuApp: React.FC = () => {
     };
 
     const shieldIsHuman = shieldState.mode === "human_local";
-    const showFirstRunTip = !firstRunTipDismissed && !onboardingState.hasCompletedOnboarding;
 
-    const dismissFirstRunTip = async () => {
-        setFirstRunTipDismissed(true);
+    const completeShortcutTip = async () => {
         try {
             await window.menuAPI.settings.completeOnboarding();
         } catch (error) {
@@ -421,10 +417,6 @@ const MenuApp: React.FC = () => {
                     .agent-btn:active {
                         transform: translateY(0);
                     }
-                    .first-run-tip-btn:hover {
-                        background: rgba(255, 255, 255, 0.14) !important;
-                        border-color: rgba(255, 255, 255, 0.18) !important;
-                    }
                 `}
             </style>
 
@@ -492,75 +484,6 @@ const MenuApp: React.FC = () => {
                         setIsRecordingSetupVisible(true);
                     }}
                 />
-                {showFirstRunTip && (
-                    <div
-                        style={{
-                            position: "absolute",
-                            left: "50%",
-                            bottom: 14,
-                            transform: "translateX(-50%)",
-                            width: "min(268px, calc(100% - 36px))",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 10,
-                            padding: "10px 12px",
-                            borderRadius: 16,
-                            background: "linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.82))",
-                            border: "1px solid rgba(148, 163, 184, 0.18)",
-                            boxShadow: "0 18px 40px rgba(2, 6, 23, 0.28)",
-                            backdropFilter: "blur(16px)",
-                            zIndex: 40,
-                            pointerEvents: "auto",
-                        }}
-                        onMouseEnter={handleInteractiveMouseEnter}
-                    >
-                        <div
-                            style={{
-                                width: 24,
-                                height: 24,
-                                borderRadius: 8,
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                background: "rgba(96, 165, 250, 0.12)",
-                                color: "#bfdbfe",
-                                flexShrink: 0,
-                            }}
-                        >
-                            <Lightbulb size={13} />
-                        </div>
-                        <div
-                            style={{
-                                flex: 1,
-                                minWidth: 0,
-                                fontSize: 11,
-                                lineHeight: 1.4,
-                                color: "rgba(226, 232, 240, 0.9)",
-                            }}
-                        >
-                            <strong>Print Screen</strong> opens AgeofScreen. If Windows takes that key, use the thin top trigger.
-                        </div>
-                        <button
-                            type="button"
-                            className="first-run-tip-btn"
-                            onClick={() => void dismissFirstRunTip()}
-                            style={{
-                                border: "1px solid rgba(255, 255, 255, 0.1)",
-                                background: "rgba(255, 255, 255, 0.06)",
-                                color: "#e2e8f0",
-                                borderRadius: 10,
-                                padding: "7px 10px",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                flexShrink: 0,
-                                transition: "background 160ms ease, border-color 160ms ease",
-                            }}
-                        >
-                            Got it
-                        </button>
-                    </div>
-                )}
             </div>
 
             {FEATURES.ENABLE_AGENT_SURFACES && !shieldIsHuman && (
@@ -637,6 +560,8 @@ const MenuApp: React.FC = () => {
 
             <RecordingSetup
                 isVisible={isRecordingSetupVisible}
+                showShortcutTip={!onboardingState.hasCompletedOnboarding}
+                onCompleteShortcutTip={() => void completeShortcutTip()}
                 onClose={() => {
                     sleepRequestedRef.current = false;
                     setIsRecordingSetupVisible(false);

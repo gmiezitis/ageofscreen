@@ -1,4 +1,4 @@
-import { TextOverlay } from './types';
+﻿import { TextOverlay } from './types';
 
 export const DEFAULT_TEXT_OVERLAY_FONT_STACK = 'Arial, Helvetica, sans-serif';
 export type RenderedTextOverlaySprite = {
@@ -61,15 +61,54 @@ type TextOverlayLayout = {
     boxHeight: number;
 };
 
+const wrapText = (ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let currentLine = words[0];
+
+    for (let i = 1; i < words.length; i++) {
+        const word = words[i];
+        const width = ctx.measureText(currentLine + " " + word).width;
+        if (width < maxWidth) {
+            currentLine += " " + word;
+        } else {
+            lines.push(currentLine);
+            currentLine = word;
+        }
+    }
+    lines.push(currentLine);
+    return lines;
+};
+
 const getTextOverlayLayout = (
     ctx: CanvasRenderingContext2D,
     overlay: TextOverlay,
+    maxCanvasWidth?: number,
 ): TextOverlayLayout => {
     const fontSize = Math.max(10, Math.round(overlay.fontSize || 40));
     const fontWeight = overlay.fontWeight || 'normal';
     const fontFamily = getTextOverlayFontFamily(overlay);
-    const lineHeight = Math.max(fontSize * 1.12, fontSize + 2);
-    const lines = getTextOverlayLines(overlay.text || '');
+    const lineHeight = Math.max(fontSize * 1.2, fontSize + 4); // Increased line height slightly
+
+    ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+
+    // Initial split by explicit newlines
+    const rawLines = getTextOverlayLines(overlay.text || '');
+
+    // Determine max width for wrapping - use 80% of canvas if available, else a reasonable default
+    const maxWidth = maxCanvasWidth ? maxCanvasWidth * 0.85 : 800;
+
+    // Apply word wrapping to each raw line
+    const wrappedLines: string[] = [];
+    rawLines.forEach(line => {
+        if (ctx.measureText(line).width > maxWidth) {
+            wrappedLines.push(...wrapText(ctx, line, maxWidth));
+        } else {
+            wrappedLines.push(line);
+        }
+    });
+
+    const lines = wrappedLines.length > 0 ? wrappedLines : [''];
     const hasBackground = Boolean(
         overlay.backgroundColor
         && (overlay.backgroundOpacity ?? 0) > 0
@@ -85,10 +124,10 @@ const getTextOverlayLayout = (
         && (shadowOffsetX !== 0 || shadowOffsetY !== 0 || shadowBlur !== 0),
     );
 
-    ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
     const lineWidths = lines.map((line) => ctx.measureText(line).width);
     const textWidth = Math.max(1, ...lineWidths);
-    const textHeight = Math.max(lineHeight, lines.length * lineHeight);
+    // Added 0.1 * fontSize extra height to prevent descender cutoff
+    const textHeight = Math.max(lineHeight, lines.length * lineHeight) + (fontSize * 0.1);
     const boxWidth = textWidth + padding * 2;
     const boxHeight = textHeight + padding * 2;
 
@@ -188,7 +227,7 @@ export const renderTextOverlayToDataUrl = (
         return null;
     }
 
-    const layout = getTextOverlayLayout(ctx, overlay);
+    const layout = getTextOverlayLayout(ctx, overlay, width);
     const centerX = width * clamp01(overlay.x / 100);
     const centerY = height * clamp01(overlay.y / 100);
     drawTextOverlay(ctx, overlay, layout, centerX, centerY);
@@ -198,7 +237,7 @@ export const renderTextOverlayToDataUrl = (
 
 export const renderTextOverlaySprite = (
     overlay: TextOverlay,
-    _maxWidth?: number,
+    maxWidth?: number,
 ): RenderedTextOverlaySprite | null => {
     if (typeof document === 'undefined') {
         return null;
@@ -215,9 +254,9 @@ export const renderTextOverlaySprite = (
         return null;
     }
 
-    const layout = getTextOverlayLayout(measureCtx, overlay);
+    const layout = getTextOverlayLayout(measureCtx, overlay, maxWidth);
     const margin = Math.max(
-        4,
+        8,
         layout.strokeWidth * 2,
         Math.abs(layout.shadowOffsetX),
         Math.abs(layout.shadowOffsetY),

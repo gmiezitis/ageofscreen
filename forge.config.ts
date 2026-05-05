@@ -111,6 +111,8 @@ const windowsSignOptions = windowsCertFile && windowsCertPassword
     : undefined;
 const ffmpegResourceRoot = path.resolve(__dirname, "resources", "ffmpeg");
 const brandingResourceRoot = path.resolve(__dirname, "resources", "branding");
+const appIconPngPath = path.resolve(__dirname, "resources", "app-icon.png");
+const appIconIcoPath = path.resolve(__dirname, "resources", "app-icon.ico");
 const nativeCaptureAddonPath = path.resolve(__dirname, "src", "native", "capture_engine", "build", "Release", "capture_engine.node");
 const windowsKitPath = resolveWindowsKitPath();
 const expectedBundledFfmpegPaths = [
@@ -123,6 +125,7 @@ const hasBundledFfmpegPayloads = expectedBundledFfmpegPaths.every((candidatePath
 const extraResources = [
     ...(fs.existsSync(ffmpegResourceRoot) ? [ffmpegResourceRoot] : []),
     ...(fs.existsSync(brandingResourceRoot) ? [brandingResourceRoot] : []),
+    ...(fs.existsSync(appIconPngPath) ? [appIconPngPath] : []),
     ...(fs.existsSync(nativeCaptureAddonPath) ? [nativeCaptureAddonPath] : []),
 ];
 
@@ -242,7 +245,9 @@ if (FEATURES.ENABLE_DRAWING) {
 }
 
 const directDownloadMakers = [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+        setupIcon: fs.existsSync(appIconIcoPath) ? appIconIcoPath : undefined,
+    }),
     new MakerZIP({}, ["win32", "darwin", "linux"]),
 ];
 
@@ -271,6 +276,7 @@ const config: ForgeConfig = {
     packagerConfig: {
         asar: true,
         prune: true,
+        icon: fs.existsSync(appIconIcoPath) ? appIconIcoPath : undefined,
         extraResource: extraResources,
     },
     rebuildConfig: {},

@@ -860,7 +860,7 @@ const hideWindowForCapture = (windowRef: BrowserWindow | null): boolean => {
     return true;
 };
 const shouldUseTriggerLine = (): boolean => (
-    (RELEASE_PROFILE.name === "dev" && process.platform === "win32")
+    process.platform === "win32"
     || !Boolean(readAppPreference<boolean>("hasCompletedOnboarding"))
     || readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "trigger_line"
 );
