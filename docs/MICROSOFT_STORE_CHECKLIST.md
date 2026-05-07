@@ -31,6 +31,7 @@ Use this with `docs/MICROSOFT_STORE_DEPLOYMENT_PLAN.md` for sequencing and go/no
 - Confirm screenshots, descriptions, and privacy statements are ready for submission
 - Confirm Website URL is the public repository page `https://github.com/gmiezitis/ageofscreen`, not the `.git` clone URL
 - Confirm Support URL and Privacy Policy URL resolve in a browser without requiring repository access
+- Confirm Privacy Policy URL is `https://gmiezitis.github.io/ageofscreen/privacy.html` after the GitHub Pages workflow has deployed
 
 ## Release Notes
 

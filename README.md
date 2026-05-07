@@ -26,7 +26,11 @@ AgeofScreen targets modern Windows desktop devices.
 
 AgeofScreen is built as a local-first app. Screenshots, recordings, project files, and exports stay on the user's device unless the user chooses to share them.
 
-The privacy policy source is included in this repository at [`privacy.html`](privacy.html).
+The privacy policy is published through GitHub Pages:
+
+https://gmiezitis.github.io/ageofscreen/privacy.html
+
+The source file is included in this repository at [`privacy.html`](privacy.html).
 
 ## Support
 

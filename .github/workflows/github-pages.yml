@@ -1,0 +1,94 @@
+name: Publish GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Prepare static site
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf public-site
+          mkdir -p public-site
+          cp privacy.html public-site/privacy.html
+          cp README.md public-site/README.md
+          cat > public-site/index.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>AgeofScreen</title>
+            <style>
+              body {
+                margin: 0;
+                font-family: "Segoe UI", Arial, sans-serif;
+                background: #101014;
+                color: #f8fafc;
+                min-height: 100vh;
+                display: grid;
+                place-items: center;
+              }
+              main {
+                width: min(720px, calc(100vw - 32px));
+                padding: 48px 0;
+              }
+              h1 {
+                margin: 0 0 12px;
+                font-size: clamp(36px, 8vw, 72px);
+                line-height: 1;
+              }
+              p {
+                color: #cbd5e1;
+                font-size: 18px;
+                line-height: 1.7;
+              }
+              a {
+                color: #ffffff;
+                font-weight: 700;
+              }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>AgeofScreen</h1>
+              <p>Local-first Windows screen capture and media editing for product demos, tutorials, walkthroughs, and support clips.</p>
+              <p><a href="./privacy.html">Privacy Policy</a></p>
+              <p><a href="https://github.com/gmiezitis/ageofscreen">GitHub Repository</a></p>
+            </main>
+          </body>
+          </html>
+          HTML
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public-site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

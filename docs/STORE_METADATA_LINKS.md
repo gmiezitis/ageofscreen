@@ -20,4 +20,8 @@ https://github.com/gmiezitis/ageofscreen/issues
 
 ## Privacy Policy
 
-Use the public privacy policy URL for the app. If hosting from this repository, publish `privacy.html` through GitHub Pages or another public website and enter that published page URL in Partner Center.
+Use:
+
+https://gmiezitis.github.io/ageofscreen/privacy.html
+
+This repository publishes `privacy.html` through the `Publish GitHub Pages` workflow. After making the repository public, run that workflow or push to `main`, then verify the URL opens in a private/incognito browser window before resubmitting to Partner Center.
