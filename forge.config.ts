@@ -111,6 +111,7 @@ const windowsSignOptions = windowsCertFile && windowsCertPassword
     : undefined;
 const ffmpegResourceRoot = path.resolve(__dirname, "resources", "ffmpeg");
 const brandingResourceRoot = path.resolve(__dirname, "resources", "branding");
+const msixAssetRoot = path.resolve(__dirname, "resources", "msix-assets");
 const appIconPngPath = path.resolve(__dirname, "resources", "app-icon.png");
 const appIconIcoPath = path.resolve(__dirname, "resources", "app-icon.ico");
 const nativeCaptureAddonPath = path.resolve(__dirname, "src", "native", "capture_engine", "build", "Release", "capture_engine.node");
@@ -254,6 +255,7 @@ const directDownloadMakers = [
 const storeMakers = [
     new MakerMSIX({
         packageName: "AgeofScreen.msix",
+        packageAssets: msixAssetRoot,
         sign: true,
         logLevel: "warn",
         windowsKitPath,
