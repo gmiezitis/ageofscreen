@@ -29,6 +29,8 @@ Use this with `docs/MICROSOFT_STORE_DEPLOYMENT_PLAN.md` for sequencing and go/no
 - Validate package identity and publisher match Partner Center
 - Confirm architecture-specific packages are labeled correctly
 - Confirm screenshots, descriptions, and privacy statements are ready for submission
+- Confirm Website URL is the public repository page `https://github.com/gmiezitis/ageofscreen`, not the `.git` clone URL
+- Confirm Support URL and Privacy Policy URL resolve in a browser without requiring repository access
 
 ## Release Notes
 

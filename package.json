@@ -3,6 +3,14 @@
     "productName": "AgeofScreen",
     "version": "1.0.0",
     "description": "Screen capture and focus productivity tool",
+    "homepage": "https://github.com/gmiezitis/ageofscreen",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/gmiezitis/ageofscreen.git"
+    },
+    "bugs": {
+        "url": "https://github.com/gmiezitis/ageofscreen/issues"
+    },
     "main": ".webpack/main",
     "engines": {
         "node": "22.x",
