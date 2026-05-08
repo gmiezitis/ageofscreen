@@ -19,6 +19,7 @@ require('ts-node').register({
     './autoPolishPlan.test.ts',
     './timelineScene.test.ts',
     './timelineClips.test.ts',
+    './playgroundEngine.test.ts',
 ].forEach((file) => {
     require(file);
 });

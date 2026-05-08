@@ -11,6 +11,7 @@ import {
     Bot,
     Camera,
     Film,
+    Gamepad2,
     LayoutList,
     Maximize,
     Monitor,
@@ -32,6 +33,7 @@ const DEFAULT_ONBOARDING_STATE: OnboardingState = {
     preferredCaptureShortcut: "print_screen",
 };
 
+const SCREEN_PLAYGROUND_UNLOCK_KEY = "ageofscreen-screen-playground-unlocked";
 const MENU_WAKE_ZONE_WIDTH = 380;
 const MENU_WAKE_ZONE_HEIGHT = 380;
 const MENU_WAKE_ZONE_OFFSET_Y = -12;
@@ -52,6 +54,7 @@ const MenuApp: React.FC = () => {
     const [shieldState, setShieldState] = useState<ShieldState>(DEFAULT_SHIELD_STATE);
     const [shieldToast, setShieldToast] = useState<string | null>(null);
     const [onboardingState, setOnboardingState] = useState<OnboardingState>(DEFAULT_ONBOARDING_STATE);
+    const [screenPlaygroundUnlocked, setScreenPlaygroundUnlocked] = useState(() => localStorage.getItem(SCREEN_PLAYGROUND_UNLOCK_KEY) === "1");
     const sleepRequestedRef = useRef(false);
     const sleepSuppressedUntilRef = useRef(0);
     const menuWakeZoneRef = useRef<HTMLDivElement | null>(null);
@@ -152,6 +155,22 @@ const MenuApp: React.FC = () => {
     useEffect(() => {
         sleepRequestedRef.current = false;
     }, [isRecording, isRecordingSetupVisible, shieldState.mode]);
+
+    useEffect(() => {
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (!FEATURES.ENABLE_SCREEN_PLAYGROUND) return;
+            if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== "p") return;
+            event.preventDefault();
+            setScreenPlaygroundUnlocked((current) => {
+                const next = !current;
+                localStorage.setItem(SCREEN_PLAYGROUND_UNLOCK_KEY, next ? "1" : "0");
+                showTimedStatus(next ? "Labs unlocked: Screen Playground is available." : "Screen Playground hidden.");
+                return next;
+            });
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, []);
 
     const requestSleep = () => {
         if (
@@ -335,6 +354,19 @@ const MenuApp: React.FC = () => {
             action: handleOpenMediaEditor,
         },
     ];
+
+    if (FEATURES.ENABLE_SCREEN_PLAYGROUND && screenPlaygroundUnlocked) {
+        tools.push({
+            id: "screen-playground",
+            name: "Play",
+            icon: <Gamepad2 size={18} strokeWidth={2} />,
+            color: "orange",
+            action: () => {
+                window.menuAPI.openScreenPlayground();
+                window.menuAPI.hideMenu();
+            },
+        });
+    }
 
     if (FEATURES.ENABLE_AGENT_SURFACES) {
         tools.push({

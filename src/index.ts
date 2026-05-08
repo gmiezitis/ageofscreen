@@ -637,6 +637,7 @@ let teleprompterWindow: BrowserWindow | null = null;
 let drawingOverlayWindow: BrowserWindow | null = null;
 let videoEditorWindow: BrowserWindow | null = null;
 let introWindow: BrowserWindow | null = null;
+let screenPlaygroundWindow: BrowserWindow | null = null;
 let _tray: Tray | null = null;
 let wasWebcamVisibleBeforeDrawing = false;
 let shouldRestoreEditorAfterCaptureCancel = false;
@@ -1080,6 +1081,8 @@ declare const DRAWING_OVERLAY_WINDOW_WEBPACK_ENTRY: string;
 declare const DRAWING_OVERLAY_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 declare const VIDEO_EDITOR_WINDOW_WEBPACK_ENTRY: string;
 declare const VIDEO_EDITOR_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
+declare const SCREEN_PLAYGROUND_WINDOW_WEBPACK_ENTRY: string;
+declare const SCREEN_PLAYGROUND_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
 // --- Editor Window (Main Annotation App) ---
 const createEditorWindow = (initialDataUrl?: string, options: { showWhenReady?: boolean } = {}) => {
@@ -1715,6 +1718,103 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
             captureWindow = null;
             tempScreenshotDataUrl = null;
         }
+    });
+};
+
+const capturePrimaryDisplayDataUrl = async (): Promise<{
+    screenshotDataUrl: string;
+    display: { width: number; height: number; scaleFactor: number };
+}> => {
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.size;
+    const scaleFactor = primaryDisplay.scaleFactor;
+    const hiddenAnyWindow = [
+        hideWindowForCapture(menuWindow),
+        hideWindowForCapture(triggerWindow),
+        hideWindowForCapture(editorWindow),
+        hideWindowForCapture(videoEditorWindow),
+        hideWindowForCapture(webcamWindow),
+        hideWindowForCapture(recordingWidget),
+    ].some(Boolean);
+
+    if (hiddenAnyWindow) {
+        await wait(CAPTURE_WINDOW_SETTLE_MS);
+    }
+
+    const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: {
+            width: width * scaleFactor,
+            height: height * scaleFactor,
+        },
+    });
+    const primarySource = sources.find((source) => source.id.startsWith("screen:")) || sources[0];
+    if (!primarySource) {
+        throw new Error("Could not capture the screen for Screen Playground.");
+    }
+
+    return {
+        screenshotDataUrl: primarySource.thumbnail.toDataURL(),
+        display: { width, height, scaleFactor },
+    };
+};
+
+const createScreenPlaygroundWindow = async () => {
+    if (!FEATURES.ENABLE_SCREEN_PLAYGROUND) {
+        console.log("[ageofscreen] Screen Playground disabled by feature flag");
+        return;
+    }
+
+    if (screenPlaygroundWindow && !screenPlaygroundWindow.isDestroyed()) {
+        screenPlaygroundWindow.show();
+        screenPlaygroundWindow.focus();
+        return;
+    }
+
+    let payload: Awaited<ReturnType<typeof capturePrimaryDisplayDataUrl>>;
+    try {
+        payload = await capturePrimaryDisplayDataUrl();
+    } catch (error) {
+        console.error("[ageofscreen] Screen Playground capture failed:", error);
+        createMenuWindow({ openReason: "manual", bypassReopenGuard: true });
+        return;
+    }
+
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.size;
+
+    screenPlaygroundWindow = new BrowserWindow({
+        x: primaryDisplay.bounds.x,
+        y: primaryDisplay.bounds.y,
+        width,
+        height,
+        frame: false,
+        backgroundColor: "#05070d",
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: false,
+        fullscreenable: true,
+        autoHideMenuBar: true,
+        show: false,
+        icon: getAppWindowIcon(),
+        webPreferences: {
+            preload: SCREEN_PLAYGROUND_WINDOW_PRELOAD_WEBPACK_ENTRY,
+            nodeIntegration: false,
+            contextIsolation: true,
+            backgroundThrottling: false,
+        },
+    });
+
+    screenPlaygroundWindow.loadURL(SCREEN_PLAYGROUND_WINDOW_WEBPACK_ENTRY);
+    screenPlaygroundWindow.once("ready-to-show", () => {
+        if (!screenPlaygroundWindow || screenPlaygroundWindow.isDestroyed()) return;
+        screenPlaygroundWindow.show();
+        screenPlaygroundWindow.focus();
+        screenPlaygroundWindow.webContents.send("screen-playground:init", payload);
+    });
+    screenPlaygroundWindow.on("closed", () => {
+        screenPlaygroundWindow = null;
+        restoreTriggerWindowIfEnabled(120);
     });
 };
 
@@ -3222,6 +3322,16 @@ const registerIpcHandlers = () => {
     ipcMain.on("menu-focus", () => {
         // Toggled in the menu renderer itself (managed by FocusWidget component)
         console.log("[ageofscreen] Focus Toggled");
+    });
+
+    ipcMain.on("screen-playground-open", () => {
+        void createScreenPlaygroundWindow();
+    });
+
+    ipcMain.on("screen-playground:close", () => {
+        if (screenPlaygroundWindow && !screenPlaygroundWindow.isDestroyed()) {
+            screenPlaygroundWindow.close();
+        }
     });
 
 

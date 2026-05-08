@@ -18,6 +18,7 @@ export interface ReleaseProfile {
         autoZoomAdvanced: boolean;
         proFeatures: boolean;
         agentSurfaces: boolean;
+        screenPlayground: boolean;
     };
 }
 
@@ -66,6 +67,7 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     autoZoomAdvanced: false,
                     proFeatures: false,
                     agentSurfaces: true,
+                    screenPlayground: true,
                 },
             };
         case "direct-download":
@@ -87,6 +89,7 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     autoZoomAdvanced: false,
                     proFeatures: false,
                     agentSurfaces: true,
+                    screenPlayground: true,
                 },
             };
         case "dev":
@@ -109,6 +112,7 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     autoZoomAdvanced: false,
                     proFeatures: false,
                     agentSurfaces: true,
+                    screenPlayground: true,
                 },
             };
     }
