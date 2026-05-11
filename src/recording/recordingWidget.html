@@ -129,6 +129,10 @@
             color: #a78bfa;
         }
 
+        .btn-edit:hover {
+            color: #60a5fa;
+        }
+
         .btn-bg-color:hover {
             color: #f8fafc;
         }
@@ -187,7 +191,7 @@
             </svg>
         </button>
 
-        <button class="btn btn-tele" id="teleBtn" title="Teleprompter">
+        <button class="btn btn-tele" id="teleBtn" title="Script / subtitles">
             <!-- Lucide AlignLeft Icon -->
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                 stroke-linejoin="round">
@@ -202,6 +206,14 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                 stroke-linejoin="round">
                 <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+            </svg>
+        </button>
+
+        <button class="btn btn-edit active" id="editBtn" title="Open editor after stop">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <path d="M14.5 4.5 19.5 9.5" />
+                <path d="M5 19l4.8-1.2L20 7.6a2.1 2.1 0 0 0-3-3L6.8 14.8Z" />
             </svg>
         </button>
 
@@ -351,6 +363,20 @@
                 drawBtn.classList.toggle('active', isDrawingEnabled);
                 updateWidgetBorder();
             });
+        }
+
+        let editAfterRecording = true;
+        const editBtn = document.getElementById('editBtn');
+        editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            editAfterRecording = !editAfterRecording;
+            editBtn.classList.toggle('active', editAfterRecording);
+            if (api && api.setEditAfterRecording) {
+                api.setEditAfterRecording(editAfterRecording);
+            }
+        });
+        if (api && api.setEditAfterRecording) {
+            api.setEditAfterRecording(editAfterRecording);
         }
 
         // Close dropdowns

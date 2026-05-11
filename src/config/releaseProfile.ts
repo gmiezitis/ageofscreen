@@ -58,8 +58,8 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                 allowBundledFfmpegOnly: true,
                 allowAgentSurfaces: true,
                 defaultFeatures: {
-                    teleprompter: false,
-                    drawing: false,
+                    teleprompter: true,
+                    drawing: true,
                     focusWidget: false,
                     focusTimerBuiltinSounds: false,
                     smartTargetingOcr: false,
@@ -80,8 +80,8 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                 allowBundledFfmpegOnly: true,
                 allowAgentSurfaces: false,
                 defaultFeatures: {
-                    teleprompter: false,
-                    drawing: false,
+                    teleprompter: true,
+                    drawing: true,
                     focusWidget: false,
                     focusTimerBuiltinSounds: false,
                     smartTargetingOcr: false,

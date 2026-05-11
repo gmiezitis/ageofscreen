@@ -823,7 +823,7 @@ const resolveExportSavePath = async ({
 };
 
 // Recording Widget Dimensions
-const RECORDING_WIDGET_WIDTH = 220;
+const RECORDING_WIDGET_WIDTH = 252;
 const RECORDING_WIDGET_HEIGHT = 42;
 const RECORDING_WIDGET_MARGIN = 20;
 
@@ -847,6 +847,7 @@ const MENU_PREWARM_DELAY_MS = 260;
 const MENU_IDLE_RELEASE_DELAY_MS = 20000;
 const CAPTURE_WINDOW_SETTLE_MS = 160;
 const STOP_RECORDING_RETRY_DELAYS_MS = [0, 160, 420] as const;
+const AUTO_LAUNCH_ARG = "--ageofscreen-startup";
 let isWebcamSmall = false; // Toggle for webcam size
 let isWebcamZoomed = false; // Track zoom status for manual toggle
 
@@ -865,6 +866,52 @@ const shouldUseTriggerLine = (): boolean => (
     || !Boolean(readAppPreference<boolean>("hasCompletedOnboarding"))
     || readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "trigger_line"
 );
+
+const ensureWindowsAutoLaunchRegistration = () => {
+    if (process.platform !== "win32") {
+        return;
+    }
+
+    try {
+        app.setLoginItemSettings({
+            openAtLogin: true,
+            enabled: true,
+            name: "AgeofScreen",
+            path: process.execPath,
+            args: [AUTO_LAUNCH_ARG],
+        });
+        const loginSettings = app.getLoginItemSettings({
+            path: process.execPath,
+            args: [AUTO_LAUNCH_ARG],
+        });
+        console.log("[ageofscreen] Windows startup registration:", {
+            openAtLogin: loginSettings.openAtLogin,
+            executableWillLaunchAtLogin: loginSettings.executableWillLaunchAtLogin,
+            wasOpenedAtLogin: loginSettings.wasOpenedAtLogin,
+        });
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to register Windows startup launch:", error);
+    }
+};
+
+const isWindowsAutoLaunch = (): boolean => {
+    if (process.platform !== "win32") {
+        return false;
+    }
+
+    if (process.argv.includes(AUTO_LAUNCH_ARG)) {
+        return true;
+    }
+
+    try {
+        return app.getLoginItemSettings({
+            path: process.execPath,
+            args: [AUTO_LAUNCH_ARG],
+        }).wasOpenedAtLogin;
+    } catch {
+        return false;
+    }
+};
 
 const shouldUsePrintScreenShortcut = (): boolean => (
     readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "print_screen"
@@ -951,12 +998,11 @@ const clearPendingStopRecordingDispatches = () => {
 };
 
 const dispatchStopRecordingRequest = () => {
-    if (menuWindow && !menuWindow.isDestroyed()) {
-        menuWindow.webContents.send("stop-recording-requested");
-    }
-    if (editorWindow && !editorWindow.isDestroyed()) {
-        editorWindow.webContents.send("stop-recording-requested");
-    }
+    BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) {
+            win.webContents.send("stop-recording-requested");
+        }
+    });
 };
 
 const startTriggerTracking = () => {
@@ -1920,6 +1966,7 @@ const triggerStopRecording = () => {
     console.log('[ageofscreen] Triggering stop recording');
     isRecordingActive = false;
     clearPendingStopRecordingDispatches();
+    dispatchStopRecordingRequest();
 
     // Unregister ESC and zoom shortcuts
     try {
@@ -4566,15 +4613,22 @@ app.whenReady().then(async () => {
     cachedEntitlementState = await getEntitlementProvider().initialize();
     cachedEntitlementState = await getEntitlementProvider().restoreIfNeeded();
     broadcastLicenseState(cachedEntitlementState);
+    ensureWindowsAutoLaunchRegistration();
     registerCaptureShortcut();
     createAppTray();
     createTriggerWindow();
 
     const onboardingState = getOnboardingState();
+    const launchedFromWindowsStartup = isWindowsAutoLaunch();
     if (!onboardingState.hasCompletedOnboarding && RELEASE_PROFILE.name !== "dev") {
         setTimeout(() => {
             createIntroWindow();
         }, 220);
+    } else if (launchedFromWindowsStartup) {
+        setTimeout(() => {
+            createMenuWindow({ show: false, bypassReopenGuard: true });
+            restoreTriggerWindowIfEnabled(40);
+        }, MENU_PREWARM_DELAY_MS);
     } else if (RELEASE_PROFILE.name !== "dev") {
         setTimeout(() => {
             openAgeofScreenLauncher();
