@@ -1,7 +1,7 @@
 {
     "name": "ageofscreen",
     "productName": "AgeofScreen",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Screen capture and focus productivity tool",
     "homepage": "https://github.com/gmiezitis/ageofscreen",
     "repository": {
