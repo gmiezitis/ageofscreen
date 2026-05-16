@@ -102,7 +102,7 @@ export const useVideoEditorState = () => {
     // Toast
     const [notification, setNotification] = useState<EditorNotification | null>(null);
 
-    const [libraryAssets, setLibraryAssets] = useState<{ id: string; type: 'video' | 'image' | 'audio'; path: string; name: string; thumbnail?: string }[]>([]);
+    const [libraryAssets, setLibraryAssets] = useState<{ id: string; type: 'video' | 'image' | 'audio'; path: string; name: string; thumbnail?: string; cursorData?: any[]; duration?: number }[]>([]);
 
     // Shotcut Features State
     const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1, rotation: 0 });

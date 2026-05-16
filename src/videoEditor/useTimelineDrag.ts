@@ -39,6 +39,7 @@ export function useTimelineDrag(
         name: string;
         thumbnail?: string;
         cursorData?: any[];
+        duration?: number;
     };
 
     const IMAGE_DROP_SNAP_DISTANCE = 0.9;
@@ -133,9 +134,13 @@ export function useTimelineDrag(
 
         const timelineDuration = getTimelineDuration();
         const requestedTime = Math.max(0, Math.min(startTime ?? state.displayTime ?? 0, Math.max(timelineDuration, 0)));
+        const shouldInsertMainTrackClip = (
+            (libraryAsset.type === 'image' && effectiveImagePlacement === 'clip')
+            || (libraryAsset.type === 'video' && Boolean(state.mediaPath))
+        );
         
         // Gap filling logic
-        const gap = (libraryAsset.type === 'image' && effectiveImagePlacement === 'clip')
+        const gap = shouldInsertMainTrackClip
             ? findGapAtDisplayTime(segments, imageClips, requestedTime, IMAGE_DROP_SNAP_DISTANCE)
             : null;
 
@@ -161,14 +166,18 @@ export function useTimelineDrag(
             return true;
         }
 
-        if (libraryAsset.type === 'image') {
-            if (effectiveImagePlacement === 'clip') {
-                const clipDuration = gap ? gap.duration : 3; // 3 sec default as requested
+        if (libraryAsset.type === 'image' || shouldInsertMainTrackClip) {
+            if (shouldInsertMainTrackClip) {
+                const sourceDuration = libraryAsset.type === 'video'
+                    ? Math.max(0.5, libraryAsset.duration ?? 3)
+                    : 3;
+                const clipDuration = gap ? Math.min(gap.duration, sourceDuration) : sourceDuration;
                 const newClip: ImageClip = {
-                    id: `image-clip-${Date.now()}`,
+                    id: `${libraryAsset.type}-clip-${Date.now()}`,
                     file: libraryAsset.path,
                     name: libraryAsset.name,
                     thumbnail: libraryAsset.thumbnail,
+                    mediaType: libraryAsset.type === 'video' ? 'video' : 'image',
                     startTime: insertionTime,
                     duration: clipDuration,
                 };
@@ -195,7 +204,7 @@ export function useTimelineDrag(
 
                 clearSelection();
                 state.setSelectedImageClipId(newClip.id);
-                showNotification('success', 'Timeline', `Inserted image clip: ${libraryAsset.name}`);
+                showNotification('success', 'Timeline', `Inserted ${libraryAsset.type} clip: ${libraryAsset.name}`);
                 return true;
             }
 
@@ -217,7 +226,7 @@ export function useTimelineDrag(
                 y: placement.y,
                 width: placement.width,
                 height: placement.height,
-                renderMode: effectiveImagePlacement,
+                renderMode: effectiveImagePlacement === 'clip' ? 'overlay' : effectiveImagePlacement,
             };
             const nextOverlayImages = [...overlayImages, newOverlay];
             setOverlayImages(nextOverlayImages);

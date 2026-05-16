@@ -17,6 +17,7 @@ require('ts-node').register({
     './editorExport.test.ts',
     './exportHelpers.test.ts',
     './autoPolishPlan.test.ts',
+    './smartTracking.test.ts',
     './timelineScene.test.ts',
     './timelineClips.test.ts',
 ].forEach((file) => {

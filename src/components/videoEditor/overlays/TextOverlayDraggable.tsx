@@ -127,6 +127,7 @@ const TextOverlayDraggable: React.FC<Props> = ({
                 justifyContent: 'center',
                 width: sprite?.width,
                 height: sprite?.height,
+                maxWidth,
                 color: tov.color,
                 fontFamily: getTextOverlayFontFamily(tov),
                 fontWeight: tov.fontWeight || 'normal',

@@ -160,8 +160,8 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     onPenSizeSelect,
     hasSelectedTextAnnotation,
     textFontSize,
-    textBoxWidth,
-    textBoxWidthMax,
+    textBoxWidth = 220,
+    textBoxWidthMax = 420,
     onBeginTextAdjustment,
     onTextFontSizeChange,
     onTextBoxWidthChange,
@@ -611,7 +611,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
                     value={Math.round(Math.min(textBoxWidth, textBoxWidthMax))}
                     onMouseDown={onBeginTextAdjustment}
                     onTouchStart={onBeginTextAdjustment}
-                    onChange={(e) => onTextBoxWidthChange(Number(e.target.value))}
+                    onChange={(e) => onTextBoxWidthChange?.(Number(e.target.value))}
                     title="Text box width"
                     style={{ width: "140px" }}
                   />

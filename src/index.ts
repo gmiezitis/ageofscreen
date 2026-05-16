@@ -11,7 +11,7 @@ import { PLAN_CONFIG, type PlanTier } from "./config/plan";
 import { RELEASE_PROFILE } from "./config/releaseProfile";
 import { planAutoPolish, runAutoPolish } from "./services/autoPolish";
 import fs from "fs";
-import { spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import Store from "electron-store";
 import { EventEmitter } from "events";
 import { Readable } from "stream";
@@ -45,6 +45,7 @@ type AppPreferences = {
     hasCompletedOnboarding: boolean;
     preferredCaptureShortcut: CaptureShortcutPreference;
     devEntitlementOverride: PlanTier | null;
+    windowsDesktopShortcutCreated: boolean;
 };
 
 const smokeLogFile = process.env.AGEOFSCREEN_SMOKE_LOG_FILE?.trim();
@@ -93,6 +94,7 @@ const appPreferencesStore = new (Store as any)({
         hasCompletedOnboarding: false,
         preferredCaptureShortcut: "print_screen",
         devEntitlementOverride: PLAN_CONFIG.allowManualTierOverride ? (PLAN_CONFIG.devOverrideTier ?? null) : null,
+        windowsDesktopShortcutCreated: false,
     } satisfies AppPreferences,
 });
 
@@ -843,12 +845,14 @@ const TRIGGER_TRACK_INTERVAL_MS = 50;
 const MENU_REOPEN_GUARD_MS = 260;
 const MENU_TRIGGER_REARM_DELAY_MS = 120;
 const MENU_PREWARM_DELAY_MS = 260;
-const MENU_IDLE_RELEASE_DELAY_MS = 20000;
+const MENU_IDLE_RELEASE_DELAY_MS = 6000;
 const CAPTURE_WINDOW_SETTLE_MS = 160;
 const STOP_RECORDING_RETRY_DELAYS_MS = [0, 160, 420] as const;
+const PRINT_SCREEN_REGISTRATION_RETRY_DELAYS_MS = [1000, 5000, 15000] as const;
 const AUTO_LAUNCH_ARG = "--ageofscreen-startup";
 let isWebcamSmall = false; // Toggle for webcam size
 let isWebcamZoomed = false; // Track zoom status for manual toggle
+let printScreenRegistrationRetryTimeouts: NodeJS.Timeout[] = [];
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -866,12 +870,56 @@ const shouldUseTriggerLine = (): boolean => (
     || readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "trigger_line"
 );
 
+const shouldUsePrintScreenShortcut = (): boolean => (
+    readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "print_screen"
+);
+
+const runWindowsCommand = (command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> => (
+    new Promise((resolve) => {
+        execFile(command, args, { windowsHide: true }, (error, stdout, stderr) => {
+            resolve({
+                stdout: stdout?.toString?.() ?? "",
+                stderr: stderr?.toString?.() ?? "",
+                code: typeof (error as any)?.code === "number" ? (error as any).code : 0,
+            });
+        });
+    })
+);
+
+const cleanupBrokenWindowsAutoLaunchRegistration = async () => {
+    if (process.platform !== "win32") {
+        return;
+    }
+
+    try {
+        const runKey = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+        const queryResult = await runWindowsCommand("reg.exe", ["query", runKey, "/v", "AgeofScreen"]);
+        const value = `${queryResult.stdout}\n${queryResult.stderr}`;
+        const hasBrokenDevElectronEntry = /node_modules\\electron\\dist\\electron\.exe/i.test(value)
+            || /node_modules\/electron\/dist\/electron\.exe/i.test(value);
+
+        if (!hasBrokenDevElectronEntry) {
+            return;
+        }
+
+        await runWindowsCommand("reg.exe", ["delete", runKey, "/v", "AgeofScreen", "/f"]);
+        console.log("[ageofscreen] Removed broken development Electron startup entry.");
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to clean development startup entry:", error);
+    }
+};
+
 const ensureWindowsAutoLaunchRegistration = () => {
     if (process.platform !== "win32") {
         return;
     }
 
     try {
+        if (!app.isPackaged) {
+            console.log("[ageofscreen] Skipping Windows startup registration in development.");
+            return;
+        }
+
         app.setLoginItemSettings({
             openAtLogin: true,
             enabled: true,
@@ -890,6 +938,34 @@ const ensureWindowsAutoLaunchRegistration = () => {
         });
     } catch (error) {
         console.warn("[ageofscreen] Failed to register Windows startup launch:", error);
+    }
+};
+
+const ensureWindowsPrintScreenPreference = async () => {
+    if (process.platform !== "win32" || !shouldUsePrintScreenShortcut()) {
+        return;
+    }
+
+    try {
+        const result = await runWindowsCommand("reg.exe", [
+            "add",
+            "HKCU\\Control Panel\\Keyboard",
+            "/v",
+            "PrintScreenKeyForSnippingEnabled",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "0",
+            "/f",
+        ]);
+
+        if (result.code === 0) {
+            console.log("[ageofscreen] Windows Print Screen snipping handoff disabled for AgeofScreen shortcut registration.");
+        } else {
+            console.warn("[ageofscreen] Could not update Windows Print Screen preference:", result);
+        }
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to update Windows Print Screen preference:", error);
     }
 };
 
@@ -912,9 +988,12 @@ const isWindowsAutoLaunch = (): boolean => {
     }
 };
 
-const shouldUsePrintScreenShortcut = (): boolean => (
-    readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "print_screen"
-);
+const clearPrintScreenRegistrationRetries = () => {
+    for (const timeout of printScreenRegistrationRetryTimeouts) {
+        clearTimeout(timeout);
+    }
+    printScreenRegistrationRetryTimeouts = [];
+};
 
 const resolveAppIconPath = (fileName = "app-icon.png"): string | null => {
     const candidates = [
@@ -937,6 +1016,85 @@ const resolveAppIconPath = (fileName = "app-icon.png"): string | null => {
 const getAppWindowIcon = () => {
     const iconPath = resolveAppIconPath(process.platform === "win32" ? "app-icon.ico" : "app-icon.png");
     return iconPath ? nativeImage.createFromPath(iconPath) : undefined;
+};
+
+const resolveWindowsStoreAppUserModelId = async (): Promise<string | null> => {
+    if (process.platform !== "win32" || !isWindowsStorePackage()) {
+        return null;
+    }
+
+    const script = `
+$ErrorActionPreference = 'Stop'
+$names = @('Age of Screen', 'AgeofScreen')
+$app = Get-StartApps | Where-Object { $names -contains $_.Name } | Select-Object -First 1
+if (-not $app) { exit 2 }
+[Console]::Out.Write($app.AppID)
+`;
+
+    try {
+        const result = await runWindowsCommand("powershell.exe", [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ]);
+
+        const appUserModelId = result.stdout.trim();
+        if (result.code === 0 && appUserModelId) {
+            return appUserModelId;
+        }
+
+        console.warn("[ageofscreen] Could not resolve Windows Store AppUserModelID:", result);
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to resolve Windows Store AppUserModelID:", error);
+    }
+
+    return null;
+};
+
+const createWindowsStoreDesktopShortcut = async () => {
+    if (process.platform !== "win32" || !isWindowsStorePackage()) {
+        return;
+    }
+
+    const shortcutPath = path.join(app.getPath("desktop"), "Age of Screen.lnk");
+    if (fs.existsSync(shortcutPath)) {
+        writeAppPreference("windowsDesktopShortcutCreated", true);
+        return;
+    }
+
+    if (readAppPreference<boolean>("windowsDesktopShortcutCreated")) {
+        writeAppPreference("windowsDesktopShortcutCreated", false);
+    }
+
+    const iconPath = resolveAppIconPath("app-icon.ico") || "";
+    const appUserModelId = await resolveWindowsStoreAppUserModelId();
+    if (!appUserModelId) {
+        return;
+    }
+
+    try {
+        const created = shell.writeShortcutLink(shortcutPath, "create", {
+            target: path.join(process.env.WINDIR || "C:\\Windows", "explorer.exe"),
+            args: `shell:AppsFolder\\${appUserModelId}`,
+            cwd: app.getPath("home"),
+            description: "Age of Screen",
+            icon: iconPath || undefined,
+            iconIndex: 0,
+            appUserModelId,
+        });
+
+        if (created && fs.existsSync(shortcutPath)) {
+            writeAppPreference("windowsDesktopShortcutCreated", true);
+            console.log("[ageofscreen] Created Windows Store desktop shortcut:", shortcutPath);
+            return;
+        }
+
+        console.warn("[ageofscreen] Windows Store desktop shortcut was not created.");
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to create Windows Store desktop shortcut:", error);
+    }
 };
 
 const openAgeofScreenLauncher = () => {
@@ -1072,7 +1230,7 @@ const hideTriggerWindow = () => {
     triggerWindow.setIgnoreMouseEvents(true, { forward: true });
 };
 
-const registerCaptureShortcut = () => {
+const registerCaptureShortcut = (scheduleRetries = true) => {
     try {
         if (globalShortcut.isRegistered("PrintScreen")) {
             globalShortcut.unregister("PrintScreen");
@@ -1095,7 +1253,19 @@ const registerCaptureShortcut = () => {
 
         if (!registered) {
             console.warn("[ageofscreen] Print Screen shortcut could not be registered.");
+            if (scheduleRetries) {
+                clearPrintScreenRegistrationRetries();
+                printScreenRegistrationRetryTimeouts = PRINT_SCREEN_REGISTRATION_RETRY_DELAYS_MS.map((delayMs) => (
+                    setTimeout(() => {
+                        if (!globalShortcut.isRegistered("PrintScreen")) {
+                            registerCaptureShortcut(false);
+                        }
+                    }, delayMs)
+                ));
+            }
+            return;
         }
+        clearPrintScreenRegistrationRetries();
     } catch (error) {
         console.warn("[ageofscreen] Failed to register Print Screen shortcut:", error);
     }
@@ -2217,26 +2387,38 @@ const hideRecordingWidget = () => {
         mouseTrackInterval = null;
     }
 
-    if (smartFeaturesConfig.captureCursorData) {
-        recordedCursorData = stopMetadataRecording();
-    }
+    finalizeRecordedCursorData();
     setClickListener(null);
 };
 
 // Mouse tracking logic for Auto-Zoom
 let recordedCursorData: any[] = []; // Changed type so metadata can hold click events too
+let isRecordingMetadataActive = false;
 
 import { startMetadataRecording, stopMetadataRecording, recordZoomToggle, setClickListener, setRecordingCaptureMetadata } from './services/metadataRecorder';
 let zoomMarkerActive = false;
 
+const finalizeRecordedCursorData = () => {
+    if (!isRecordingMetadataActive) {
+        return recordedCursorData;
+    }
+
+    recordedCursorData = stopMetadataRecording();
+    isRecordingMetadataActive = false;
+    return recordedCursorData;
+};
+
 const startMouseTracking = (bounds?: { x: number; y: number; width: number; height: number }) => {
     if (mouseTrackInterval) clearInterval(mouseTrackInterval);
+    finalizeRecordedCursorData();
 
     // Reset data
     recordedCursorData = [];
+    isRecordingMetadataActive = false;
 
     if (smartFeaturesConfig.captureCursorData) {
         startMetadataRecording(bounds);
+        isRecordingMetadataActive = true;
         setRecordingCaptureMetadata({
             capturePlatform: process.platform,
         });
@@ -3832,12 +4014,14 @@ const registerIpcHandlers = () => {
             const filePath = await normalizeTempRecordingForEditor(initialFilePath);
             approveMediaPath(filePath);
 
+            const cursorDataForSidecar = finalizeRecordedCursorData();
+
             // Save full cursor metadata so editor replay, cursor styling, and Auto-Polish
             // can restore the same interaction data when the clip is reopened later.
-            if (recordedCursorData.length > 0) {
-                const jsonPath = path.join(tempDir, `ageofscreen-rec-${timestamp}.cursor.json`);
-                await fs.promises.writeFile(jsonPath, JSON.stringify(recordedCursorData));
-                console.log('[ageofscreen] Saved cursor metadata sidecar:', recordedCursorData.length, 'events');
+            if (cursorDataForSidecar.length > 0) {
+                const jsonPath = filePath.replace(/\.[^.]+$/, '.cursor.json');
+                await fs.promises.writeFile(jsonPath, JSON.stringify(cursorDataForSidecar));
+                console.log('[ageofscreen] Saved cursor metadata sidecar:', cursorDataForSidecar.length, 'events');
             }
 
             // Verify file was written correctly
@@ -3904,9 +4088,10 @@ const registerIpcHandlers = () => {
 
             await fs.promises.writeFile(filePath, Buffer.from(buffer));
 
-            if (recordedCursorData.length > 0) {
+            const cursorDataForSidecar = finalizeRecordedCursorData();
+            if (cursorDataForSidecar.length > 0) {
                 const jsonPath = filePath.replace(/\.webm$/, '.json');
-                await fs.promises.writeFile(jsonPath, JSON.stringify(recordedCursorData));
+                await fs.promises.writeFile(jsonPath, JSON.stringify(cursorDataForSidecar));
                 console.log('[ageofscreen] Saved cursor data to:', jsonPath);
             }
 
@@ -4393,11 +4578,18 @@ const registerIpcHandlers = () => {
         const cursorData = type === 'video'
             ? await loadCursorMetadataSidecar(filePath)
             : null;
+        let duration: number | null = null;
+        if (type === 'video' || type === 'audio') {
+            const vr = await getVideoRenderer();
+            const ffmpegPath = vr?.isAvailable?.() ? vr.getFFmpegPath?.() : null;
+            duration = await probeMediaDuration(filePath, ffmpegPath ?? null);
+        }
 
         console.log(`[ageofscreen] Selected ${type} file:`, fileName);
         return {
             filePath,
             fileName,
+            duration: duration ?? undefined,
             cursorData: cursorData ?? undefined,
         };
     });
@@ -4503,7 +4695,10 @@ app.whenReady().then(async () => {
     cachedEntitlementState = await getEntitlementProvider().initialize();
     cachedEntitlementState = await getEntitlementProvider().restoreIfNeeded();
     broadcastLicenseState(cachedEntitlementState);
+    await cleanupBrokenWindowsAutoLaunchRegistration();
     ensureWindowsAutoLaunchRegistration();
+    await createWindowsStoreDesktopShortcut();
+    await ensureWindowsPrintScreenPreference();
     registerCaptureShortcut();
     createAppTray();
     createTriggerWindow();
@@ -4516,7 +4711,6 @@ app.whenReady().then(async () => {
         }, 220);
     } else if (launchedFromWindowsStartup) {
         setTimeout(() => {
-            createMenuWindow({ show: false, bypassReopenGuard: true });
             restoreTriggerWindowIfEnabled(40);
         }, MENU_PREWARM_DELAY_MS);
     } else if (RELEASE_PROFILE.name !== "dev") {
@@ -4570,6 +4764,7 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
     try {
+        clearPrintScreenRegistrationRetries();
         globalShortcut.unregisterAll();
     } catch (error) {
         console.warn("[ageofscreen] Failed to unregister global shortcuts on quit:", error);

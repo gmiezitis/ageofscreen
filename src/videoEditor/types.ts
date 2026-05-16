@@ -64,6 +64,7 @@ export interface ImageClip {
     file: string;
     name?: string;
     thumbnail?: string;
+    mediaType?: 'image' | 'video';
     startTime: number;
     duration: number;
 }

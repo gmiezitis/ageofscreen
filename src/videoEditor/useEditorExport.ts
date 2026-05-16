@@ -460,6 +460,7 @@ export function useEditorExport(
                 imageClips: packedScene.imageClips.map((clip: any) => ({
                     id: clip.id,
                     file: clip.file,
+                    mediaType: clip.mediaType,
                     startTime: clip.startTime,
                     duration: clip.duration,
                 })),
