@@ -461,9 +461,25 @@ function buildClickZoom(intent: FocusIntent, index: number, durationLimit: numbe
     };
 }
 
-function buildTypingZooms(_intent: FocusIntent, _index: number, _durationLimit: number | null, _profile: SmartTrackingProfileConfig): ZoomCandidate[] {
-    // Typing-follow zooms are intentionally disabled; auto zoom now only uses click focus.
-    return [];
+function buildTypingZooms(intent: FocusIntent, index: number, durationLimit: number | null, profile: SmartTrackingProfileConfig): ZoomCandidate[] {
+    const startTime = durationLimit != null
+        ? clamp(intent.startTime, 0, Math.max(0, durationLimit - MIN_ZOOM_DURATION))
+        : Math.max(0, intent.startTime);
+    const maxDuration = durationLimit != null ? Math.max(MIN_ZOOM_DURATION, durationLimit - startTime) : intent.duration;
+    const duration = Math.min(intent.duration, maxDuration);
+    if (duration < MIN_ZOOM_DURATION) return [];
+
+    return [{
+        id: `smart-track-dwell-${index}-${Math.round(startTime * 1000)}`,
+        type: 'zoom',
+        startTime,
+        duration,
+        label: 'SMART FOCUS',
+        intensity: profile.typingZoomIntensity,
+        tilt: 0,
+        zoomArea: createZoomArea(intent.centerX, intent.centerY, profile.typingZoomArea),
+        sourceKind: 'typing',
+    }];
 }
 
 function packZoomCandidates(candidates: ZoomCandidate[], durationLimit: number | null, profile: SmartTrackingProfileConfig): ZoomCandidate[] {
@@ -583,7 +599,7 @@ export function buildSmartTrackingEffects(
     const effects: SmartEffect[] = packedZooms.map(({ sourceKind: _sourceKind, ...effect }) => effect);
 
     for (const zoom of packedZooms) {
-        if (zoom.sourceKind !== 'click') continue;
+        if (zoom.sourceKind !== 'click' && zoom.sourceKind !== 'typing') continue;
         effects.push({
             id: `${zoom.id}-exposure`,
             type: 'exposure',

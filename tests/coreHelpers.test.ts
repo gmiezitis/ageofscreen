@@ -16,6 +16,7 @@ import { normalizeCursorHighlightSettings } from '../src/videoEditor/types';
 import { getPreviewCropForDisplay, isNoOpCrop, normalizeAppliedCrop } from '../src/videoEditor/useCrop';
 import { hasPendingEditorWork } from '../src/videoEditor/useEditorLibrary';
 import { buildCursorMotionActiveRanges, invertTimeRanges, isTimeWithinRanges, prepareCursorPreviewData, getEffectStyle, getPreviewCursorPoint, getInterpolatedValue, isCursorReplacementSafe } from '../src/videoEditor/utils';
+import { buildSmartTrackingEffects } from '../src/videoEditor/smartTracking';
 
 const run = (name: string, fn: () => void) => {
     fn();
@@ -346,6 +347,27 @@ run('cursor motion ranges ignore the synthetic start sample and stay active afte
     assert.equal(isTimeWithinRanges(0.5, activeRanges), false);
     assert.equal(isTimeWithinRanges(1.6, activeRanges), true);
     assert.equal(isTimeWithinRanges(2.25, activeRanges), false);
+});
+
+run('smart tracking emits focus zooms from move-only Store metadata', () => {
+    const events = [
+        { type: 'meta', t: 0, x: 0, y: 0, bounds: { x: 0, y: 0, width: 1000, height: 800 } },
+        { type: 'move', t: 0, x: 420, y: 280 },
+        { type: 'move', t: 220, x: 424, y: 282 },
+        { type: 'move', t: 440, x: 427, y: 283 },
+        { type: 'move', t: 660, x: 425, y: 281 },
+        { type: 'move', t: 880, x: 426, y: 284 },
+        { type: 'move', t: 1100, x: 428, y: 282 },
+        { type: 'move', t: 1320, x: 430, y: 283 },
+        { type: 'move', t: 1540, x: 429, y: 282 },
+    ] as any[];
+    const effects = buildSmartTrackingEffects(events, { durationHint: 6, profile: 'smooth_focus' });
+    const zoom = effects.find((effect) => effect.type === 'zoom');
+    const exposure = effects.find((effect) => effect.type === 'exposure');
+
+    assert.ok(zoom);
+    assert.equal(zoom?.label, 'SMART FOCUS');
+    assert.ok(exposure);
 });
 
 run('getInterpolatedValue interpolates correctly when keyframes are unsorted', () => {

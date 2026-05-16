@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Play, Music } from 'lucide-react';
-import { SmartEffect, OverlayImage, TextOverlay, ZoomArea, ColorGradePreset, ImageClip, Segment } from '../../videoEditor/types';
+import { SmartEffect, OverlayImage, TextOverlay, ZoomArea, ColorGradePreset, ImageClip, Segment, CursorHighlightSettings } from '../../videoEditor/types';
 import type { AnnotationObject } from '../../types';
 import { computeEffectFadeRatio, effectEnvelope, resolveBackgroundCSS } from '../../videoEditor/effectMath';
 import { getEffectIntensity } from '../../videoEditor/effectIntensity';
@@ -27,6 +27,102 @@ const NO_EFFECT_STYLE_SET: EffectStyleSet = {
 };
 
 /* ─── Props ─── */
+const VIDEO_CLIP_EXTENSION_RE = /\.(mp4|webm|mov|m4v|avi|mkv)$/i;
+
+const isVideoTimelineClip = (clip: ImageClip) => (
+    clip.mediaType === 'video' || VIDEO_CLIP_EXTENSION_RE.test(clip.file)
+);
+
+const TimelineMediaClipLayer: React.FC<{
+    clip: ImageClip;
+    opacity: number;
+    selectable: boolean;
+    isSelected: boolean;
+    isPlaying: boolean;
+    displayTime: number;
+    imageClipStageStyle: React.CSSProperties;
+    onSelect: (id: string) => void;
+}> = ({
+    clip,
+    opacity,
+    selectable,
+    isSelected,
+    isPlaying,
+    displayTime,
+    imageClipStageStyle,
+    onSelect,
+}) => {
+    const videoClipRef = useRef<HTMLVideoElement | null>(null);
+    const isVideoClip = isVideoTimelineClip(clip);
+    const localTime = Math.max(0, displayTime - clip.startTime);
+
+    React.useEffect(() => {
+        if (!isVideoClip) {
+            return;
+        }
+
+        const video = videoClipRef.current;
+        if (!video) {
+            return;
+        }
+
+        const targetTime = Math.max(0, Math.min(localTime, Math.max(0, clip.duration)));
+        if (Number.isFinite(targetTime) && !video.seeking && Math.abs(video.currentTime - targetTime) > 0.12) {
+            try {
+                video.currentTime = targetTime;
+            } catch {}
+        }
+
+        if (isPlaying) {
+            void video.play().catch(() => {});
+        } else {
+            video.pause();
+        }
+    }, [clip.duration, isPlaying, isVideoClip, localTime]);
+
+    if (opacity <= 0.001) {
+        return null;
+    }
+
+    return (
+        <div
+            onClick={selectable ? (e) => { e.stopPropagation(); onSelect(clip.id); } : undefined}
+            style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                ...imageClipStageStyle,
+                border: selectable && isSelected ? '2px solid var(--accent)' : 'none',
+                zIndex: 6,
+                overflow: 'hidden',
+                opacity,
+                willChange: 'opacity',
+                pointerEvents: selectable && !isPlaying && isSelected ? 'auto' : 'none',
+            }}
+        >
+            {isVideoClip ? (
+                <video
+                    ref={videoClipRef}
+                    src={toMediaFileUrl(clip.file)}
+                    muted
+                    playsInline
+                    preload="auto"
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
+                />
+            ) : (
+                <img
+                    src={toMediaFileUrl(clip.file)}
+                    alt=""
+                    draggable={false}
+                    style={{ width: '100%', height: '100%', objectFit: 'scale-down', pointerEvents: 'none' }}
+                />
+            )}
+        </div>
+    );
+};
+
 interface PreviewStageProps {
     mediaType: 'video' | 'image' | 'audio' | null;
     mediaPath: string | null;
@@ -67,6 +163,7 @@ interface PreviewStageProps {
     videoPadding?: number;
     mediaName?: string;
     colorGrade?: ColorGradePreset;
+    cursorHighlight?: CursorHighlightSettings;
     onUpdateZoomArea?: (area: ZoomArea) => void;
     onUpdateBlurArea?: (area: ZoomArea) => void;
     recordedCursorData?: any[];
@@ -251,37 +348,18 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
         key: string,
         selectable: boolean,
     ) => {
-        if (opacity <= 0.001) {
-            return null;
-        }
-
-        const isSelected = selectedImageClipId === clip.id;
         return (
-            <div
+            <TimelineMediaClipLayer
                 key={key}
-                onClick={selectable ? (e) => { e.stopPropagation(); setSelectedImageClipId(clip.id); } : undefined}
-                style={{
-                    position: 'absolute',
-                    inset: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    ...imageClipStageStyle,
-                    border: selectable && isSelected ? '2px solid var(--accent)' : 'none',
-                    zIndex: 6,
-                    overflow: 'hidden',
-                    opacity,
-                    willChange: 'opacity',
-                    pointerEvents: selectable && !isPlaying && isSelected ? 'auto' : 'none',
-                }}
-            >
-                <img
-                    src={toMediaFileUrl(clip.file)}
-                    alt=""
-                    draggable={false}
-                    style={{ width: '100%', height: '100%', objectFit: 'scale-down', pointerEvents: 'none' }}
-                />
-            </div>
+                clip={clip}
+                opacity={opacity}
+                selectable={selectable}
+                isSelected={selectedImageClipId === clip.id}
+                isPlaying={isPlaying}
+                displayTime={displayTime}
+                imageClipStageStyle={imageClipStageStyle}
+                onSelect={setSelectedImageClipId}
+            />
         );
     };
 

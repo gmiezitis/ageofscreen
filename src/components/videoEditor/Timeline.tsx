@@ -115,7 +115,7 @@ interface TimelineProps {
     mediaLoaded: boolean;
     handleImportMedia: (type: 'video' | 'audio') => void;
     mediaPath: string | null;
-    mediaLibrary: Array<{ id: string; type: 'video' | 'image' | 'audio'; path: string; name: string; thumbnail?: string }>;
+    mediaLibrary: Array<{ id: string; type: 'video' | 'image' | 'audio'; path: string; name: string; thumbnail?: string; duration?: number }>;
     draggingEffectId?: string | null;
     timelineRef: React.RefObject<HTMLDivElement>;
     onSmartFocus?: () => void;
@@ -467,6 +467,7 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
                                             const clipLeft = totalKeptDuration > 0 ? (clip.startTime / totalKeptDuration) * 100 : 0;
                                             const placement = getClampedPlacement(clipLeft, clipWidth, 1);
                                             const isSelected = selectedImageClipId === clip.id;
+                                            const isVideoClip = clip.mediaType === 'video';
                                             if (!placement) return null;
                                             return (
                                                 <React.Fragment key={clip.id}>
@@ -488,11 +489,11 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
                                                             widthPct={100}
                                                             topPx={0}
                                                             heightPx="100%"
-                                                            background="linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)"
-                                                            thumbnailUrl={clip.thumbnail || toMediaFileUrl(clip.file)}
+                                                            background={isVideoClip ? "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)" : "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)"}
+                                                            thumbnailUrl={clip.thumbnail || (isVideoClip ? undefined : toMediaFileUrl(clip.file))}
                                                             isSelected={isSelected}
-                                                            icon={<ImageIcon size={10} />}
-                                                            label={clip.name || 'Image'}
+                                                            icon={isVideoClip ? <Film size={10} /> : <ImageIcon size={10} />}
+                                                            label={clip.name || (isVideoClip ? 'Video' : 'Image')}
                                                             startTime={clip.startTime}
                                                             duration={clip.duration}
                                                             onPointerDownSeek={seekTimelineToClientX}

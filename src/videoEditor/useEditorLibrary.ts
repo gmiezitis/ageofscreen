@@ -131,6 +131,7 @@ export function useEditorLibrary(state: any, showNotification: (type: string, ti
                     name: result.fileName,
                     thumbnail: undefined as string | undefined, // Initial value
                     cursorData: Array.isArray(result.cursorData) ? result.cursorData : undefined,
+                    duration: typeof result.duration === 'number' ? result.duration : undefined,
                 };
                 
                 // 2. Add to library AND set as current media immediately

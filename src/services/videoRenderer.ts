@@ -108,6 +108,10 @@ const toEvenDimension = (value: number, fallback: number): number => {
     return Math.max(2, Math.round(safe / 2) * 2);
 };
 const ff = (value: number, digits = 4): string => value.toFixed(digits);
+const VIDEO_CLIP_EXTENSION_RE = /\.(mp4|webm|mov|m4v|avi|mkv)$/i;
+const isTimelineVideoClip = (clip: { file: string; mediaType?: string }) => (
+    clip.mediaType === 'video' || VIDEO_CLIP_EXTENSION_RE.test(clip.file)
+);
 const normalizeFfmpegColor = (value: string | null | undefined, fallback = 'white'): string => {
     const safeValue = (value || fallback).trim();
     if (!safeValue) return fallback;
@@ -432,7 +436,7 @@ export class VideoRenderer {
         textOverlays?: any[],
         annotationImageOverlays?: Array<{ file: string; startTime: number; duration: number }>,
         imageOverlays?: Array<{ file: string; startTime: number; duration: number; x: number; y: number; width: number; height: number; renderMode?: 'overlay' | 'fullscreen' }>,
-        imageClips?: Array<{ id?: string; file: string; startTime: number; duration: number }>,
+        imageClips?: Array<{ id?: string; file: string; mediaType?: 'image' | 'video'; startTime: number; duration: number }>,
         clipTransitions?: ClipTransition[],
         colorGrade?: string,
         premiumVoice?: boolean,
@@ -666,7 +670,11 @@ export class VideoRenderer {
         const imageClipInputStartIdx = nextInputIdx;
         for (let i = 0; i < imageClipInputs.length; i += 1) {
             const resolvedPath = await resolveOverlayInputPath(imageClipInputs[i].file, i);
-            args.push('-framerate', '60', '-loop', '1', '-t', Math.max(0.1, imageClipInputs[i].duration).toFixed(3), '-i', resolvedPath);
+            if (isTimelineVideoClip(imageClipInputs[i])) {
+                args.push('-i', resolvedPath);
+            } else {
+                args.push('-framerate', '60', '-loop', '1', '-t', Math.max(0.1, imageClipInputs[i].duration).toFixed(3), '-i', resolvedPath);
+            }
             nextInputIdx += 1;
         }
         const rawTextOverlays = textOverlays || [];
@@ -779,7 +787,10 @@ export class VideoRenderer {
             }
 
             const imageInputIdx = imageClipInputStartIdx + item.imageClipIndex;
-            let imageFilter = `[${imageInputIdx}:v]format=rgba,scale=w='min(iw,${effectW})':h='min(ih,${effectH})':force_original_aspect_ratio=decrease,pad=${effectW}:${effectH}:(ow-iw)/2:(oh-ih)/2:color=${hasStyledBackground ? ffBgColor : '#020617'},setsar=1,fps=60,settb=AVTB,trim=duration=${item.duration.toFixed(3)},setpts=PTS-STARTPTS`;
+            const isVideoClip = isTimelineVideoClip(item.clip);
+            let imageFilter = isVideoClip
+                ? `[${imageInputIdx}:v]trim=start=0:duration=${item.duration.toFixed(3)},setpts=PTS-STARTPTS,scale=${effectW}:${effectH}:force_original_aspect_ratio=decrease,pad=${effectW}:${effectH}:(ow-iw)/2:(oh-ih)/2:color=${hasStyledBackground ? ffBgColor : '#020617'},setsar=1,fps=60,settb=AVTB,format=rgba`
+                : `[${imageInputIdx}:v]format=rgba,scale=w='min(iw,${effectW})':h='min(ih,${effectH})':force_original_aspect_ratio=decrease,pad=${effectW}:${effectH}:(ow-iw)/2:(oh-ih)/2:color=${hasStyledBackground ? ffBgColor : '#020617'},setsar=1,fps=60,settb=AVTB,trim=duration=${item.duration.toFixed(3)},setpts=PTS-STARTPTS`;
             if (fadeIn) imageFilter += `,fade=t=in:st=0:d=${fadeInDuration.toFixed(3)}`;
             if (fadeOut) imageFilter += `,fade=t=out:st=${Math.max(0, item.duration - fadeOutDuration).toFixed(3)}:d=${fadeOutDuration.toFixed(3)}`;
             imageFilter += `[v${i}]`;

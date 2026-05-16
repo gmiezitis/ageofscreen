@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 // Import shared types and styles
-import type { Tool, PenSize, BlurMode, DraggableCSSProperties } from "../types";
+import type { Tool, PenSize, BlurMode, DraggableCSSProperties, ArrowType, StepType } from "../types";
 
 
 // Props expected by the Toolbar component
@@ -69,11 +69,15 @@ interface ToolbarProps {
   // Text size state and handler
   hasSelectedTextAnnotation: boolean;
   textFontSize: number;
-  textBoxWidth: number;
-  textBoxWidthMax: number;
+  textBoxWidth?: number;
+  textBoxWidthMax?: number;
+  isPlainText?: boolean;
+  selectedArrowType?: ArrowType;
   onBeginTextAdjustment: () => void;
   onTextFontSizeChange: (fontSize: number) => void;
-  onTextBoxWidthChange: (width: number) => void;
+  onTextBoxWidthChange?: (width: number) => void;
+  onArrowTypeChange?: (type: ArrowType) => void;
+  onTogglePlainText?: (isPlain: boolean) => void;
   // --- REMOVE sizePreviewStyle prop (calculate internally if needed) ---
   // sizePreviewStyle: React.CSSProperties;
   // Text color state and handler
@@ -93,6 +97,8 @@ interface ToolbarProps {
   onHighlighterSizeSelect: (size: PenSize) => void; // <<< NEW
   selectedStepSize: PenSize;
   onStepSizeSelect: (size: PenSize) => void;
+  selectedStepType?: StepType;
+  onStepTypeChange?: (type: StepType) => void;
   selectedStepSymbol?: string;
   onStepSymbolChange: (symbol: string | undefined) => void;
   selectedSymbolText: string;
@@ -154,8 +160,8 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     onPenSizeSelect,
     hasSelectedTextAnnotation,
     textFontSize,
-    textBoxWidth,
-    textBoxWidthMax,
+    textBoxWidth = 220,
+    textBoxWidthMax = 420,
     onBeginTextAdjustment,
     onTextFontSizeChange,
     onTextBoxWidthChange,
@@ -605,7 +611,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
                     value={Math.round(Math.min(textBoxWidth, textBoxWidthMax))}
                     onMouseDown={onBeginTextAdjustment}
                     onTouchStart={onBeginTextAdjustment}
-                    onChange={(e) => onTextBoxWidthChange(Number(e.target.value))}
+                    onChange={(e) => onTextBoxWidthChange?.(Number(e.target.value))}
                     title="Text box width"
                     style={{ width: "140px" }}
                   />
