@@ -44,7 +44,6 @@ export interface IMenuElectronAPI {
     makeWidgetCaptureInvisible: () => void;
     showVideoEditor: (videoDataUrl: string, name?: string) => void;
     openMediaEditor: () => void;
-    openScreenPlayground: () => void;
     openMediaFile: (type: 'video' | 'image' | 'audio') => Promise<{ filePath: string, fileName: string } | null>;
     exportMedia: (filePath: string, mediaType: string, trimData: any) => Promise<any>;
 
@@ -122,7 +121,6 @@ const menuAPI: IMenuElectronAPI = {
     makeWidgetCaptureInvisible: () => ipcRenderer.send("make-widget-capture-invisible"),
     showVideoEditor: (videoDataUrl: string, name?: string) => ipcRenderer.send("show-video-editor", videoDataUrl, name),
     openMediaEditor: () => ipcRenderer.send("open-media-editor"),
-    openScreenPlayground: () => ipcRenderer.send("screen-playground-open"),
     openMediaFile: (type: 'video' | 'image' | 'audio') => ipcRenderer.invoke("open-media-file", type),
     exportMedia: (filePath: string, mediaType: string, trimData: any) => ipcRenderer.invoke("export-media", filePath, mediaType, trimData),
 

@@ -212,17 +212,6 @@ const rendererEntryPoints = [
     },
 ];
 
-if (FEATURES.ENABLE_SCREEN_PLAYGROUND) {
-    rendererEntryPoints.push({
-        html: "./src/playground/playground.html",
-        js: "./src/playground/renderer.tsx",
-        name: "screen_playground_window",
-        preload: {
-            js: "./src/playground/preload.ts",
-        },
-    });
-}
-
 if (FEATURES.ENABLE_FOCUS_WIDGET) {
     rendererEntryPoints.push({
         html: "./src/focus/index.html",

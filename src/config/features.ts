@@ -39,8 +39,6 @@ export const FEATURES = {
     ENABLE_PRO_FEATURES: envFlag("ENABLE_PRO_FEATURES", RELEASE_PROFILE.defaultFeatures.proFeatures),
     /** Agent/demo automation surfaces in the launcher */
     ENABLE_AGENT_SURFACES: envFlag("ENABLE_AGENT_SURFACES", RELEASE_PROFILE.defaultFeatures.agentSurfaces),
-    /** Hidden local screenshot sandbox with playful screen effects */
-    ENABLE_SCREEN_PLAYGROUND: envFlag("ENABLE_SCREEN_PLAYGROUND", RELEASE_PROFILE.defaultFeatures.screenPlayground),
 } as const;
 
 export type FeatureFlags = typeof FEATURES;
