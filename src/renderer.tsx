@@ -1021,7 +1021,13 @@ const App: React.FC = () => {
                     onRegionCapture={() => (window as any).electronAPI.invokeCapture("region")}
                     onWindowCapture={() => (window as any).electronAPI.invokeCapture("window")}
                     isRecording={isRecording}
-                    onStartRecording={() => handleStartRecording()}
+                    onStartRecording={() => handleStartRecording({
+                        captureCursorData: true,
+                        editAfterRecording: true,
+                        recordingMode: "fullscreen",
+                        cameraEnabled: false,
+                        micEnabled: false,
+                    })}
                     onStopRecording={handleStopRecording}
                     selectedTool={selectedTool}
                     onToolSelect={setEditorTool}

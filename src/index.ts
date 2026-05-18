@@ -1019,14 +1019,14 @@ const getAppWindowIcon = () => {
 };
 
 const resolveWindowsStoreAppUserModelId = async (): Promise<string | null> => {
-    if (process.platform !== "win32" || !isWindowsStorePackage()) {
+    if (process.platform !== "win32") {
         return null;
     }
 
     const script = `
 $ErrorActionPreference = 'Stop'
-$names = @('Age of Screen', 'AgeofScreen')
-$app = Get-StartApps | Where-Object { $names -contains $_.Name } | Select-Object -First 1
+$names = @('Age of Screen', 'AgeofScreen', 'ageofscreen')
+$app = Get-StartApps | Where-Object { $names -contains $_.Name -or $_.AppID -like '*AgeofScreen*' } | Select-Object -First 1
 if (-not $app) { exit 2 }
 [Console]::Out.Write($app.AppID)
 `;
@@ -1054,7 +1054,7 @@ if (-not $app) { exit 2 }
 };
 
 const createWindowsStoreDesktopShortcut = async () => {
-    if (process.platform !== "win32" || !isWindowsStorePackage()) {
+    if (process.platform !== "win32" || !app.isPackaged) {
         return;
     }
 
@@ -1070,20 +1070,26 @@ const createWindowsStoreDesktopShortcut = async () => {
 
     const iconPath = resolveAppIconPath("app-icon.ico") || "";
     const appUserModelId = await resolveWindowsStoreAppUserModelId();
-    if (!appUserModelId) {
-        return;
-    }
 
     try {
-        const created = shell.writeShortcutLink(shortcutPath, "create", {
-            target: path.join(process.env.WINDIR || "C:\\Windows", "explorer.exe"),
-            args: `shell:AppsFolder\\${appUserModelId}`,
-            cwd: app.getPath("home"),
-            description: "Age of Screen",
-            icon: iconPath || undefined,
-            iconIndex: 0,
-            appUserModelId,
-        });
+        const shortcutOptions = appUserModelId
+            ? {
+                target: path.join(process.env.WINDIR || "C:\\Windows", "explorer.exe"),
+                args: `shell:AppsFolder\\${appUserModelId}`,
+                cwd: app.getPath("home"),
+                description: "Age of Screen",
+                icon: iconPath || undefined,
+                iconIndex: 0,
+                appUserModelId,
+            }
+            : {
+                target: process.execPath,
+                cwd: path.dirname(process.execPath),
+                description: "Age of Screen",
+                icon: iconPath || process.execPath,
+                iconIndex: 0,
+            };
+        const created = shell.writeShortcutLink(shortcutPath, "create", shortcutOptions);
 
         if (created && fs.existsSync(shortcutPath)) {
             writeAppPreference("windowsDesktopShortcutCreated", true);
@@ -1887,10 +1893,6 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
         isCaptureSessionActive = false;
         createEditorWindow(tempScreenshotDataUrl);
         return;
-    }
-
-    if (type === "region" && tempScreenshotDataUrl && (!editorWindow || editorWindow.isDestroyed())) {
-        createEditorWindow(undefined, { showWhenReady: false });
     }
 
     const createdCaptureWindow = new BrowserWindow({

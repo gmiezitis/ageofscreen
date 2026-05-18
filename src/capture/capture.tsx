@@ -13,13 +13,9 @@ const CaptureUI: React.FC = () => {
     const [captureMode, setCaptureMode] = useState<"region" | "window">("region");
     const [windowSources, setWindowSources] = useState<WindowSource[]>([]);
     const [isSelecting, setIsSelecting] = useState(false);
-    const [startPoint, setStartPoint] = useState<{ x: number; y: number } | null>(
-        null
-    );
-    const [endPoint, setEndPoint] = useState<{ x: number; y: number } | null>(
-        null
-    );
     const selectionDivRef = useRef<HTMLDivElement>(null);
+    const startPointRef = useRef<{ x: number; y: number } | null>(null);
+    const endPointRef = useRef<{ x: number; y: number } | null>(null);
 
     useEffect(() => {
         document.documentElement.style.background = "transparent";
@@ -40,31 +36,47 @@ const CaptureUI: React.FC = () => {
 
     // Calculate selection bounds
     const getSelectionBounds = useCallback(() => {
-        if (!startPoint || !endPoint) return null;
-        const x = Math.min(startPoint.x, endPoint.x);
-        const y = Math.min(startPoint.y, endPoint.y);
-        const width = Math.abs(startPoint.x - endPoint.x);
-        const height = Math.abs(startPoint.y - endPoint.y);
+        const start = startPointRef.current;
+        const end = endPointRef.current;
+        if (!start || !end) return null;
+        const x = Math.min(start.x, end.x);
+        const y = Math.min(start.y, end.y);
+        const width = Math.abs(start.x - end.x);
+        const height = Math.abs(start.y - end.y);
         return { x, y, width, height };
-    }, [startPoint, endPoint]);
+    }, []);
+
+    const paintSelectionBounds = useCallback((bounds: { x: number; y: number; width: number; height: number } | null) => {
+        const selection = selectionDivRef.current;
+        if (!selection || !bounds) return;
+        selection.style.left = `${bounds.x}px`;
+        selection.style.top = `${bounds.y}px`;
+        selection.style.width = `${bounds.width}px`;
+        selection.style.height = `${bounds.height}px`;
+        selection.style.display = "block";
+    }, []);
 
     // --- Event Handlers ---
     const handleMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
         if (captureMode === "window") return;
         event.preventDefault();
+        const point = { x: event.clientX, y: event.clientY };
+        startPointRef.current = point;
+        endPointRef.current = point;
         setIsSelecting(true);
-        setStartPoint({ x: event.clientX, y: event.clientY });
-        setEndPoint({ x: event.clientX, y: event.clientY });
+        paintSelectionBounds({ x: point.x, y: point.y, width: 0, height: 0 });
     };
 
     const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
         if (!isSelecting || captureMode === "window") return;
-        setEndPoint({ x: event.clientX, y: event.clientY });
+        endPointRef.current = { x: event.clientX, y: event.clientY };
+        paintSelectionBounds(getSelectionBounds());
     };
 
     const handleMouseUp = (_event: React.MouseEvent<HTMLDivElement>) => {
         if (!isSelecting || captureMode === "window") return;
         setIsSelecting(false);
+        endPointRef.current = { x: _event.clientX, y: _event.clientY };
         const bounds = getSelectionBounds();
         const MIN_SELECTION_SIZE = 10;
         if (
@@ -114,19 +126,10 @@ const CaptureUI: React.FC = () => {
 
     // --- Update Selection Div Style ---
     useEffect(() => {
-        if (isSelecting && selectionDivRef.current && startPoint && endPoint) {
-            const bounds = getSelectionBounds();
-            if (bounds) {
-                selectionDivRef.current.style.left = `${bounds.x}px`;
-                selectionDivRef.current.style.top = `${bounds.y}px`;
-                selectionDivRef.current.style.width = `${bounds.width}px`;
-                selectionDivRef.current.style.height = `${bounds.height}px`;
-                selectionDivRef.current.style.display = "block";
-            }
-        } else if (selectionDivRef.current) {
+        if (!isSelecting && selectionDivRef.current) {
             selectionDivRef.current.style.display = "none";
         }
-    }, [isSelecting, startPoint, endPoint, getSelectionBounds]);
+    }, [isSelecting]);
 
     if (captureMode === "window") {
         return (

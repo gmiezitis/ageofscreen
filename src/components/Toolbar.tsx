@@ -43,7 +43,7 @@ interface ToolbarProps {
   onWindowCapture: () => void;
   // Recording state and handlers
   isRecording: boolean;
-  onStartRecording: () => void;
+  onStartRecording: () => void | Promise<void>;
   onStopRecording: () => void; // Add stop recording handler prop
   // Selected tool state and handler
   selectedTool: Tool;
@@ -246,9 +246,11 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     setIsPhotoMenuOpen(false);
   };
 
-  const runPhotoAction = (action: () => void) => {
+  const runPhotoAction = (action: () => void | Promise<void>) => {
     closePhotoMenu();
-    action();
+    void Promise.resolve(action()).catch((error) => {
+      console.error("[Toolbar] Photo action failed:", error);
+    });
   };
 
   // Clean, simple toolbar - minimal and intuitive

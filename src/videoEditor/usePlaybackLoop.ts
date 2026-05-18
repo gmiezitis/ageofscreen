@@ -25,6 +25,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
     const startPlaybackFromTargetRef = useRef(handlers.startPlaybackFromTarget);
     const imageClipPlaybackRef = useRef<{ clipId: string; startedAt: number; clipStart: number } | null>(null);
     const pausedPlaybackRetryKeyRef = useRef<string | null>(null);
+    const pausedPlaybackRetryAtRef = useRef<number>(0);
 
     useEffect(() => {
         getDisplayTimeRef.current = handlers.getDisplayTimeFromVideoTime;
@@ -67,6 +68,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
         if (!isPlaying) {
             imageClipPlaybackRef.current = null;
             pausedPlaybackRetryKeyRef.current = null;
+            pausedPlaybackRetryAtRef.current = 0;
         }
     }, [isPlaying]);
 
@@ -166,11 +168,17 @@ export function usePlaybackLoop(state: any, handlers: any) {
         );
         const requestVideoResume = (target: { kind: 'video'; segmentId: string; displayTime: number; videoTime: number }) => {
             const nextKey = getPlaybackTargetKey(target);
-            if (!nextKey || pausedPlaybackRetryKeyRef.current === nextKey) {
+            const now = performance.now();
+            if (!nextKey) {
+                return false;
+            }
+
+            if (pausedPlaybackRetryKeyRef.current === nextKey && now - pausedPlaybackRetryAtRef.current < 420) {
                 return false;
             }
 
             pausedPlaybackRetryKeyRef.current = nextKey;
+            pausedPlaybackRetryAtRef.current = now;
             void startPlaybackFromTargetRef.current?.(target);
             return true;
         };
