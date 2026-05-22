@@ -9,6 +9,7 @@ const cleanScript = path.join(repoRoot, "scripts", "clean-generated.js");
 const ensureMsixDevCertScript = path.join(repoRoot, "scripts", "ensure-msix-dev-cert.ps1");
 const windowsKitRoot = process.env.WINDOWS_KIT_ROOT || "C:\\Program Files (x86)\\Windows Kits\\10\\bin";
 const requiredWindowsKitExecutables = ["makeappx.exe", "makepri.exe", "signtool.exe", "makecert.exe"];
+const defaultWindowsPublisher = "CN=A552CC1A-1C62-4E20-89D5-C2179921A0AB";
 const storePackageName = "AgeofScreen.msix";
 const ffmpegResourceRoot = path.join(repoRoot, "resources", "ffmpeg");
 const nativeCaptureAddonPath = path.join(repoRoot, "src", "native", "capture_engine", "build", "Release", "capture_engine.node");
@@ -103,10 +104,12 @@ function ensureFilesExist(paths, label) {
 
 function getNativeAddonScripts(targetArch) {
     if (targetArch === "arm64") {
-        return ["build:native:win-arm64", "rebuild:native:win-arm64"];
+        // The native capture helper is optional and only improves window bounds lookup.
+        // ARM64 Store builds must still be possible on machines without the ARM64 MSVC toolchain.
+        return [];
     }
 
-    return ["build:native", "rebuild:native"];
+    return ["build:native:win-x64", "rebuild:native:win-x64"];
 }
 
 function collectFilesRecursively(rootPath) {
@@ -314,7 +317,8 @@ async function ensureStoreSigningEnv(baseEnv) {
     const certFile = path.join(certDirectory, "ageofscreen-Development.pfx");
     const cerFile = path.join(certDirectory, "ageofscreen-Development.cer");
     const certPassword = crypto.randomBytes(24).toString("base64url");
-    const publisherName = (baseEnv.WINDOWS_PUBLISHER || "CN=ageofscreen Dev").replace(/^CN=/i, "");
+    const publisher = baseEnv.WINDOWS_PUBLISHER || defaultWindowsPublisher;
+    const publisherName = publisher.replace(/^CN=/i, "");
     const args = [
         "-NoProfile",
         "-ExecutionPolicy",
@@ -338,6 +342,7 @@ async function ensureStoreSigningEnv(baseEnv) {
 
     return {
         ...baseEnv,
+        WINDOWS_PUBLISHER: publisher,
         WINDOWS_CERT_FILE: certFile,
         WINDOWS_CERT_PASSWORD: certPassword,
         WINDOWS_CERTIFICATE_FILE: certFile,
@@ -375,10 +380,14 @@ async function enforceStorePackagingPreflight(env, forgeArgs) {
         await runNpmScript(scriptName, env);
     }
 
-    ensureFilesExist(
-        [nativeCaptureAddonPath],
-        `native capture addon output for ${targetArch}`,
-    );
+    if (targetArch !== "arm64") {
+        ensureFilesExist(
+            [nativeCaptureAddonPath],
+            `native capture addon output for ${targetArch}`,
+        );
+    } else {
+        console.log("[store-preflight] Skipping optional native capture addon for arm64 Store package.");
+    }
 
     return { targetArch };
 }
@@ -416,7 +425,10 @@ async function main() {
             ? await enforceStorePackagingPreflight(env, forgeArgs)
             : null;
 
-        exitCode = await runProcess(electronForgeBin, [command, ...forgeArgs], env);
+        const forgeEnv = storeBuild
+            ? { ...env, AGEOFSCREEN_TARGET_ARCH: storeBuild.targetArch }
+            : env;
+        exitCode = await runProcess(electronForgeBin, [command, ...forgeArgs], forgeEnv);
 
         if (exitCode === 0 && releaseProfile === "store" && command === "make") {
             storeArtifactPath = verifyStoreMsixOutput(storeBuild.targetArch);

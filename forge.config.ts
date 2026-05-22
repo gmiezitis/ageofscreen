@@ -111,8 +111,24 @@ const windowsSignOptions = windowsCertFile && windowsCertPassword
     : undefined;
 const ffmpegResourceRoot = path.resolve(__dirname, "resources", "ffmpeg");
 const brandingResourceRoot = path.resolve(__dirname, "resources", "branding");
+const msixAssetRoot = path.resolve(__dirname, "resources", "msix-assets");
+const appIconPngPath = path.resolve(__dirname, "resources", "app-icon.png");
+const appIconIcoPath = path.resolve(__dirname, "resources", "app-icon.ico");
 const nativeCaptureAddonPath = path.resolve(__dirname, "src", "native", "capture_engine", "build", "Release", "capture_engine.node");
+const targetPackageArch = process.env.AGEOFSCREEN_TARGET_ARCH || process.env.npm_config_arch || process.arch;
+const shouldBundleNativeCaptureAddon = targetPackageArch !== "arm64";
 const windowsKitPath = resolveWindowsKitPath();
+const requiredMsixAssets = [
+    "icon.png",
+    "LockScreenLogo.scale-200.png",
+    "SplashScreen.scale-200.png",
+    "Square150x150Logo.png",
+    "Square150x150Logo.scale-200.png",
+    "Square44x44Logo.png",
+    "Square44x44Logo.scale-200.png",
+    "Square44x44Logo.targetsize-24_altform-unplated.png",
+    "Wide310x150Logo.scale-200.png",
+];
 const expectedBundledFfmpegPaths = [
     path.join(ffmpegResourceRoot, "win32-x64", "ffmpeg.exe"),
     path.join(ffmpegResourceRoot, "win32-x64", "ffprobe.exe"),
@@ -120,22 +136,28 @@ const expectedBundledFfmpegPaths = [
     path.join(ffmpegResourceRoot, "win32-arm64", "ffprobe.exe"),
 ];
 const hasBundledFfmpegPayloads = expectedBundledFfmpegPaths.every((candidatePath) => fs.existsSync(candidatePath));
+const missingMsixAssets = requiredMsixAssets.filter((fileName) => !fs.existsSync(path.join(msixAssetRoot, fileName)));
 const extraResources = [
     ...(fs.existsSync(ffmpegResourceRoot) ? [ffmpegResourceRoot] : []),
     ...(fs.existsSync(brandingResourceRoot) ? [brandingResourceRoot] : []),
-    ...(fs.existsSync(nativeCaptureAddonPath) ? [nativeCaptureAddonPath] : []),
+    ...(fs.existsSync(appIconPngPath) ? [appIconPngPath] : []),
+    ...(shouldBundleNativeCaptureAddon && fs.existsSync(nativeCaptureAddonPath) ? [nativeCaptureAddonPath] : []),
 ];
 
 if (releaseProfile.allowBundledFfmpegOnly && !hasBundledFfmpegPayloads) {
     console.warn("[forge.config] Bundled FFmpeg payloads are incomplete. Add resources/ffmpeg/win32-x64/* and resources/ffmpeg/win32-arm64/* before creating release packages.");
 }
 
-if (releaseProfile.storeSafe && !fs.existsSync(nativeCaptureAddonPath)) {
+if (releaseProfile.storeSafe && shouldBundleNativeCaptureAddon && !fs.existsSync(nativeCaptureAddonPath)) {
     console.warn("[forge.config] Native capture addon is missing. Run the native build/rebuild steps before creating Store packages.");
 }
 
 if (releaseProfile.storeSafe && !windowsKitPath) {
     console.warn("[forge.config] Unable to resolve a Windows SDK bin path. Set WINDOWS_KIT_PATH or WINDOWS_KIT_VERSION before building MSIX packages.");
+}
+
+if (releaseProfile.storeSafe && missingMsixAssets.length > 0) {
+    console.warn(`[forge.config] MSIX package assets are incomplete: ${missingMsixAssets.join(", ")}`);
 }
 
 if (releaseProfile.storeSafe && windowsKitPath) {
@@ -219,6 +241,17 @@ if (FEATURES.ENABLE_FOCUS_WIDGET) {
     });
 }
 
+if (FEATURES.ENABLE_SCREEN_PLAYGROUND) {
+    rendererEntryPoints.push({
+        html: "./src/playground/playground.html",
+        js: "./src/playground/renderer.tsx",
+        name: "screen_playground_window",
+        preload: {
+            js: "./src/playground/preload.ts",
+        },
+    });
+}
+
 if (FEATURES.ENABLE_TELEPROMPTER) {
     rendererEntryPoints.push({
         html: "./src/teleprompter/teleprompter.html",
@@ -242,13 +275,16 @@ if (FEATURES.ENABLE_DRAWING) {
 }
 
 const directDownloadMakers = [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+        setupIcon: fs.existsSync(appIconIcoPath) ? appIconIcoPath : undefined,
+    }),
     new MakerZIP({}, ["win32", "darwin", "linux"]),
 ];
 
 const storeMakers = [
     new MakerMSIX({
         packageName: "AgeofScreen.msix",
+        packageAssets: msixAssetRoot,
         sign: true,
         logLevel: "warn",
         windowsKitPath,
@@ -271,6 +307,7 @@ const config: ForgeConfig = {
     packagerConfig: {
         asar: true,
         prune: true,
+        icon: fs.existsSync(appIconIcoPath) ? appIconIcoPath : undefined,
         extraResource: extraResources,
     },
     rebuildConfig: {},

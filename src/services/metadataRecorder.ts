@@ -15,7 +15,6 @@ export type InteractionEvent = {
     bounds?: { x: number; y: number; width: number; height: number };
     ignoredByAutoFocus?: boolean;
     ignoredTarget?: 'recording_widget' | 'webcam' | string;
-    nativeCursorSuppressed?: boolean;
     capturePlatform?: string;
 };
 

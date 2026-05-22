@@ -47,6 +47,8 @@ export const ImageCropOverlay: React.FC<ImageCropOverlayProps> = ({
 }) => {
     const [draftSelection, setDraftSelection] = useState<CropSelection | null>(selection);
     const draftSelectionRef = useRef<CropSelection | null>(selection);
+    const pendingDraftSelectionRef = useRef<CropSelection | null>(null);
+    const draftFrameRef = useRef<number | null>(null);
     const dragStateRef = useRef<{
         handle: CropHandle;
         startClientX: number;
@@ -55,9 +57,19 @@ export const ImageCropOverlay: React.FC<ImageCropOverlayProps> = ({
     } | null>(null);
 
     useEffect(() => {
+        if (draftFrameRef.current !== null) {
+            window.cancelAnimationFrame(draftFrameRef.current);
+            draftFrameRef.current = null;
+        }
         setDraftSelection(selection);
         draftSelectionRef.current = selection;
     }, [selection]);
+
+    useEffect(() => () => {
+        if (draftFrameRef.current !== null) {
+            window.cancelAnimationFrame(draftFrameRef.current);
+        }
+    }, []);
 
     const scaleX = imageWidth > 0 ? displayWidth / imageWidth : 1;
     const scaleY = imageHeight > 0 ? displayHeight / imageHeight : 1;
@@ -76,11 +88,27 @@ export const ImageCropOverlay: React.FC<ImageCropOverlayProps> = ({
     const updateDraftSelection = useCallback((nextSelection: CropSelection) => {
         const normalized = normalizeSelection(nextSelection, imageWidth, imageHeight);
         draftSelectionRef.current = normalized;
-        setDraftSelection(normalized);
+        pendingDraftSelectionRef.current = normalized;
+
+        if (draftFrameRef.current !== null) return;
+
+        draftFrameRef.current = window.requestAnimationFrame(() => {
+            draftFrameRef.current = null;
+            const pending = pendingDraftSelectionRef.current;
+            pendingDraftSelectionRef.current = null;
+            if (pending) {
+                setDraftSelection(pending);
+            }
+        });
     }, [imageHeight, imageWidth]);
 
     const commitDraftSelection = useCallback((nextSelection: CropSelection | null) => {
         if (!nextSelection) return;
+        if (draftFrameRef.current !== null) {
+            window.cancelAnimationFrame(draftFrameRef.current);
+            draftFrameRef.current = null;
+        }
+        pendingDraftSelectionRef.current = null;
         const normalized = normalizeSelection(nextSelection, imageWidth, imageHeight);
         draftSelectionRef.current = normalized;
         setDraftSelection(normalized);

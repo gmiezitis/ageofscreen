@@ -289,31 +289,6 @@ export const prepareCursorPreviewData = (recordedCursorData: any[] | undefined):
     return prepared;
 };
 
-export const getNativeCursorSuppressionState = (recordedCursorData: any[] | undefined): boolean | null => {
-    if (!Array.isArray(recordedCursorData) || recordedCursorData.length === 0) return null;
-
-    const metaEvent = recordedCursorData.find((event) => event?.type === 'meta');
-    return typeof metaEvent?.nativeCursorSuppressed === 'boolean'
-        ? metaEvent.nativeCursorSuppressed
-        : null;
-};
-
-export const isCursorReplacementSafe = (recordedCursorData: any[] | undefined): boolean => {
-    if (!Array.isArray(recordedCursorData) || recordedCursorData.length === 0) return false;
-
-    const hasCursorTimeline = recordedCursorData.some((event) => event?.type === 'move' || event?.type === 'click');
-    if (!hasCursorTimeline) return false;
-
-    const nativeCursorSuppressed = getNativeCursorSuppressionState(recordedCursorData);
-    if (nativeCursorSuppressed != null) {
-        return nativeCursorSuppressed;
-    }
-
-    // Legacy ageofscreen recordings can have cursor metadata without the newer
-    // nativeCursorSuppressed flag. Keep cursor tools available for that data.
-    return true;
-};
-
 export type TimeRange = {
     startTime: number;
     endTime: number;

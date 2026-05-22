@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { Segment, SmartEffect, AudioSegment, OverlayImage, TextOverlay, ImageClip, ClipTransition, EditorNotification, normalizeCursorHighlightSettings } from './types';
+import { Segment, SmartEffect, AudioSegment, OverlayImage, TextOverlay, ImageClip, ClipTransition, EditorNotification } from './types';
 import type { AnnotationObject } from '../types';
 import type { CropRect } from './useCrop';
 
@@ -12,10 +12,10 @@ import type { CropRect } from './useCrop';
 export function useEditorHistory(state: any) {
     const {
         segments, audioSegments, smartEffects, overlayImages, imageClips, textOverlays, annotationOverlays, clipTransitions,
-        backgroundColor, videoPadding, colorGrade, cursorHighlight, premiumVoice,
+        backgroundColor, videoPadding, colorGrade, premiumVoice,
         history, setHistory, historyIndex, setHistoryIndex,
         setSegments, setAudioSegments, setSmartEffects, setOverlayImages, setImageClips, setTextOverlays, setAnnotationOverlays, setClipTransitions,
-        setBackgroundColor, setVideoPadding, setColorGrade, setCursorHighlight, setPremiumVoice,
+        setBackgroundColor, setVideoPadding, setColorGrade, setPremiumVoice,
     } = state;
 
     const notificationTimeoutRef = useRef<number | null>(null);
@@ -80,7 +80,6 @@ export function useEditorHistory(state: any) {
             backgroundColor: over.backgroundColor ?? backgroundColor,
             videoPadding: over.videoPadding ?? videoPadding,
             colorGrade: over.colorGrade ?? colorGrade,
-            cursorHighlight: normalizeCursorHighlightSettings(over.cursorHighlight ?? cursorHighlight),
             premiumVoice: over.premiumVoice ?? premiumVoice,
         };
 
@@ -97,7 +96,7 @@ export function useEditorHistory(state: any) {
         const newHistory = [...history.slice(0, historyIndex + 1), stateToSave].slice(-20);
         setHistory(newHistory);
         setHistoryIndex(newHistory.length - 1);
-    }, [segments, audioSegments, smartEffects, overlayImages, imageClips, clipTransitions, textOverlays, annotationOverlays, backgroundColor, videoPadding, colorGrade, cursorHighlight, premiumVoice, history, historyIndex, setHistory, setHistoryIndex, state.crop]);
+    }, [segments, audioSegments, smartEffects, overlayImages, imageClips, clipTransitions, textOverlays, annotationOverlays, backgroundColor, videoPadding, colorGrade, premiumVoice, history, historyIndex, setHistory, setHistoryIndex, state.crop]);
 
     const undo = useCallback(() => {
         if (history.length === 0) { showNotification('warning', 'Undo', 'No history available'); return; }
@@ -117,10 +116,9 @@ export function useEditorHistory(state: any) {
         if (prev.backgroundColor !== undefined) setBackgroundColor(prev.backgroundColor);
         if (prev.videoPadding !== undefined) setVideoPadding(prev.videoPadding);
         if (prev.colorGrade !== undefined) setColorGrade(prev.colorGrade);
-        if (prev.cursorHighlight) setCursorHighlight(normalizeCursorHighlightSettings(prev.cursorHighlight));
         if (prev.premiumVoice !== undefined) setPremiumVoice(prev.premiumVoice);
         showNotification('success', 'Undo', 'Action undone');
-    }, [history, historyIndex, setHistoryIndex, setSegments, setAudioSegments, setSmartEffects, setOverlayImages, setImageClips, setClipTransitions, setTextOverlays, setAnnotationOverlays, setBackgroundColor, setVideoPadding, setColorGrade, setCursorHighlight, setPremiumVoice, showNotification, state.crop]);
+    }, [history, historyIndex, setHistoryIndex, setSegments, setAudioSegments, setSmartEffects, setOverlayImages, setImageClips, setClipTransitions, setTextOverlays, setAnnotationOverlays, setBackgroundColor, setVideoPadding, setColorGrade, setPremiumVoice, showNotification, state.crop]);
 
     const redo = useCallback(() => {
         if (history.length === 0) { showNotification('warning', 'Redo', 'No history available'); return; }
@@ -140,10 +138,9 @@ export function useEditorHistory(state: any) {
         if (next.backgroundColor !== undefined) setBackgroundColor(next.backgroundColor);
         if (next.videoPadding !== undefined) setVideoPadding(next.videoPadding);
         if (next.colorGrade !== undefined) setColorGrade(next.colorGrade);
-        if (next.cursorHighlight) setCursorHighlight(normalizeCursorHighlightSettings(next.cursorHighlight));
         if (next.premiumVoice !== undefined) setPremiumVoice(next.premiumVoice);
         showNotification('success', 'Redo', 'Action redone');
-    }, [history, historyIndex, setHistoryIndex, setSegments, setAudioSegments, setSmartEffects, setOverlayImages, setImageClips, setClipTransitions, setTextOverlays, setAnnotationOverlays, setBackgroundColor, setVideoPadding, setColorGrade, setCursorHighlight, setPremiumVoice, showNotification, state.crop]);
+    }, [history, historyIndex, setHistoryIndex, setSegments, setAudioSegments, setSmartEffects, setOverlayImages, setImageClips, setClipTransitions, setTextOverlays, setAnnotationOverlays, setBackgroundColor, setVideoPadding, setColorGrade, setPremiumVoice, showNotification, state.crop]);
 
     const canUndo = history.length > 0 && historyIndex > 0;
     const canRedo = history.length > 0 && historyIndex < history.length - 1;

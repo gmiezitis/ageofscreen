@@ -8,8 +8,6 @@ CaptureManager::CaptureManager(Napi::Env env) : _env(env) {
 }
 
 CaptureManager::~CaptureManager() {
-    if (_session) _session.Close();
-    if (_framePool) _framePool.Close();
     if (_context) _context->Release();
     if (_device) _device->Release();
 }
@@ -43,21 +41,12 @@ Napi::Value CaptureManager::GetDisplays(const Napi::CallbackInfo& info) {
 
 Napi::Value CaptureManager::StartCapture(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    
-    // Placeholder implementation to verify build
-    if (_captureItem) {
-        return Napi::Boolean::New(env, true);
-    }
-    
+
     return Napi::Boolean::New(env, false);
 }
 
 Napi::Value CaptureManager::StopCapture(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    if (_session) {
-        _session.Close();
-        _session = nullptr;
-    }
     return Napi::Boolean::New(env, true);
 }
 

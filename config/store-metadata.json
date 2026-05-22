@@ -1,0 +1,57 @@
+{
+  "partnerCenter": {
+    "reservedAppName": "Age of Screen",
+    "identityName": "AgeofAi.AgeofScreen",
+    "reservedName": "Age of Screen",
+    "publisher": "CN=A552CC1A-1C62-4E20-89D5-C2179921A0AB",
+    "submissionOwner": "AgeofAi"
+  },
+  "publicUrls": {
+    "privacyPolicy": "https://gmiezitis.github.io/ageofscreen/privacy.html",
+    "support": "https://ageofscreen.app/support",
+    "supportEmail": "ageofai.support@gmail.com",
+    "homepage": "https://ageofscreen.app"
+  },
+  "listing": {
+    "shortDescriptionOwner": "AgeofAi",
+    "fullDescriptionOwner": "AgeofAi",
+    "knownIssuesOwner": "AgeofAi",
+    "finalCopyReviewedDate": "2026-04-26"
+  },
+  "screenshots": {
+    "owner": "AgeofAi",
+    "finalReviewDate": "2026-04-26",
+    "items": [
+      {
+        "id": "recording-setup-modal",
+        "label": "Recording setup modal",
+        "status": "not-started"
+      },
+      {
+        "id": "fullscreen-recording",
+        "label": "Fullscreen recording in progress",
+        "status": "not-started"
+      },
+      {
+        "id": "window-recording-webcam",
+        "label": "Window-mode recording with webcam",
+        "status": "not-started"
+      },
+      {
+        "id": "editor-trim-timeline",
+        "label": "Editor trim timeline",
+        "status": "not-started"
+      },
+      {
+        "id": "style-background-picker",
+        "label": "Style/background picker",
+        "status": "not-started"
+      },
+      {
+        "id": "export-success-state",
+        "label": "Export success state",
+        "status": "not-started"
+      }
+    ]
+  }
+}

@@ -11,7 +11,7 @@ import { PLAN_CONFIG, type PlanTier } from "./config/plan";
 import { RELEASE_PROFILE } from "./config/releaseProfile";
 import { planAutoPolish, runAutoPolish } from "./services/autoPolish";
 import fs from "fs";
-import { spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import Store from "electron-store";
 import { EventEmitter } from "events";
 import { Readable } from "stream";
@@ -45,6 +45,7 @@ type AppPreferences = {
     hasCompletedOnboarding: boolean;
     preferredCaptureShortcut: CaptureShortcutPreference;
     devEntitlementOverride: PlanTier | null;
+    windowsDesktopShortcutCreated: boolean;
 };
 
 const smokeLogFile = process.env.AGEOFSCREEN_SMOKE_LOG_FILE?.trim();
@@ -93,6 +94,7 @@ const appPreferencesStore = new (Store as any)({
         hasCompletedOnboarding: false,
         preferredCaptureShortcut: "print_screen",
         devEntitlementOverride: PLAN_CONFIG.allowManualTierOverride ? (PLAN_CONFIG.devOverrideTier ?? null) : null,
+        windowsDesktopShortcutCreated: false,
     } satisfies AppPreferences,
 });
 
@@ -637,6 +639,7 @@ let teleprompterWindow: BrowserWindow | null = null;
 let drawingOverlayWindow: BrowserWindow | null = null;
 let videoEditorWindow: BrowserWindow | null = null;
 let introWindow: BrowserWindow | null = null;
+let screenPlaygroundWindow: BrowserWindow | null = null;
 let _tray: Tray | null = null;
 let wasWebcamVisibleBeforeDrawing = false;
 let shouldRestoreEditorAfterCaptureCancel = false;
@@ -771,6 +774,7 @@ let pendingMediaName: string | null = null;
 let pendingAgentSummary: AgentSummaryPayload | null = null;
 let latestAgentVideoPath: string | null = null;
 let pendingVideoDeliveryInFlight = false;
+let pendingVideoDeliveryRetryTimeouts: NodeJS.Timeout[] = [];
 let agentAutoRecordingRequested = false;
 let _latestCaptureHealth: { droppedFrames: number; bufferErrors: number; effectiveFps: number | null; status: string } | null = null;
 let _latestSourceStatus: { screen: boolean; camera: boolean; mic: boolean } | null = null;
@@ -822,7 +826,7 @@ const resolveExportSavePath = async ({
 };
 
 // Recording Widget Dimensions
-const RECORDING_WIDGET_WIDTH = 220;
+const RECORDING_WIDGET_WIDTH = 252;
 const RECORDING_WIDGET_HEIGHT = 42;
 const RECORDING_WIDGET_MARGIN = 20;
 
@@ -843,11 +847,15 @@ const TRIGGER_TRACK_INTERVAL_MS = 50;
 const MENU_REOPEN_GUARD_MS = 260;
 const MENU_TRIGGER_REARM_DELAY_MS = 120;
 const MENU_PREWARM_DELAY_MS = 260;
-const MENU_IDLE_RELEASE_DELAY_MS = 20000;
+const MENU_IDLE_RELEASE_DELAY_MS = 6000;
 const CAPTURE_WINDOW_SETTLE_MS = 160;
 const STOP_RECORDING_RETRY_DELAYS_MS = [0, 160, 420] as const;
+const PENDING_VIDEO_DELIVERY_RETRY_DELAYS_MS = [200, 800, 1600] as const;
+const PRINT_SCREEN_REGISTRATION_RETRY_DELAYS_MS = [1000, 5000, 15000] as const;
+const AUTO_LAUNCH_ARG = "--ageofscreen-startup";
 let isWebcamSmall = false; // Toggle for webcam size
 let isWebcamZoomed = false; // Track zoom status for manual toggle
+let printScreenRegistrationRetryTimeouts: NodeJS.Timeout[] = [];
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -860,14 +868,135 @@ const hideWindowForCapture = (windowRef: BrowserWindow | null): boolean => {
     return true;
 };
 const shouldUseTriggerLine = (): boolean => (
-    (RELEASE_PROFILE.name === "dev" && process.platform === "win32")
+    process.platform === "win32"
     || !Boolean(readAppPreference<boolean>("hasCompletedOnboarding"))
     || readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "trigger_line"
 );
 
+const runWindowsCommand = (command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> => (
+    new Promise((resolve) => {
+        execFile(command, args, { windowsHide: true }, (error, stdout, stderr) => {
+            resolve({
+                stdout: stdout?.toString?.() ?? "",
+                stderr: stderr?.toString?.() ?? "",
+                code: typeof (error as any)?.code === "number" ? (error as any).code : 0,
+            });
+        });
+    })
+);
+
+const cleanupBrokenWindowsAutoLaunchRegistration = async () => {
+    if (process.platform !== "win32") {
+        return;
+    }
+
+    try {
+        const runKey = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+        const queryResult = await runWindowsCommand("reg.exe", ["query", runKey, "/v", "AgeofScreen"]);
+        const value = `${queryResult.stdout}\n${queryResult.stderr}`;
+        const hasBrokenDevElectronEntry = /node_modules\\electron\\dist\\electron\.exe/i.test(value)
+            || /node_modules\/electron\/dist\/electron\.exe/i.test(value);
+
+        if (!hasBrokenDevElectronEntry) {
+            return;
+        }
+
+        await runWindowsCommand("reg.exe", ["delete", runKey, "/v", "AgeofScreen", "/f"]);
+        console.log("[ageofscreen] Removed broken development Electron startup entry.");
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to clean development startup entry:", error);
+    }
+};
+
+const ensureWindowsAutoLaunchRegistration = () => {
+    if (process.platform !== "win32") {
+        return;
+    }
+
+    try {
+        if (!app.isPackaged) {
+            console.log("[ageofscreen] Skipping Windows startup registration in development.");
+            return;
+        }
+
+        app.setLoginItemSettings({
+            openAtLogin: true,
+            enabled: true,
+            name: "AgeofScreen",
+            path: process.execPath,
+            args: [AUTO_LAUNCH_ARG],
+        });
+        const loginSettings = app.getLoginItemSettings({
+            path: process.execPath,
+            args: [AUTO_LAUNCH_ARG],
+        });
+        console.log("[ageofscreen] Windows startup registration:", {
+            openAtLogin: loginSettings.openAtLogin,
+            executableWillLaunchAtLogin: loginSettings.executableWillLaunchAtLogin,
+            wasOpenedAtLogin: loginSettings.wasOpenedAtLogin,
+        });
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to register Windows startup launch:", error);
+    }
+};
+
+const ensureWindowsPrintScreenPreference = async () => {
+    if (process.platform !== "win32" || !shouldUsePrintScreenShortcut()) {
+        return;
+    }
+
+    try {
+        const result = await runWindowsCommand("reg.exe", [
+            "add",
+            "HKCU\\Control Panel\\Keyboard",
+            "/v",
+            "PrintScreenKeyForSnippingEnabled",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "0",
+            "/f",
+        ]);
+
+        if (result.code === 0) {
+            console.log("[ageofscreen] Windows Print Screen snipping handoff disabled for AgeofScreen shortcut registration.");
+        } else {
+            console.warn("[ageofscreen] Could not update Windows Print Screen preference:", result);
+        }
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to update Windows Print Screen preference:", error);
+    }
+};
+
+const isWindowsAutoLaunch = (): boolean => {
+    if (process.platform !== "win32") {
+        return false;
+    }
+
+    if (process.argv.includes(AUTO_LAUNCH_ARG)) {
+        return true;
+    }
+
+    try {
+        return app.getLoginItemSettings({
+            path: process.execPath,
+            args: [AUTO_LAUNCH_ARG],
+        }).wasOpenedAtLogin;
+    } catch {
+        return false;
+    }
+};
+
 const shouldUsePrintScreenShortcut = (): boolean => (
     readAppPreference<CaptureShortcutPreference>("preferredCaptureShortcut") === "print_screen"
 );
+
+const clearPrintScreenRegistrationRetries = () => {
+    for (const timeout of printScreenRegistrationRetryTimeouts) {
+        clearTimeout(timeout);
+    }
+    printScreenRegistrationRetryTimeouts = [];
+};
 
 const resolveAppIconPath = (fileName = "app-icon.png"): string | null => {
     const candidates = [
@@ -890,6 +1019,85 @@ const resolveAppIconPath = (fileName = "app-icon.png"): string | null => {
 const getAppWindowIcon = () => {
     const iconPath = resolveAppIconPath(process.platform === "win32" ? "app-icon.ico" : "app-icon.png");
     return iconPath ? nativeImage.createFromPath(iconPath) : undefined;
+};
+
+const resolveWindowsStoreAppUserModelId = async (): Promise<string | null> => {
+    if (process.platform !== "win32" || !isWindowsStorePackage()) {
+        return null;
+    }
+
+    const script = `
+$ErrorActionPreference = 'Stop'
+$names = @('Age of Screen', 'AgeofScreen')
+$app = Get-StartApps | Where-Object { $names -contains $_.Name } | Select-Object -First 1
+if (-not $app) { exit 2 }
+[Console]::Out.Write($app.AppID)
+`;
+
+    try {
+        const result = await runWindowsCommand("powershell.exe", [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ]);
+
+        const appUserModelId = result.stdout.trim();
+        if (result.code === 0 && appUserModelId) {
+            return appUserModelId;
+        }
+
+        console.warn("[ageofscreen] Could not resolve Windows Store AppUserModelID:", result);
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to resolve Windows Store AppUserModelID:", error);
+    }
+
+    return null;
+};
+
+const createWindowsStoreDesktopShortcut = async () => {
+    if (process.platform !== "win32" || !isWindowsStorePackage()) {
+        return;
+    }
+
+    const shortcutPath = path.join(app.getPath("desktop"), "Age of Screen.lnk");
+    if (fs.existsSync(shortcutPath)) {
+        writeAppPreference("windowsDesktopShortcutCreated", true);
+        return;
+    }
+
+    if (readAppPreference<boolean>("windowsDesktopShortcutCreated")) {
+        writeAppPreference("windowsDesktopShortcutCreated", false);
+    }
+
+    const iconPath = resolveAppIconPath("app-icon.ico") || "";
+    const appUserModelId = await resolveWindowsStoreAppUserModelId();
+    if (!appUserModelId) {
+        return;
+    }
+
+    try {
+        const created = shell.writeShortcutLink(shortcutPath, "create", {
+            target: path.join(process.env.WINDIR || "C:\\Windows", "explorer.exe"),
+            args: `shell:AppsFolder\\${appUserModelId}`,
+            cwd: app.getPath("home"),
+            description: "Age of Screen",
+            icon: iconPath || undefined,
+            iconIndex: 0,
+            appUserModelId,
+        });
+
+        if (created && fs.existsSync(shortcutPath)) {
+            writeAppPreference("windowsDesktopShortcutCreated", true);
+            console.log("[ageofscreen] Created Windows Store desktop shortcut:", shortcutPath);
+            return;
+        }
+
+        console.warn("[ageofscreen] Windows Store desktop shortcut was not created.");
+    } catch (error) {
+        console.warn("[ageofscreen] Failed to create Windows Store desktop shortcut:", error);
+    }
 };
 
 const openAgeofScreenLauncher = () => {
@@ -950,12 +1158,11 @@ const clearPendingStopRecordingDispatches = () => {
 };
 
 const dispatchStopRecordingRequest = () => {
-    if (menuWindow && !menuWindow.isDestroyed()) {
-        menuWindow.webContents.send("stop-recording-requested");
-    }
-    if (editorWindow && !editorWindow.isDestroyed()) {
-        editorWindow.webContents.send("stop-recording-requested");
-    }
+    BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) {
+            win.webContents.send("stop-recording-requested");
+        }
+    });
 };
 
 const startTriggerTracking = () => {
@@ -1026,7 +1233,7 @@ const hideTriggerWindow = () => {
     triggerWindow.setIgnoreMouseEvents(true, { forward: true });
 };
 
-const registerCaptureShortcut = () => {
+const registerCaptureShortcut = (scheduleRetries = true) => {
     try {
         if (globalShortcut.isRegistered("PrintScreen")) {
             globalShortcut.unregister("PrintScreen");
@@ -1049,7 +1256,20 @@ const registerCaptureShortcut = () => {
 
         if (!registered) {
             console.warn("[ageofscreen] Print Screen shortcut could not be registered.");
+            if (scheduleRetries) {
+                clearPrintScreenRegistrationRetries();
+                printScreenRegistrationRetryTimeouts = PRINT_SCREEN_REGISTRATION_RETRY_DELAYS_MS.map((delayMs) => (
+                    setTimeout(() => {
+                        if (!globalShortcut.isRegistered("PrintScreen")) {
+                            registerCaptureShortcut(false);
+                        }
+                    }, delayMs)
+                ));
+            }
+            return;
         }
+
+        clearPrintScreenRegistrationRetries();
     } catch (error) {
         console.warn("[ageofscreen] Failed to register Print Screen shortcut:", error);
     }
@@ -1080,6 +1300,8 @@ declare const DRAWING_OVERLAY_WINDOW_WEBPACK_ENTRY: string;
 declare const DRAWING_OVERLAY_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 declare const VIDEO_EDITOR_WINDOW_WEBPACK_ENTRY: string;
 declare const VIDEO_EDITOR_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
+declare const SCREEN_PLAYGROUND_WINDOW_WEBPACK_ENTRY: string;
+declare const SCREEN_PLAYGROUND_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
 // --- Editor Window (Main Annotation App) ---
 const createEditorWindow = (initialDataUrl?: string, options: { showWhenReady?: boolean } = {}) => {
@@ -1718,6 +1940,138 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
     });
 };
 
+const capturePrimaryDisplayDataUrl = async (): Promise<{
+    screenshotDataUrl: string;
+    sources: Array<{ id: string; name: string; kind: "screen" | "window"; dataUrl: string }>;
+    display: { width: number; height: number; scaleFactor: number };
+}> => {
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.size;
+    const scaleFactor = primaryDisplay.scaleFactor;
+    const hiddenAnyWindow = [
+        hideWindowForCapture(menuWindow),
+        hideWindowForCapture(triggerWindow),
+        hideWindowForCapture(editorWindow),
+        hideWindowForCapture(videoEditorWindow),
+        hideWindowForCapture(webcamWindow),
+        hideWindowForCapture(recordingWidget),
+    ].some(Boolean);
+
+    if (hiddenAnyWindow) {
+        await wait(CAPTURE_WINDOW_SETTLE_MS);
+    }
+
+    const sources = await desktopCapturer.getSources({
+        types: ["screen", "window"],
+        thumbnailSize: {
+            width: width * scaleFactor,
+            height: height * scaleFactor,
+        },
+    });
+    const primaryDisplayId = primaryDisplay.id.toString();
+    const screenSources = sources.filter((source) => source.id.startsWith("screen:"));
+    const primarySource = screenSources.find((source) => source.display_id === primaryDisplayId)
+        || screenSources[0]
+        || sources[0];
+    if (!primarySource) {
+        throw new Error("Could not capture the screen for Screen Playground.");
+    }
+    const playableSources = [
+        primarySource,
+        ...sources.filter((source) => source.id !== primarySource.id),
+    ]
+        .filter((source) => !source.thumbnail.isEmpty())
+        .map((source, index) => {
+            const isScreen = source.id.startsWith("screen:");
+            const isPrimaryDesktop = source.id === primarySource.id;
+            return {
+                id: source.id,
+                name: isPrimaryDesktop
+                    ? "Main Desktop"
+                    : (source.name || (isScreen ? `Desktop ${index + 1}` : "Window")),
+                kind: isScreen ? "screen" as const : "window" as const,
+                dataUrl: source.thumbnail.toDataURL(),
+            };
+        });
+
+    return {
+        screenshotDataUrl: primarySource.thumbnail.toDataURL(),
+        sources: playableSources,
+        display: { width, height, scaleFactor },
+    };
+};
+
+const createScreenPlaygroundWindow = async () => {
+    if (!FEATURES.ENABLE_SCREEN_PLAYGROUND) {
+        console.log("[ageofscreen] Screen Playground disabled by feature flag");
+        return;
+    }
+
+    if (screenPlaygroundWindow && !screenPlaygroundWindow.isDestroyed()) {
+        screenPlaygroundWindow.setFullScreen(true);
+        screenPlaygroundWindow.show();
+        screenPlaygroundWindow.focus();
+        return;
+    }
+
+    let payload: Awaited<ReturnType<typeof capturePrimaryDisplayDataUrl>>;
+    try {
+        payload = await capturePrimaryDisplayDataUrl();
+    } catch (error) {
+        console.error("[ageofscreen] Screen Playground capture failed:", error);
+        createMenuWindow({ openReason: "manual", bypassReopenGuard: true });
+        return;
+    }
+
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { x, y, width, height } = primaryDisplay.bounds;
+
+    screenPlaygroundWindow = new BrowserWindow({
+        x,
+        y,
+        width,
+        height,
+        frame: false,
+        backgroundColor: "#05070d",
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: false,
+        fullscreen: false,
+        fullscreenable: true,
+        autoHideMenuBar: true,
+        show: false,
+        icon: getAppWindowIcon(),
+        webPreferences: {
+            preload: SCREEN_PLAYGROUND_WINDOW_PRELOAD_WEBPACK_ENTRY,
+            nodeIntegration: false,
+            contextIsolation: true,
+            backgroundThrottling: false,
+        },
+    });
+
+    screenPlaygroundWindow.loadURL(SCREEN_PLAYGROUND_WINDOW_WEBPACK_ENTRY);
+    screenPlaygroundWindow.once("ready-to-show", () => {
+        if (!screenPlaygroundWindow || screenPlaygroundWindow.isDestroyed()) return;
+        screenPlaygroundWindow.setBounds(primaryDisplay.bounds);
+        screenPlaygroundWindow.show();
+        screenPlaygroundWindow.setAlwaysOnTop(true, "screen-saver", 1);
+        screenPlaygroundWindow.setFullScreen(true);
+        screenPlaygroundWindow.focus();
+        setTimeout(() => {
+            if (!screenPlaygroundWindow || screenPlaygroundWindow.isDestroyed()) return;
+            screenPlaygroundWindow.setBounds(primaryDisplay.bounds);
+            screenPlaygroundWindow.setFullScreen(true);
+            screenPlaygroundWindow.setAlwaysOnTop(true, "screen-saver", 1);
+            screenPlaygroundWindow.focus();
+        }, 120);
+        screenPlaygroundWindow.webContents.send("screen-playground:init", payload);
+    });
+    screenPlaygroundWindow.on("closed", () => {
+        screenPlaygroundWindow = null;
+        restoreTriggerWindowIfEnabled(120);
+    });
+};
+
 // --- Focus Window (Timer Widget) ---
 const createFocusWindow = (payload: any) => {
     if (!FEATURES.ENABLE_FOCUS_WIDGET) {
@@ -1820,6 +2174,7 @@ const triggerStopRecording = () => {
     console.log('[ageofscreen] Triggering stop recording');
     isRecordingActive = false;
     clearPendingStopRecordingDispatches();
+    dispatchStopRecordingRequest();
 
     // Unregister ESC and zoom shortcuts
     try {
@@ -2170,26 +2525,38 @@ const hideRecordingWidget = () => {
         mouseTrackInterval = null;
     }
 
-    if (smartFeaturesConfig.captureCursorData) {
-        recordedCursorData = stopMetadataRecording();
-    }
+    finalizeRecordedCursorData();
     setClickListener(null);
 };
 
 // Mouse tracking logic for Auto-Zoom
 let recordedCursorData: any[] = []; // Changed type so metadata can hold click events too
+let isRecordingMetadataActive = false;
 
 import { startMetadataRecording, stopMetadataRecording, recordZoomToggle, setClickListener, setRecordingCaptureMetadata } from './services/metadataRecorder';
 let zoomMarkerActive = false;
 
+const finalizeRecordedCursorData = () => {
+    if (!smartFeaturesConfig.captureCursorData || !isRecordingMetadataActive) {
+        return recordedCursorData;
+    }
+
+    recordedCursorData = stopMetadataRecording();
+    isRecordingMetadataActive = false;
+    return recordedCursorData;
+};
+
 const startMouseTracking = (bounds?: { x: number; y: number; width: number; height: number }) => {
     if (mouseTrackInterval) clearInterval(mouseTrackInterval);
+    finalizeRecordedCursorData();
 
     // Reset data
     recordedCursorData = [];
+    isRecordingMetadataActive = false;
 
     if (smartFeaturesConfig.captureCursorData) {
         startMetadataRecording(bounds);
+        isRecordingMetadataActive = true;
         setRecordingCaptureMetadata({
             capturePlatform: process.platform,
         });
@@ -2461,8 +2828,15 @@ const showRecordingWidgetForDrawing = () => {
     recordingWidget.webContents.send('drawing-toggled', true);
 };
 
-const sendPendingMediaToVideoEditor = (reason: string) => {
-    if (!videoEditorWindow || videoEditorWindow.isDestroyed() || !pendingVideoDataUrl || pendingVideoDeliveryInFlight) {
+const clearPendingVideoDeliveryRetries = () => {
+    for (const timeout of pendingVideoDeliveryRetryTimeouts) {
+        clearTimeout(timeout);
+    }
+    pendingVideoDeliveryRetryTimeouts = [];
+};
+
+const deliverPendingMediaToVideoEditor = (reason: string) => {
+    if (!videoEditorWindow || videoEditorWindow.isDestroyed() || !pendingVideoDataUrl) {
         return;
     }
 
@@ -2482,6 +2856,29 @@ const sendPendingMediaToVideoEditor = (reason: string) => {
         undefined,
     );
     pendingVideoDeliveryInFlight = true;
+};
+
+const sendPendingMediaToVideoEditor = (reason: string) => {
+    if (!videoEditorWindow || videoEditorWindow.isDestroyed() || !pendingVideoDataUrl) {
+        return;
+    }
+
+    if (videoEditorWindow.webContents.isLoadingMainFrame()) {
+        videoEditorWindow.webContents.once("did-finish-load", () => {
+            sendPendingMediaToVideoEditor(`${reason}-after-load`);
+        });
+        return;
+    }
+
+    deliverPendingMediaToVideoEditor(reason);
+    clearPendingVideoDeliveryRetries();
+    pendingVideoDeliveryRetryTimeouts = PENDING_VIDEO_DELIVERY_RETRY_DELAYS_MS.map((delayMs) => (
+        setTimeout(() => {
+            if (pendingVideoDataUrl && videoEditorWindow && !videoEditorWindow.isDestroyed()) {
+                deliverPendingMediaToVideoEditor(`${reason}-retry-${delayMs}`);
+            }
+        }, delayMs)
+    ));
 };
 
 const getPendingVideoEditorMedia = () => {
@@ -2565,6 +2962,7 @@ const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
             videoEditorWindow = null;
             pendingVideoDataUrl = null;
             pendingVideoDeliveryInFlight = false;
+            clearPendingVideoDeliveryRetries();
             pendingAgentSummary = null;
         });
 
@@ -2585,6 +2983,7 @@ const closeVideoEditorWindow = () => {
     videoEditorWindow = null;
     pendingVideoDataUrl = null;
     pendingVideoDeliveryInFlight = false;
+    clearPendingVideoDeliveryRetries();
     pendingAgentSummary = null;
 };
 
@@ -3224,6 +3623,41 @@ const registerIpcHandlers = () => {
         console.log("[ageofscreen] Focus Toggled");
     });
 
+    ipcMain.on("screen-playground-open", () => {
+        void createScreenPlaygroundWindow();
+    });
+
+    ipcMain.on("screen-playground:close", () => {
+        if (screenPlaygroundWindow && !screenPlaygroundWindow.isDestroyed()) {
+            screenPlaygroundWindow.setFullScreen(false);
+            screenPlaygroundWindow.close();
+        }
+    });
+
+    ipcMain.handle("screen-playground:save-snapshot", async (_event, dataUrl: string) => {
+        if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png;base64,")) {
+            return { success: false, error: "Invalid playground image data." };
+        }
+
+        const saveTarget = await dialog.showSaveDialog(screenPlaygroundWindow ?? undefined, {
+            title: "Save Screen Playground",
+            defaultPath: path.join(app.getPath("pictures"), `ageofscreen-playground-${Date.now()}.png`),
+            filters: [{ name: "PNG Image", extensions: ["png"] }],
+        });
+
+        if (saveTarget.canceled || !saveTarget.filePath) {
+            return { success: false, error: "Save canceled." };
+        }
+
+        try {
+            const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+            fs.writeFileSync(saveTarget.filePath, Buffer.from(base64, "base64"));
+            return { success: true, filePath: saveTarget.filePath };
+        } catch (error) {
+            return { success: false, error: (error as Error).message };
+        }
+    });
+
 
     ipcMain.on("menu-camera", (event, shape?: CameraShape, size?: number, name?: string, borderColor?: string, borderWidth?: number, glowEnabled?: boolean, audioMeterEnabled?: boolean) => {
         console.log("[ageofscreen] Toggling Camera with shape:", shape || 'default', "size:", size || 'default', "name:", name || 'none', "borderColor:", borderColor || 'default', "borderWidth:", borderWidth, "glow:", glowEnabled, "audioMeter:", audioMeterEnabled);
@@ -3782,15 +4216,22 @@ const registerIpcHandlers = () => {
             const nodeBuffer = Buffer.from(buffer);
             await fs.promises.writeFile(initialFilePath, nodeBuffer);
 
-            const filePath = await normalizeTempRecordingForEditor(initialFilePath);
+            let filePath = initialFilePath;
+            try {
+                filePath = await normalizeTempRecordingForEditor(initialFilePath);
+            } catch (error) {
+                console.warn("[ageofscreen] Recording normalization failed; opening original WebM in editor.", error);
+            }
             approveMediaPath(filePath);
+
+            const cursorDataForSidecar = finalizeRecordedCursorData();
 
             // Save full cursor metadata so editor replay, cursor styling, and Auto-Polish
             // can restore the same interaction data when the clip is reopened later.
-            if (recordedCursorData.length > 0) {
-                const jsonPath = path.join(tempDir, `ageofscreen-rec-${timestamp}.cursor.json`);
-                await fs.promises.writeFile(jsonPath, JSON.stringify(recordedCursorData));
-                console.log('[ageofscreen] Saved cursor metadata sidecar:', recordedCursorData.length, 'events');
+            if (cursorDataForSidecar.length > 0) {
+                const jsonPath = filePath.replace(/\.[^.]+$/, '.cursor.json');
+                await fs.promises.writeFile(jsonPath, JSON.stringify(cursorDataForSidecar));
+                console.log('[ageofscreen] Saved cursor metadata sidecar:', cursorDataForSidecar.length, 'events');
             }
 
             // Verify file was written correctly
@@ -3857,9 +4298,10 @@ const registerIpcHandlers = () => {
 
             await fs.promises.writeFile(filePath, Buffer.from(buffer));
 
-            if (recordedCursorData.length > 0) {
+            const cursorDataForSidecar = finalizeRecordedCursorData();
+            if (cursorDataForSidecar.length > 0) {
                 const jsonPath = filePath.replace(/\.webm$/, '.json');
-                await fs.promises.writeFile(jsonPath, JSON.stringify(recordedCursorData));
+                await fs.promises.writeFile(jsonPath, JSON.stringify(cursorDataForSidecar));
                 console.log('[ageofscreen] Saved cursor data to:', jsonPath);
             }
 
@@ -4059,6 +4501,7 @@ const registerIpcHandlers = () => {
         pendingVideoDataUrl = null;
         pendingMediaName = null;
         pendingVideoDeliveryInFlight = false;
+        clearPendingVideoDeliveryRetries();
     });
 
     ipcMain.handle("get-pending-editor-media", () => {
@@ -4346,11 +4789,18 @@ const registerIpcHandlers = () => {
         const cursorData = type === 'video'
             ? await loadCursorMetadataSidecar(filePath)
             : null;
+        let duration: number | null = null;
+        if (type === 'video' || type === 'audio') {
+            const vr = await getVideoRenderer();
+            const ffmpegPath = vr?.isAvailable?.() ? vr.getFFmpegPath?.() : null;
+            duration = await probeMediaDuration(filePath, ffmpegPath);
+        }
 
         console.log(`[ageofscreen] Selected ${type} file:`, fileName);
         return {
             filePath,
             fileName,
+            duration: duration ?? undefined,
             cursorData: cursorData ?? undefined,
         };
     });
@@ -4456,15 +4906,24 @@ app.whenReady().then(async () => {
     cachedEntitlementState = await getEntitlementProvider().initialize();
     cachedEntitlementState = await getEntitlementProvider().restoreIfNeeded();
     broadcastLicenseState(cachedEntitlementState);
+    await cleanupBrokenWindowsAutoLaunchRegistration();
+    ensureWindowsAutoLaunchRegistration();
+    await createWindowsStoreDesktopShortcut();
+    await ensureWindowsPrintScreenPreference();
     registerCaptureShortcut();
     createAppTray();
     createTriggerWindow();
 
     const onboardingState = getOnboardingState();
+    const launchedFromWindowsStartup = isWindowsAutoLaunch();
     if (!onboardingState.hasCompletedOnboarding && RELEASE_PROFILE.name !== "dev") {
         setTimeout(() => {
             createIntroWindow();
         }, 220);
+    } else if (launchedFromWindowsStartup) {
+        setTimeout(() => {
+            restoreTriggerWindowIfEnabled(40);
+        }, MENU_PREWARM_DELAY_MS);
     } else if (RELEASE_PROFILE.name !== "dev") {
         setTimeout(() => {
             openAgeofScreenLauncher();
@@ -4477,6 +4936,14 @@ app.whenReady().then(async () => {
 
     if (shieldMode === "agent_local") {
         setTimeout(() => maybeAutoStartAgentRecording("app startup"), 250);
+    }
+
+    // --- Dev: Start Game (Playground) ---
+    if (process.env.AGEOFSCREEN_START_PLAYGROUND === "true") {
+        setTimeout(() => {
+            console.log("[ageofscreen] Auto-starting Screen Playground (START_PLAYGROUND=true)");
+            void createScreenPlaygroundWindow();
+        }, 1000);
     }
 
     // Register Alt+Z for Auto-Zoom toggle (only if feature flag allows)
@@ -4516,6 +4983,8 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
     try {
+        clearPrintScreenRegistrationRetries();
+        clearPendingVideoDeliveryRetries();
         globalShortcut.unregisterAll();
     } catch (error) {
         console.warn("[ageofscreen] Failed to unregister global shortcuts on quit:", error);

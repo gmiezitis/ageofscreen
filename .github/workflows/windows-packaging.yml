@@ -34,6 +34,18 @@ jobs:
       - name: Setup FFmpeg
         run: node scripts/setup-ffmpeg.js --arch=${{ matrix.arch }}
 
+      - name: Release status snapshot
+        shell: cmd
+        run: |
+          if not exist .tmp mkdir .tmp
+          npm.cmd run release:status > .tmp\release-status.txt
+          node scripts\release-status.js --format=markdown > .tmp\release-status.md
+          node scripts\release-status.js --format=json > .tmp\release-status.json
+
+      - name: Release automation gate
+        shell: cmd
+        run: npm.cmd run release:gate
+
       # - name: Lint
       #  run: npm run lint
 
@@ -43,6 +55,11 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Dev smoke test
+        if: matrix.channel == 'direct' && matrix.arch == 'x64'
+        shell: cmd
+        run: npm.cmd run test:smoke
+
       - name: Build direct-download package
         if: matrix.channel == 'direct' && matrix.arch == 'x64'
         run: npm run make:win-x64
@@ -50,6 +67,21 @@ jobs:
       - name: Build direct-download package (ARM64)
         if: matrix.channel == 'direct' && matrix.arch == 'arm64'
         run: npm run make:win-arm64
+
+      - name: Packaged smoke test
+        if: matrix.channel == 'direct' && matrix.arch == 'x64'
+        shell: cmd
+        env:
+          AGEOFSCREEN_SMOKE_PACKAGED_ARCH: x64
+        run: npm.cmd run test:smoke:packaged
+
+      - name: Upload smoke failure artifacts
+        if: failure() && matrix.channel == 'direct' && matrix.arch == 'x64'
+        uses: actions/upload-artifact@v6
+        with:
+          name: smoke-debug-${{ matrix.arch }}
+          path: .tmp/smoke-artifacts/**
+          if-no-files-found: warn
 
       - name: Decode signing certificate
         if: matrix.channel == 'store'
@@ -95,5 +127,26 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: windows-direct-${{ matrix.arch }}
-          path: out/make/**/*.zip
+          path: |
+            out/make/zip/win32/${{ matrix.arch }}/*.zip
+            out/make/squirrel.windows/${{ matrix.arch }}/*.exe
           if-no-files-found: warn
+
+      - name: Upload release status snapshot
+        if: always() && matrix.channel == 'direct' && matrix.arch == 'x64'
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-status-${{ matrix.arch }}
+          path: |
+            .tmp/release-status.txt
+            .tmp/release-status.md
+            .tmp/release-status.json
+          if-no-files-found: warn
+
+      - name: Publish release status summary
+        if: always() && matrix.channel == 'direct' && matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          if (Test-Path ".tmp/release-status.md") {
+            Get-Content ".tmp/release-status.md" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          }

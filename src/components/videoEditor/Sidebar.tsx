@@ -3,7 +3,7 @@ import { Trash2, Video, Music, FolderOpen, Image } from 'lucide-react';
 
 interface SidebarProps {
     isCollapsed: boolean;
-    mediaLibrary: Array<{ id: string; name: string; thumbnail?: string; type: 'video' | 'audio' | 'image' }>;
+    mediaLibrary: Array<{ id: string; name: string; thumbnail?: string; type: 'video' | 'audio' | 'image'; duration?: number }>;
     onImport: (type: 'video' | 'audio' | 'image') => void;
     onDeleteLibraryItem: (id: string) => void;
     onDragStart: (e: React.DragEvent, id: string) => void;

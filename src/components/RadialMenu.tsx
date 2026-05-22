@@ -12,6 +12,7 @@ export interface RadialMenuTool {
     icon: React.ReactNode;
     color: HexagonColor | "orange";
     action: () => void;
+    secondaryAction?: () => void;
 }
 
 interface RadialMenuProps {
@@ -98,7 +99,17 @@ export const RadialMenu: React.FC<RadialMenuProps> = ({
                     if (!pos) return null;
 
                     return (
-                        <g key={tool.id} className={styles.hexGroup} onClick={tool.action}>
+                        <g
+                            key={tool.id}
+                            className={styles.hexGroup}
+                            onClick={tool.action}
+                            onContextMenu={(event) => {
+                                if (!tool.secondaryAction) return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                tool.secondaryAction();
+                            }}
+                        >
                             <polygon
                                 points={getHexagonPoints(pos.x, pos.y, hexSize)}
                                 className={styles.hexagon}

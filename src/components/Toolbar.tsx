@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Camera,
   Crop,
@@ -32,7 +32,8 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 // Import shared types and styles
-import type { Tool, PenSize, BlurMode, DraggableCSSProperties } from "../types";
+import type { Tool, PenSize, BlurMode, DraggableCSSProperties, ArrowType, StepType } from "../types";
+import { CanvasRenderer } from "../services/canvasRenderer";
 
 
 // Props expected by the Toolbar component
@@ -51,6 +52,8 @@ interface ToolbarProps {
   // Blur mode state and handler (if blur tool selected)
   selectedBlurMode: BlurMode; // Rename for consistency
   onBlurModeChange: (mode: BlurMode) => void;
+  selectedArrowType: ArrowType;
+  onArrowTypeChange: (type: ArrowType) => void;
   // Color state and handler (for pen, arrow, shapes, step)
   penColor: string;
   onPenColorChange: (color: string) => void;
@@ -69,11 +72,10 @@ interface ToolbarProps {
   // Text size state and handler
   hasSelectedTextAnnotation: boolean;
   textFontSize: number;
-  textBoxWidth: number;
-  textBoxWidthMax: number;
+  isPlainText: boolean;
   onBeginTextAdjustment: () => void;
   onTextFontSizeChange: (fontSize: number) => void;
-  onTextBoxWidthChange: (width: number) => void;
+  onTogglePlainText: (isPlain: boolean) => void;
   // --- REMOVE sizePreviewStyle prop (calculate internally if needed) ---
   // sizePreviewStyle: React.CSSProperties;
   // Text color state and handler
@@ -89,17 +91,18 @@ interface ToolbarProps {
   onSave: () => void; // Rename from onSaveAs
   onImport: () => void;
   onAddImageOverlay: () => void;
-  selectedHighlighterSize: PenSize; // <<< NEW
-  onHighlighterSizeSelect: (size: PenSize) => void; // <<< NEW
+  selectedHighlighterSize: PenSize;
+  onHighlighterSizeSelect: (size: PenSize) => void;
   selectedStepSize: PenSize;
   onStepSizeSelect: (size: PenSize) => void;
   selectedStepSymbol?: string;
   onStepSymbolChange: (symbol: string | undefined) => void;
+  selectedStepType: StepType;
+  onStepTypeChange: (type: StepType) => void;
   selectedSymbolText: string;
   onSymbolTextChange: (symbol: string) => void;
+  onClear: () => void;
   isFullscreen: boolean;
-    onClear: () => void; // Added to accept the onClear prop from App.tsx
-  // Add blur strength props
   blurStrength?: number; // Optional if only needed for some blur modes
   onBlurStrengthChange?: (strength: number) => void; // Optional
   // Dark mode support
@@ -122,14 +125,112 @@ const drawingTools: Array<{ id: Tool; Icon: LucideIcon; label: string }> = [
   { id: "highlighter", Icon: Highlighter, label: "Highlighter" },
   { id: "text", Icon: Type, label: "Text Tool" },
   { id: "step", Icon: ListOrdered, label: "Step Counter" },
-  { id: "symbol", Icon: Smile, label: "Symbols" },
+  { id: "sticker", Icon: Smile, label: "Stickers" },
   { id: "blur", Icon: Droplet, label: "Blur Tool" },
 ];
 
-const SYMBOLS = ["❤️", "🧑‍⚕️", "⭐", "✅", "❌", "🔥", "👍", "👎", "😊", "🎉", "💡", "⚠️", "📌", "✨", "🎈", "💉", "💊", "🏥", "🚑"];
-
 const PHOTO_MENU_CLOSE_DELAY_MS = 280;
+const PHOTO_MENU_WIDTH = 210;
+const STICKER_MENU_WIDTH = 220;
+const STEP_MENU_WIDTH = 200;
+const VIEWPORT_MARGIN = 10;
+const TOOLTIP_MAX_WIDTH = 240;
+const TOOLTIP_MIN_WIDTH = 72;
 const premiumEase = "cubic-bezier(0.22, 1, 0.36, 1)";
+
+const AVAILABLE_STICKERS = [
+  "❤️", "⭐", "✅", "❌", "🔥", "👍", "👎", "😊", "🎉", "💡", "⚠️", "📌",
+  "✨", "🎈", "🎯", "🚀", "💎", "💯", "📣", "🔍", "🔒", "🔑", "🌈", "☀️",
+  "🌙", "🎨", "🎬", "🎧", "📷", "📱", "💻", "💼", "📅", "📍", "✉️", "🎁",
+  "🏆", "🍕", "☕", "🍺", "👀", "👉", "👇", "⬆️", "⬇️", "➡️", "⬅️", "🟢",
+  "🟡", "🔴", "🔵", "🟣", "🧠", "💬", "❗", "❓", "📝", "📎", "🔧", "⚙️",
+  "🛠️", "🧩", "🏁", "💥", "🌟", "🥳", "😎", "🤔", "🙌", "👏", "🙏", "💪",
+  "🛡️", "📈", "📉", "⏱️", "⌛", "🔔", "🔗", "🗂️", "📦"
+];
+
+const ARROW_OPTIONS: Array<{ id: ArrowType; label: string }> = [
+  { id: "sharp", label: "Sharp Pro" },
+  { id: "standard", label: "Classic" },
+  { id: "brush", label: "Brush Stroke" },
+  { id: "feathered", label: "Feathered" },
+  { id: "double", label: "Double Head" },
+  { id: "bold", label: "Heavy Bold" },
+  { id: "outline", label: "Hollow" },
+  { id: "curved", label: "Curved Sweep" },
+  { id: "dotted", label: "Dotted" },
+  { id: "dashed", label: "Dashed" },
+];
+
+const STEP_OPTIONS: { id: StepType; label: string }[] = [
+  { id: "circle", label: "Step Counter" },
+];
+
+const ArrowPreview: React.FC<{ type: ArrowType; color: string; isDarkMode: boolean }> = ({ type, color, isDarkMode }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const width = 48;
+    const height = 28;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = type === 'bold' || type === 'brush' ? 1.5 : 2;
+    
+    // Draw a small arrow preview
+    const padding = 6;
+    CanvasRenderer.drawArrow(ctx, padding, height - padding, width - padding, padding, type);
+  }, [type, color]);
+
+  return <canvas ref={canvasRef} style={{ width: 48, height: 28, borderRadius: '4px', background: 'transparent' }} />;
+};
+
+const StepPreview: React.FC<{ type: StepType; color: string; isDarkMode: boolean }> = ({ type, color, isDarkMode }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const width = 36;
+    const height = 36;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, width, height);
+    
+    // We need to cast because drawStepObject expects a full annotation
+    const mockAnnotation: any = {
+        id: 'preview',
+        type: 'step',
+        cx: width / 2,
+        cy: height / 2,
+        radius: 12,
+        number: 1,
+        color: color,
+        fontSize: 14,
+        size: 'm',
+        stepType: type
+    };
+
+    CanvasRenderer.drawStepObject(ctx, mockAnnotation);
+  }, [type, color, isDarkMode]);
+
+  return <canvas ref={canvasRef} style={{ width: 36, height: 36, background: 'transparent' }} />;
+};
 
 const Toolbar: React.FC<ToolbarProps> = (props) => {
   const {
@@ -144,6 +245,8 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     onToolSelect,
     selectedBlurMode,
     onBlurModeChange,
+    selectedArrowType,
+    onArrowTypeChange,
     penColor,
     onPenColorChange,
     highlighterColor,
@@ -154,11 +257,10 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     onPenSizeSelect,
     hasSelectedTextAnnotation,
     textFontSize,
-    textBoxWidth,
-    textBoxWidthMax,
+    isPlainText,
     onBeginTextAdjustment,
     onTextFontSizeChange,
-    onTextBoxWidthChange,
+    onTogglePlainText,
     textColor,
     onTextColorChange,
     nextStepNumber,
@@ -170,6 +272,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     onImport,
     onAddImageOverlay,
     selectedHighlighterSize,
+
     onHighlighterSizeSelect,
     selectedStepSize,
     onStepSizeSelect,
@@ -177,6 +280,8 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     onStepSymbolChange,
     selectedSymbolText,
     onSymbolTextChange,
+    selectedStepType,
+    onStepTypeChange,
     onClear,
     // Dark mode
     isDarkMode = false,
@@ -190,8 +295,100 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
 
   const sharedIconProps = { size: 16, strokeWidth: 1.7 };
   const [isPhotoMenuOpen, setIsPhotoMenuOpen] = useState(false);
+  const [isStickerMenuOpen, setIsStickerMenuOpen] = useState(false);
   const photoMenuRef = useRef<HTMLDivElement>(null);
+  const stickerMenuRef = useRef<HTMLDivElement>(null);
+  const photoButtonRef = useRef<HTMLButtonElement>(null);
+  const stickerButtonRef = useRef<HTMLButtonElement>(null);
   const photoMenuCloseTimerRef = useRef<number | null>(null);
+  const [photoMenuPosition, setPhotoMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [stickerMenuPosition, setStickerMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [isArrowMenuOpen, setIsArrowMenuOpen] = useState(false);
+  const arrowMenuRef = useRef<HTMLDivElement>(null);
+  const arrowButtonRef = useRef<HTMLButtonElement>(null);
+  const [arrowMenuPosition, setArrowMenuPosition] = useState<{ left: number; top: number } | null>(null);
+
+  const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number; width: number; placement: "top" | "bottom" } | null>(null);
+
+  const updatePhotoMenuPosition = useCallback(() => {
+    const rect = photoButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const left = Math.min(
+      Math.max(VIEWPORT_MARGIN, rect.left),
+      Math.max(VIEWPORT_MARGIN, window.innerWidth - PHOTO_MENU_WIDTH - VIEWPORT_MARGIN)
+    );
+    const top = Math.min(
+      rect.bottom + 8,
+      Math.max(VIEWPORT_MARGIN, window.innerHeight - VIEWPORT_MARGIN)
+    );
+
+    setPhotoMenuPosition({ left, top });
+  }, []);
+
+  const STICKER_MENU_WIDTH = 220;
+  const updateStickerMenuPosition = useCallback(() => {
+    const rect = stickerButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const left = Math.min(
+      Math.max(VIEWPORT_MARGIN, rect.left),
+      Math.max(VIEWPORT_MARGIN, window.innerWidth - STICKER_MENU_WIDTH - VIEWPORT_MARGIN)
+    );
+    const top = Math.min(
+      rect.bottom + 8,
+      Math.max(VIEWPORT_MARGIN, window.innerHeight - VIEWPORT_MARGIN)
+    );
+
+    setStickerMenuPosition({ left, top });
+  }, []);
+
+  const ARROW_MENU_WIDTH = 200;
+  const updateArrowMenuPosition = useCallback(() => {
+    const rect = arrowButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const left = Math.min(
+      Math.max(VIEWPORT_MARGIN, rect.left),
+      Math.max(VIEWPORT_MARGIN, window.innerWidth - ARROW_MENU_WIDTH - VIEWPORT_MARGIN)
+    );
+    const top = Math.min(
+      rect.bottom + 8,
+      Math.max(VIEWPORT_MARGIN, window.innerHeight - VIEWPORT_MARGIN)
+    );
+
+    setArrowMenuPosition({ left, top });
+  }, []);
+
+  useEffect(() => {
+    const handleMouseOver = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const button = target.closest('[data-tooltip]');
+      if (target.closest('[data-photo-menu]')) {
+        setTooltip(null);
+        return;
+      }
+      if (button) {
+        const text = button.getAttribute('data-tooltip') || '';
+        const rect = button.getBoundingClientRect();
+        const width = Math.min(TOOLTIP_MAX_WIDTH, Math.max(TOOLTIP_MIN_WIDTH, text.length * 7 + 22));
+        const minX = VIEWPORT_MARGIN + width / 2;
+        const maxX = Math.max(minX, window.innerWidth - VIEWPORT_MARGIN - width / 2);
+        const x = Math.min(
+          Math.max(minX, rect.left + rect.width / 2),
+          maxX
+        );
+        const bottomY = rect.bottom + 8;
+        const placement = bottomY + 32 > window.innerHeight ? "top" : "bottom";
+        const y = placement === "top" ? Math.max(VIEWPORT_MARGIN, rect.top - 8) : bottomY;
+        setTooltip({ text, x, y, width, placement });
+      } else {
+        setTooltip(null);
+      }
+    };
+    document.addEventListener('mouseover', handleMouseOver);
+    return () => document.removeEventListener('mouseover', handleMouseOver);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -203,23 +400,81 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
 
   useEffect(() => {
     if (!isPhotoMenuOpen) return;
+    updatePhotoMenuPosition();
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (!photoMenuRef.current?.contains(event.target as Node)) {
+      if (!photoMenuRef.current?.contains(event.target as Node) && 
+          !photoButtonRef.current?.contains(event.target as Node)) {
         setIsPhotoMenuOpen(false);
       }
     };
 
     document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [isPhotoMenuOpen]);
+    window.addEventListener("resize", updatePhotoMenuPosition);
+    document.addEventListener("scroll", updatePhotoMenuPosition, true);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("resize", updatePhotoMenuPosition);
+      document.removeEventListener("scroll", updatePhotoMenuPosition, true);
+    };
+  }, [isPhotoMenuOpen, updatePhotoMenuPosition]);
+
+  useEffect(() => {
+    if (!isStickerMenuOpen) return;
+    updateStickerMenuPosition();
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!stickerMenuRef.current?.contains(event.target as Node) && 
+          !stickerButtonRef.current?.contains(event.target as Node)) {
+        setIsStickerMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("resize", updateStickerMenuPosition);
+    document.addEventListener("scroll", updateStickerMenuPosition, true);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("resize", updateStickerMenuPosition);
+      document.removeEventListener("scroll", updateStickerMenuPosition, true);
+    };
+  }, [isStickerMenuOpen, updateStickerMenuPosition]);
+
+  useEffect(() => {
+    if (!isArrowMenuOpen) return;
+    updateArrowMenuPosition();
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!arrowMenuRef.current?.contains(event.target as Node) && 
+          !arrowButtonRef.current?.contains(event.target as Node)) {
+        setIsArrowMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("resize", updateArrowMenuPosition);
+    document.addEventListener("scroll", updateArrowMenuPosition, true);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("resize", updateArrowMenuPosition);
+      document.removeEventListener("scroll", updateArrowMenuPosition, true);
+    };
+  }, [isArrowMenuOpen, updateArrowMenuPosition]);
 
   const openPhotoMenu = () => {
     if (photoMenuCloseTimerRef.current !== null) {
       window.clearTimeout(photoMenuCloseTimerRef.current);
       photoMenuCloseTimerRef.current = null;
     }
+    setTooltip(null);
+    updatePhotoMenuPosition();
     setIsPhotoMenuOpen(true);
+  };
+
+  const toggleStickerMenu = () => {
+    setTooltip(null);
+    updateStickerMenuPosition();
+    setIsStickerMenuOpen(!isStickerMenuOpen);
   };
 
   const schedulePhotoMenuClose = () => {
@@ -251,7 +506,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     gap: "6px",
     flexWrap: "nowrap",
     WebkitAppRegion: "no-drag",
-    padding: "8px 14px",
+    padding: "10px 14px",
     background: isDarkMode
       ? "linear-gradient(180deg, rgba(18, 21, 33, 0.96), rgba(12, 15, 24, 0.94))"
       : "linear-gradient(180deg, rgba(252, 253, 255, 0.98), rgba(244, 247, 250, 0.95))",
@@ -261,12 +516,8 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     position: "relative",
     zIndex: 120,
     overflow: "visible",
-    fontFamily: '"Segoe UI Variable Text", Aptos, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif',
-    height: "44px",
-    boxShadow: isDarkMode
-      ? "0 14px 34px rgba(2, 6, 23, 0.18)"
-      : "0 14px 30px rgba(15, 23, 42, 0.08)",
-    transition: `background 240ms ${premiumEase}, border-color 240ms ${premiumEase}, box-shadow 240ms ${premiumEase}`,
+    msOverflowStyle: "none",
+    scrollbarWidth: "none",
   };
 
   // Clean, simple button styling
@@ -276,37 +527,30 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     padding: "4px 8px",
     fontSize: "11.5px",
     fontWeight: "600",
-    border: isDarkMode ? "1px solid rgba(148, 163, 184, 0.16)" : "1px solid rgba(148, 163, 184, 0.24)",
+    border: isDarkMode ? "1px solid rgba(148, 163, 184, 0.12)" : "1px solid rgba(148, 163, 184, 0.2)",
     borderRadius: "8px",
+    backgroundColor: isDarkMode ? "rgba(15, 23, 42, 0.34)" : "rgba(255, 255, 255, 0.6)",
+    color: isDarkMode ? "#94a3b8" : "#64748b",
     cursor: "pointer",
-    background: isDarkMode
-      ? "linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.04))"
-      : "linear-gradient(180deg, #ffffff, #f8fafc)",
-    color: isDarkMode ? "rgba(241, 245, 249, 0.92)" : "#1f2937",
-    transition: `transform 180ms ${premiumEase}, background 180ms ${premiumEase}, border-color 180ms ${premiumEase}, box-shadow 180ms ${premiumEase}, color 180ms ${premiumEase}, filter 180ms ${premiumEase}`,
-    userSelect: "none",
-    height: "32px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: "5px",
-    minWidth: "30px",
+    height: "32px",
+    minWidth: "32px",
+    gap: "6px",
+    transition: `transform 180ms ${premiumEase}, background 180ms ${premiumEase}, border-color 180ms ${premiumEase}, box-shadow 180ms ${premiumEase}, color 180ms ${premiumEase}, filter 180ms ${premiumEase}`,
+    userSelect: "none",
     boxShadow: isDarkMode
-      ? "inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(2, 6, 23, 0.24)"
-      : "inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 1px 2px rgba(15, 23, 42, 0.06)",
+      ? "inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 1px 2px rgba(2, 6, 23, 0.18)"
+      : "inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 1px 2px rgba(15, 23, 42, 0.04)",
   };
 
-  // Active button styling - simple selected state
+  // Active button styling - premium selected state
   const buttonStyleActive: DraggableCSSProperties = {
     ...buttonStyle,
-    background: isDarkMode
-      ? "linear-gradient(180deg, rgba(59, 130, 246, 0.96), rgba(37, 99, 235, 0.88))"
-      : "linear-gradient(180deg, #1d7bf2, #0b69d1)",
-    border: isDarkMode ? "1px solid rgba(96, 165, 250, 0.7)" : "1px solid #0b69d1",
-    color: "#fff",
-    boxShadow: "0 10px 18px rgba(37, 99, 235, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.16)",
+    color: isDarkMode ? "#60a5fa" : "#0078d4",
+    filter: "brightness(1.1)",
   };
-
 
   // Simple input styling
   const inputStyle: DraggableCSSProperties = {
@@ -339,20 +583,21 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     gap: "6px",
     background: isPhotoMenuOpen
       ? (isDarkMode ? "rgba(59, 130, 246, 0.18)" : "rgba(0, 120, 212, 0.1)")
-      : buttonStyle.background,
+      : "transparent",
     border: isPhotoMenuOpen
       ? (isDarkMode ? "1px solid rgba(96, 165, 250, 0.55)" : "1px solid rgba(0, 120, 212, 0.4)")
-      : buttonStyle.border,
+      : "transparent",
     color: isPhotoMenuOpen
       ? (isDarkMode ? "#bfdbfe" : "#005a9e")
       : buttonStyle.color,
   };
 
   const photoMenuSurfaceStyle: React.CSSProperties = {
-    position: "absolute",
-    top: "calc(100% - 10px)",
-    left: 0,
-    minWidth: "190px",
+    position: "fixed",
+    top: photoMenuPosition?.top ?? 54,
+    left: photoMenuPosition?.left ?? VIEWPORT_MARGIN,
+    width: PHOTO_MENU_WIDTH,
+    maxWidth: `calc(100vw - ${VIEWPORT_MARGIN * 2}px)`,
     marginTop: "2px",
     padding: "8px",
     borderRadius: "14px",
@@ -365,6 +610,41 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
       : "0 18px 40px rgba(15, 23, 42, 0.14)",
     backdropFilter: "blur(22px)",
     zIndex: 2000,
+    overflow: "hidden",
+  };
+
+  const stickerMenuSurfaceStyle: React.CSSProperties = {
+    position: "fixed",
+    top: stickerMenuPosition?.top ?? 54,
+    left: stickerMenuPosition?.left ?? VIEWPORT_MARGIN,
+    width: STICKER_MENU_WIDTH,
+    maxWidth: `calc(100vw - ${VIEWPORT_MARGIN * 2}px)`,
+    marginTop: "2px",
+    padding: "10px",
+    borderRadius: "14px",
+    background: isDarkMode
+      ? "linear-gradient(180deg, rgba(15, 23, 42, 0.97), rgba(15, 23, 42, 0.92))"
+      : "linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(248, 250, 252, 0.98))",
+    border: isDarkMode ? "1px solid rgba(148, 163, 184, 0.18)" : "1px solid rgba(15, 23, 42, 0.08)",
+    boxShadow: isDarkMode
+      ? "0 22px 48px rgba(2, 6, 23, 0.42)"
+      : "0 18px 40px rgba(15, 23, 42, 0.14)",
+    backdropFilter: "blur(22px)",
+    zIndex: 2000,
+    display: "grid",
+    gridTemplateColumns: "repeat(5, 1fr)",
+    gap: "6px",
+  };
+
+  const stickerMenuItemStyle: DraggableCSSProperties = {
+    ...buttonStyle,
+    width: "34px",
+    height: "34px",
+    fontSize: "18px",
+    padding: "0",
+    border: "none",
+    background: "transparent",
+    borderRadius: "8px",
   };
 
   const photoMenuItemStyle: DraggableCSSProperties = {
@@ -380,10 +660,47 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     fontSize: "12px",
   };
 
+  const arrowMenuSurfaceStyle: React.CSSProperties = {
+    position: "fixed",
+    top: arrowMenuPosition?.top ?? 54,
+    left: arrowMenuPosition?.left ?? VIEWPORT_MARGIN,
+    width: 210, // More compact
+    maxWidth: `calc(100vw - ${VIEWPORT_MARGIN * 2}px)`,
+    marginTop: "2px",
+    padding: "6px", // More compact padding
+    borderRadius: "14px",
+    background: isDarkMode
+      ? "linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 0.94))"
+      : "linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(248, 250, 252, 0.98))",
+    border: isDarkMode ? "1px solid rgba(148, 163, 184, 0.18)" : "1px solid rgba(15, 23, 42, 0.08)",
+    boxShadow: isDarkMode
+      ? "0 22px 48px rgba(2, 6, 23, 0.42)"
+      : "0 18px 40px rgba(15, 23, 42, 0.14)",
+    backdropFilter: "blur(22px)",
+    zIndex: 2000,
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "6px",
+    overflow: "hidden",
+  };
+
+  const arrowMenuItemStyle: DraggableCSSProperties = {
+    ...photoMenuItemStyle,
+    fontSize: "12px",
+  };
+
+  const stepMenuItemStyle: DraggableCSSProperties = {
+    ...arrowMenuItemStyle,
+    height: "auto",
+    flexDirection: "column",
+    padding: "8px 4px",
+    gap: "6px",
+  };
+
   const isTextContext = selectedTool === "text" || hasSelectedTextAnnotation;
+  const isStickerContext = selectedTool === "sticker" || selectedTool === "symbol";
   const sliderLabelStyle: React.CSSProperties = {
     fontSize: "11px",
-    fontWeight: 600,
     color: isDarkMode ? "rgba(226, 232, 240, 0.82)" : "#475569",
     whiteSpace: "nowrap",
     minWidth: "32px",
@@ -396,36 +713,35 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
     minWidth: "42px",
   };
 
-
-
   return (
     <>
       {/* Classic CSS styles */}
       <style>
         {`
-          @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.8; }
+          @keyframes popIn {
+            from { transform: scale(0.96) translateY(-4px); opacity: 0; }
+            to { transform: scale(1) translateY(0); opacity: 1; }
+          }
+
+          .toolbar-pop-in {
+            animation: popIn 240ms ${premiumEase} forwards;
           }
 
           .toolbar-button {
             transition:
               transform 180ms ${premiumEase},
               box-shadow 180ms ${premiumEase},
-              filter 180ms ${premiumEase};
+              filter 180ms ${premiumEase},
+              opacity 180ms ${premiumEase};
           }
 
           .toolbar-button:hover {
-            transform: translateY(-1px);
-            filter: brightness(1.04) saturate(1.02);
+            filter: brightness(1.03) saturate(1.02);
             box-shadow: ${isDarkMode
-              ? '0 10px 24px rgba(2, 6, 23, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.06)'
+              ? '0 10px 24px rgba(2, 6, 23, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.04)'
               : '0 10px 20px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.85)'};
-          }
-
           .toolbar-button:active {
-            transform: translateY(1px) scale(0.985);
-            filter: brightness(0.98);
+            opacity: 0.8;
           }
 
           .toolbar-input {
@@ -448,29 +764,52 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
               ? '0 0 0 3px rgba(96, 165, 250, 0.16)'
               : '0 0 0 3px rgba(96, 165, 250, 0.12)'};
           }
+        .toolbar-main-container::-webkit-scrollbar,
+        .toolbar-scroll-area::-webkit-scrollbar {
+          display: none;
+        }
+        .toolbar-main-container,
+        .toolbar-scroll-area {
+          scrollbar-width: none;
+        }
         `}
       </style>
 
-      <div style={toolbarStyle}>
+    <div className="toolbar-main-container" style={toolbarStyle}>
+      <div
+          className="toolbar-scroll-area"
+          style={{
+            display: "flex",
+            flex: 1,
+            overflowX: "hidden",
+            overflowY: "visible",
+            alignItems: "center",
+            gap: "6px",
+            minWidth: 0,
+            msOverflowStyle: "none",
+            scrollbarWidth: "none",
+          }}
+        >
         {/* --- Capture Group --- */}
-        <div style={{ display: "flex", gap: "1px", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "1px", alignItems: "center", flexShrink: 0 }}>
           <div
             ref={photoMenuRef}
+            data-photo-menu
             style={{
               position: "relative",
               zIndex: 150,
-              paddingBottom: isPhotoMenuOpen ? "10px" : 0,
-              marginBottom: isPhotoMenuOpen ? "-10px" : 0,
             }}
             onMouseEnter={openPhotoMenu}
             onMouseLeave={schedulePhotoMenuClose}
           >
             <button
+              ref={photoButtonRef}
               className="toolbar-button"
               style={photoMenuButtonStyle}
-              onClick={() => setIsPhotoMenuOpen((open) => !open)}
-              onFocus={openPhotoMenu}
-              title="Capture, import, or record"
+              onClick={openPhotoMenu}
+              onFocus={updatePhotoMenuPosition}
+              aria-expanded={isPhotoMenuOpen}
+              data-tooltip="Capture, import, or record"
             >
               <Camera {...sharedIconProps} />
               <span>Photo</span>
@@ -482,30 +821,35 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             </button>
 
             {isPhotoMenuOpen && (
-              <div style={photoMenuSurfaceStyle}>
-                <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onFullscreenCapture)} title="Capture Fullscreen">
+              <div
+                className="toolbar-pop-in"
+                style={photoMenuSurfaceStyle}
+                onMouseEnter={openPhotoMenu}
+                onMouseLeave={schedulePhotoMenuClose}
+              >
+                <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onFullscreenCapture)} data-tooltip="Capture Fullscreen">
                   <Camera {...sharedIconProps} />
                   <span>Fullscreen</span>
                 </button>
-                <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onRegionCapture)} title="Capture Region">
+                <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onRegionCapture)} data-tooltip="Capture Region">
                   <Crop {...sharedIconProps} />
                   <span>Region</span>
                 </button>
-                <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onWindowCapture)} title="Capture Window">
+                <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onWindowCapture)} data-tooltip="Capture Window">
                   <PanelsTopLeft {...sharedIconProps} />
                   <span>Window</span>
                 </button>
-                <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onImport)} title="Open Image">
+                <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onImport)} data-tooltip="Open Image">
                   <ImagePlus {...sharedIconProps} />
                   <span>Open Image</span>
                 </button>
                 {!isRecording ? (
-                  <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onStartRecording)} title="Start Screen Recording">
+                  <button className="toolbar-button" style={photoMenuItemStyle} onClick={() => runPhotoAction(onStartRecording)} data-tooltip="Start Screen Recording">
                     <Video {...sharedIconProps} />
                     <span>Start Recording</span>
                   </button>
                 ) : (
-                  <button className="toolbar-button" style={{ ...photoMenuItemStyle, color: "#f87171" }} onClick={() => runPhotoAction(onStopRecording)} title="Stop Recording">
+                  <button className="toolbar-button" style={{ ...photoMenuItemStyle, color: "#f87171" }} onClick={() => runPhotoAction(onStopRecording)} data-tooltip="Stop Recording">
                     <StopCircle {...sharedIconProps} />
                     <span>Stop Recording</span>
                   </button>
@@ -523,24 +867,144 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             gap: "1px",
             alignItems: "center",
             flexWrap: "nowrap",
+            flexShrink: 0,
           }}
         >
-          {drawingTools.map(({ id, Icon, label }) => (
-            <button
-              key={id}
-              className="toolbar-button"
-              style={selectedTool === id ? buttonStyleActive : buttonStyle}
-              onClick={() => onToolSelect(id)}
-              title={label}
-            >
-              <Icon {...sharedIconProps} />
-            </button>
-          ))}
+          {drawingTools.map(({ id, Icon, label }) => {
+            if (id === "sticker") {
+              return (
+                <div key={id} ref={stickerMenuRef} style={{ position: "relative" }}>
+                  <button
+                    ref={stickerButtonRef}
+                    className="toolbar-button"
+                    style={selectedTool === id || isStickerMenuOpen ? buttonStyleActive : buttonStyle}
+                    onClick={() => { 
+                      if (selectedTool === id) {
+                        toggleStickerMenu();
+                      } else {
+                        onToolSelect(id);
+                        if (!isStickerMenuOpen) toggleStickerMenu();
+                      }
+                    }}
+                    data-tooltip={label}
+                  >
+                    <Icon {...sharedIconProps} />
+                    <ChevronDown size={12} style={{ opacity: 0.5, marginLeft: "-2px", transform: isStickerMenuOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
+                  </button>
+                  {isStickerMenuOpen && (
+                    <div className="toolbar-pop-in" style={stickerMenuSurfaceStyle}>
+                      {AVAILABLE_STICKERS.map((sym, index) => (
+                        <button
+                          key={`${sym}-${index}`}
+                          className="toolbar-button"
+                          style={{
+                            ...stickerMenuItemStyle,
+                            background: selectedSymbolText === sym 
+                              ? (isDarkMode ? "rgba(59, 130, 246, 0.2)" : "rgba(37, 99, 235, 0.1)")
+                              : "transparent",
+                            color: selectedSymbolText === sym 
+                              ? (isDarkMode ? "#60a5fa" : "#0078d4")
+                              : (isDarkMode ? "#cbd5e1" : "#475569"),
+                          }}
+                          onClick={() => { onSymbolTextChange(sym); setIsStickerMenuOpen(false); }}
+                        >
+                          {sym}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (id === "arrow") {
+              return (
+                <div key={id} ref={arrowMenuRef} style={{ position: "relative" }}>
+                  <button
+                    ref={arrowButtonRef}
+                    className="toolbar-button"
+                    style={selectedTool === id || isArrowMenuOpen ? buttonStyleActive : buttonStyle}
+                    onClick={() => { 
+                      if (selectedTool === id) {
+                        setIsArrowMenuOpen(!isArrowMenuOpen);
+                      } else {
+                        onToolSelect(id);
+                        setIsArrowMenuOpen(true);
+                      }
+                      updateArrowMenuPosition();
+                    }}
+                    data-tooltip={label}
+                  >
+                    <Icon {...sharedIconProps} />
+                    <ChevronDown size={12} style={{ opacity: 0.5, marginLeft: "-2px", transform: isArrowMenuOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s ease" }} />
+                  </button>
+                  {isArrowMenuOpen && (
+                    <div className="toolbar-pop-in" style={arrowMenuSurfaceStyle}>
+                      {ARROW_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.id}
+                          className="toolbar-button"
+                          style={{
+                            ...arrowMenuItemStyle,
+                            flexDirection: "column",
+                            height: "auto",
+                            padding: "6px 4px",
+                            background: selectedArrowType === opt.id 
+                              ? (isDarkMode ? "rgba(56, 189, 248, 0.12)" : "rgba(37, 99, 235, 0.08)")
+                              : "transparent",
+                            borderColor: selectedArrowType === opt.id 
+                              ? (isDarkMode ? "rgba(56, 189, 248, 0.35)" : "rgba(37, 99, 235, 0.25)")
+                              : "transparent",
+                            borderWidth: "1px",
+                            borderStyle: "solid",
+                            color: selectedArrowType === opt.id 
+                              ? (isDarkMode ? "#7dd3fc" : "#0078d4")
+                              : (isDarkMode ? "#94a3b8" : "#475569"),
+                            gap: "4px",
+                          }}
+                          onClick={() => { onArrowTypeChange(opt.id); setIsArrowMenuOpen(false); }}
+                          data-tooltip={opt.label}
+                        >
+                          <ArrowPreview 
+                            type={opt.id} 
+                            color={selectedArrowType === opt.id ? (isDarkMode ? "#7dd3fc" : "#0078d4") : (isDarkMode ? "#94a3b8" : "#64748b")} 
+                            isDarkMode={!!isDarkMode} 
+                          />
+                          <span style={{ fontSize: "9px", fontWeight: selectedArrowType === opt.id ? "700" : "500", marginTop: "-2px" }}>{opt.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            return (
+              <button
+                key={id}
+                className="toolbar-button"
+                style={selectedTool === id ? buttonStyleActive : buttonStyle}
+                onClick={() => onToolSelect(id)}
+                data-tooltip={label}
+              >
+                <Icon {...sharedIconProps} />
+              </button>
+            );
+          })}
+
+
+
+
+
+
+
+
+
+
           <button
             className="toolbar-button"
             style={selectedTool === "crop" ? buttonStyleActive : buttonStyle}
             onClick={() => onToolSelect("crop")}
-            title="Crop Image"
+            data-tooltip="Crop Image"
           >
             <Crop {...sharedIconProps} />
           </button>
@@ -548,7 +1012,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             className="toolbar-button"
             style={buttonStyle}
             onClick={onAddImageOverlay}
-            title="Add Picture Overlay"
+            data-tooltip="Add Picture Overlay"
           >
             <ImagePlus {...sharedIconProps} />
           </button>
@@ -560,8 +1024,8 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
         {/* Unified Tool Options - Clean and Simple */}
         {(selectedTool === "pen" || selectedTool === "line" || selectedTool === "arrow" || selectedTool === "rectangle" ||
           selectedTool === "ellipse" || selectedTool === "highlighter" || isTextContext ||
-          selectedTool === "step" || selectedTool === "symbol") && (
-            <div style={{ display: "flex", gap: "2px", alignItems: "center" }}>
+          selectedTool === "step" || isStickerContext) && (
+            <div style={{ display: "flex", gap: "2px", alignItems: "center", flexShrink: 0 }}>
               <input
                 className="toolbar-input"
                 type="color"
@@ -569,16 +1033,16 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
                 value={
                   selectedTool === "highlighter" ? highlighterColor :
                     isTextContext ? textColor :
-                      (selectedTool === "step" || selectedTool === "symbol") ? stepColor :
+                      (selectedTool === "step" || isStickerContext) ? stepColor :
                         penColor
                 }
                 onChange={(e) => {
                   if (selectedTool === "highlighter") onHighlighterColorChange(e.target.value);
                   else if (isTextContext) onTextColorChange(e.target.value);
-                  else if (selectedTool === "step" || selectedTool === "symbol") onStepColorChange(e.target.value);
+                  else if (selectedTool === "step" || isStickerContext) onStepColorChange(e.target.value);
                   else onPenColorChange(e.target.value);
                 }}
-                title="Color"
+                data-tooltip="Color"
               />
               {isTextContext ? (
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", marginLeft: "6px" }}>
@@ -586,127 +1050,51 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
                   <input
                     type="range"
                     min={12}
-                    max={72}
+                    max={160}
                     step={1}
                     value={Math.round(textFontSize)}
                     onMouseDown={onBeginTextAdjustment}
                     onTouchStart={onBeginTextAdjustment}
                     onChange={(e) => onTextFontSizeChange(Number(e.target.value))}
-                    title="Text size"
+                    data-tooltip="Text size"
                     style={{ width: "120px" }}
                   />
                   <span style={sliderValueStyle}>{Math.round(textFontSize)}px</span>
-                  <span style={sliderLabelStyle}>Box</span>
-                  <input
-                    type="range"
-                    min={120}
-                    max={Math.max(160, Math.round(textBoxWidthMax))}
-                    step={2}
-                    value={Math.round(Math.min(textBoxWidth, textBoxWidthMax))}
-                    onMouseDown={onBeginTextAdjustment}
-                    onTouchStart={onBeginTextAdjustment}
-                    onChange={(e) => onTextBoxWidthChange(Number(e.target.value))}
-                    title="Text box width"
-                    style={{ width: "140px" }}
-                  />
-                  <span style={sliderValueStyle}>{Math.round(textBoxWidth)}px</span>
+                  <label style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "11px", color: isDarkMode ? "#f8fafc" : "#0f172a", cursor: "pointer", marginLeft: "8px" }}>
+                    <input
+                      type="checkbox"
+                      checked={isPlainText}
+                      onChange={(e) => onTogglePlainText(e.target.checked)}
+                      style={{ cursor: "pointer", width: "14px", height: "14px", margin: 0 }}
+                    />
+                    Plain Text
+                  </label>
                 </div>
-              ) : (["s", "m", "l"] as PenSize[]).map((size) => (
+
+              ) : (["s", "m", "l", "xl"] as PenSize[]).map((size) => (
                 <button
                   key={size}
                   className="toolbar-button"
                   style={
                     ((selectedTool === "highlighter" ? selectedHighlighterSize :
-                      selectedTool === "step" ? selectedStepSize :
+                      (selectedTool === "step" || isStickerContext) ? selectedStepSize :
                         selectedPenSize) === size) ? buttonStyleActive : buttonStyle
                   }
                   onClick={() => {
                     if (selectedTool === "highlighter") onHighlighterSizeSelect(size);
-                    else if (selectedTool === "step" || selectedTool === "symbol") onStepSizeSelect(size);
+                    else if (selectedTool === "step" || isStickerContext) onStepSizeSelect(size);
                     else onPenSizeSelect(size);
                   }}
-                  title={size.toUpperCase()}
+                  data-tooltip={size.toUpperCase()}
                 >
                   {size.toUpperCase()}
                 </button>
               ))}
-              {selectedTool === "symbol" && (
-                <div style={{ display: "flex", gap: "2px", alignItems: "center", marginLeft: "6px" }}>
-                  <select
-                    style={{
-                      border: isDarkMode ? "1px solid rgba(255, 255, 255, 0.2)" : "1px solid #c0c0c0",
-                      borderRadius: "6px",
-                      background: isDarkMode ? "rgba(255, 255, 255, 0.05)" : "#f0f0f2",
-                      color: isDarkMode ? "#fff" : "#000",
-                      padding: "2px 4px",
-                      fontSize: "14px",
-                      outline: "none",
-                      cursor: "pointer",
-                      height: "26px"
-                    }}
-                    value={selectedSymbolText}
-                    onChange={(e) => onSymbolTextChange(e.target.value)}
-                    title="Select Symbol"
-                  >
-                    {SYMBOLS.map(sym => (
-                      <option key={sym} value={sym} style={{ background: isDarkMode ? "#1e1e28" : "#fff" }}>{sym}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+
               {selectedTool === "step" && (
                 <div style={{ display: "flex", gap: "2px", alignItems: "center", marginLeft: "6px" }}>
-                  <div style={{
-                    display: "flex",
-                    background: isDarkMode ? "rgba(255, 255, 255, 0.05)" : "#f0f0f2",
-                    borderRadius: "6px",
-                    padding: "2px",
-                    gap: "1px",
-                    border: isDarkMode ? "1px solid rgba(255, 255, 255, 0.1)" : "1px solid #dcdce0"
-                  }}>
-                    <button
-                      className="toolbar-button"
-                      style={!selectedStepSymbol ? buttonStyleActive : buttonStyle}
-                      onClick={() => onStepSymbolChange(undefined)}
-                      title="Number"
-                    >
-                      <Hash size={14} />
-                    </button>
-                    <button
-                      className="toolbar-button"
-                      style={selectedStepSymbol === "check" ? buttonStyleActive : buttonStyle}
-                      onClick={() => onStepSymbolChange("check")}
-                      title="Checkmark"
-                    >
-                      <Check size={14} />
-                    </button>
-                    <button
-                      className="toolbar-button"
-                      style={selectedStepSymbol === "x" ? buttonStyleActive : buttonStyle}
-                      onClick={() => onStepSymbolChange("x")}
-                      title="Cross"
-                    >
-                      <X size={14} />
-                    </button>
-                    <button
-                      className="toolbar-button"
-                      style={selectedStepSymbol === "plus" ? buttonStyleActive : buttonStyle}
-                      onClick={() => onStepSymbolChange("plus")}
-                      title="Plus"
-                    >
-                      <Plus size={14} />
-                    </button>
-                    <button
-                      className="toolbar-button"
-                      style={selectedStepSymbol === "none" ? buttonStyleActive : buttonStyle}
-                      onClick={() => onStepSymbolChange("none")}
-                      title="None (No Circle)"
-                    >
-                      <CircleSlash size={14} />
-                    </button>
-                  </div>
                   <span style={{ fontSize: "11px", fontWeight: "600", color: isDarkMode ? "#3b82f6" : "#0078d4", marginLeft: "4px" }}>
-                    #{nextStepNumber ?? 1}
+                    Next: #{nextStepNumber ?? 1}
                   </span>
                 </div>
               )}
@@ -720,7 +1108,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
               className="toolbar-button"
               style={selectedBlurMode === "spot" ? buttonStyleActive : buttonStyle}
               onClick={() => onBlurModeChange("spot")}
-              title="Brush"
+              data-tooltip="Brush"
             >
               <Paintbrush {...sharedIconProps} />
             </button>
@@ -728,7 +1116,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
               className="toolbar-button"
               style={selectedBlurMode === "focus" ? buttonStyleActive : buttonStyle}
               onClick={() => onBlurModeChange("focus")}
-              title="Focus"
+              data-tooltip="Focus"
             >
               <Focus {...sharedIconProps} />
             </button>
@@ -738,7 +1126,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
                 className="toolbar-button"
                 style={selectedPenSize === size ? buttonStyleActive : buttonStyle}
                 onClick={() => onPenSizeSelect(size)}
-                title={size.toUpperCase()}
+                data-tooltip={size.toUpperCase()}
               >
                 {size.toUpperCase()}
               </button>
@@ -762,7 +1150,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
               }}
               onClick={onApplyCrop}
               disabled={!hasCropSelection}
-              title="Apply Crop"
+              data-tooltip="Apply Crop"
             >
               Apply
             </button>
@@ -770,7 +1158,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
               className="toolbar-button"
               style={{ ...buttonStyle, minWidth: "auto", padding: "4px 10px" }}
               onClick={onCancelCrop}
-              title="Cancel Crop"
+              data-tooltip="Cancel Crop"
             >
               Cancel
             </button>
@@ -779,7 +1167,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
 
         {/* --- Actions Group --- */}
         <span style={separatorStyle}></span>
-        <div style={{ display: "flex", gap: "1px", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "1px", alignItems: "center", flexShrink: 0 }}>
           <button
             className="toolbar-button"
             style={{
@@ -789,7 +1177,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             }}
             onClick={onUndo}
             disabled={!canUndo}
-            title="Undo (Ctrl+Z)"
+            data-tooltip="Undo (Ctrl+Z)"
           >
             <Undo2 {...sharedIconProps} />
           </button>
@@ -802,7 +1190,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             }}
             onClick={onRedo}
             disabled={!canRedo}
-            title="Redo (Ctrl+Y)"
+            data-tooltip="Redo (Ctrl+Y)"
           >
             <Redo2 {...sharedIconProps} />
           </button>
@@ -810,10 +1198,11 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             className="toolbar-button"
             style={buttonStyle}
             onClick={onClear}
-            title="Clear All"
+            data-tooltip="Clear All"
           >
             <Trash2 {...sharedIconProps} />
           </button>
+          </div>
         </div>
 
         {/* --- Save/Close Group (Pushed to Right) --- */}
@@ -823,6 +1212,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             display: "flex",
             gap: "1px",
             alignItems: "center",
+            flexShrink: 0,
           }}
         >
           
@@ -830,7 +1220,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             className="toolbar-button"
             style={buttonStyle}
             onClick={onSave}
-            title="Save (Ctrl+S)"
+            data-tooltip="Save (Ctrl+S)"
           >
             <Save {...sharedIconProps} />
           </button>
@@ -839,7 +1229,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             className="toolbar-button"
             style={buttonStyle}
             onClick={onMinimize}
-            title="Minimize Editor"
+            data-tooltip="Minimize Editor"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path d="M3 7.5H11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
@@ -849,7 +1239,7 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
             className="toolbar-button"
             style={buttonStyle}
             onClick={onMaximize}
-            title="Maximize or Restore Editor"
+            data-tooltip="Maximize or Restore Editor"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <rect x="3" y="3" width="8" height="8" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
@@ -863,12 +1253,39 @@ const Toolbar: React.FC<ToolbarProps> = (props) => {
               color: "rgba(255, 100, 100, 0.9)",
             }}
             onClick={onClose}
-            title="Close Editor"
+            data-tooltip="Close Editor"
           >
             <X {...sharedIconProps} />
           </button>
         </div>
       </div>
+      {tooltip && (
+        <div style={{
+          position: "fixed",
+          left: tooltip.x,
+          top: tooltip.y,
+          width: tooltip.width,
+          maxWidth: TOOLTIP_MAX_WIDTH,
+          transform: tooltip.placement === "top" ? "translate(-50%, -100%)" : "translateX(-50%)",
+          background: "rgba(15, 23, 42, 0.95)",
+          color: "#f8fafc",
+          padding: "6px 10px",
+          borderRadius: "6px",
+          fontSize: "11.5px",
+          fontWeight: 500,
+          whiteSpace: "normal",
+          textAlign: "center",
+          overflowWrap: "break-word",
+          boxSizing: "border-box",
+          zIndex: 999999,
+          pointerEvents: "none",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.1)",
+          backdropFilter: "blur(8px)",
+          letterSpacing: "0.01em",
+        }}>
+          {tooltip.text}
+        </div>
+      )}
     </>
   );
 };

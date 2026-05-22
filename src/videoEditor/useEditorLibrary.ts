@@ -130,6 +130,7 @@ export function useEditorLibrary(state: any, showNotification: (type: string, ti
                     path: result.filePath,
                     name: result.fileName,
                     thumbnail: undefined as string | undefined, // Initial value
+                    duration: typeof result.duration === 'number' ? result.duration : undefined,
                     cursorData: Array.isArray(result.cursorData) ? result.cursorData : undefined,
                 };
                 

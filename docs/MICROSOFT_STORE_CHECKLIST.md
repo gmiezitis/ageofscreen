@@ -1,6 +1,7 @@
 # Microsoft Store Submission Checklist
 
 Use this with `docs/MICROSOFT_STORE_DEPLOYMENT_PLAN.md` for sequencing and go/no-go criteria.
+For a single working submission view, also use `docs/STORE_SUBMISSION_PACKET.md`.
 
 ## Package Setup
 

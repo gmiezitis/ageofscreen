@@ -11,4 +11,15 @@ require('ts-node').register({
     };
 });
 
-require('./coreHelpers.test.ts');
+[
+    './shared.test.ts',
+    './cursorStyling.test.ts',
+    './editorExport.test.ts',
+    './exportHelpers.test.ts',
+    './autoPolishPlan.test.ts',
+    './timelineScene.test.ts',
+    './timelineClips.test.ts',
+    './playgroundEngine.test.ts',
+].forEach((file) => {
+    require(file);
+});

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CameraShape, getCameraShapeStyle, normalizeCameraShape } from '../shared/cameraShapes';
+import { describeMediaError, getUserMediaWithFallback } from '../shared/mediaDeviceAccess';
 import { WebcamBorder } from './WebcamBorder';
 
 /**
@@ -55,7 +56,6 @@ const WebcamWindow: React.FC = () => {
     const [recordingProgress, setRecordingProgress] = useState(0);
     const [isHovered, setIsHovered] = useState(false);
     const [hasStream, setHasStream] = useState(false);
-    const [isWindowVisible, setIsWindowVisible] = useState(!document.hidden);
     const [volume, setVolume] = useState(0);
     const webcamStreamRef = useRef<MediaStream | null>(null);
     const streamRequestIdRef = useRef(0);
@@ -79,41 +79,40 @@ const WebcamWindow: React.FC = () => {
         video.onloadeddata = null;
     }, [stopStreamTracks]);
 
-    useEffect(() => {
-        const syncVisibility = () => {
-            setIsWindowVisible(!document.hidden);
-        };
-
-        document.addEventListener('visibilitychange', syncVisibility);
-        return () => {
-            document.removeEventListener('visibilitychange', syncVisibility);
-        };
-    }, []);
-
     // Initialize webcam stream with retry — camera may still be releasing from preview.
     useEffect(() => {
-        if (!isWindowVisible) {
-            stopWebcamStream();
-            return;
-        }
-
         let stream: MediaStream | null = null;
         let cancelled = false;
         const requestId = ++streamRequestIdRef.current;
 
         const tryGetMedia = async (attempt: number): Promise<MediaStream | null> => {
             try {
-                return await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        width: { ideal: 240 },
-                        height: { ideal: 240 },
-                        frameRate: { ideal: 20, max: 24 },
-                        facingMode: 'user'
-                    },
-                    audio: micEnabled
-                });
+                return await getUserMediaWithFallback(
+                    [
+                        {
+                            video: {
+                                width: { ideal: 240 },
+                                height: { ideal: 240 },
+                                frameRate: { ideal: 20, max: 24 },
+                                facingMode: 'user'
+                            },
+                            audio: micEnabled
+                        },
+                        {
+                            video: {
+                                width: { ideal: 240 },
+                                height: { ideal: 240 },
+                                frameRate: { ideal: 20, max: 24 },
+                            },
+                            audio: micEnabled
+                        },
+                        { video: true, audio: micEnabled },
+                    ],
+                    'Floating webcam',
+                    [0],
+                );
             } catch (err) {
-                console.warn(`[Webcam] Attempt ${attempt} failed:`, err);
+                console.warn(`[Webcam] Attempt ${attempt} failed:`, describeMediaError(err), err);
                 return null;
             }
         };
@@ -148,12 +147,12 @@ const WebcamWindow: React.FC = () => {
             }
             stopStreamTracks(stream);
         };
-    }, [isWindowVisible, micEnabled, stopStreamTracks, stopWebcamStream]);
+    }, [micEnabled, stopStreamTracks, stopWebcamStream]);
 
     // Audio Analysis for Smart Border
     useEffect(() => {
         const video = videoRef.current;
-        if (!video || !hasStream || !isWindowVisible) return;
+        if (!video || !hasStream) return;
 
         let audioContext: AudioContext | null = null;
         let analyser: AnalyserNode | null = null;
@@ -210,7 +209,7 @@ const WebcamWindow: React.FC = () => {
             if (animFrame) cancelAnimationFrame(animFrame);
             if (audioContext) audioContext.close();
         };
-    }, [hasStream, isWindowVisible]);
+    }, [hasStream]);
 
     // IPC listeners
     useEffect(() => {
@@ -226,14 +225,10 @@ const WebcamWindow: React.FC = () => {
             api.on('update-presenter-name', (n: string) => setPresenterName(n)),
             api.on('update-mic-status', (m: boolean) => setMicEnabled(m)),
             api.on('update-audio-meter-visibility', (enabled: boolean) => setAudioMeterEnabled(enabled)),
-            api.on('window-visibility', (visible: boolean) => setIsWindowVisible(visible)),
-            api.on('drawing-status', (isDrawing: boolean) => setIsDrawingMode(isDrawing)),
             api.on('stop-stream', () => stopWebcamStream()),
         ];
         return () => cleanups.forEach(c => c?.());
     }, [stopWebcamStream]);
-
-    const [isDrawingMode, setIsDrawingMode] = useState(false);
 
     const resizingRef = useRef(false);
 
@@ -279,7 +274,7 @@ const WebcamWindow: React.FC = () => {
                 position: 'relative',
                 opacity: hasStream ? 1 : 0,
                 transition: 'opacity 0.4s ease-out',
-                pointerEvents: isDrawingMode ? 'none' : 'auto'
+                pointerEvents: 'auto'
             }}
         >
             {/* Main Content Container (Locked to Window Size) */}
@@ -334,19 +329,20 @@ const WebcamWindow: React.FC = () => {
                             className="no-drag"
                             style={{
                                 position: 'absolute',
-                                bottom: '15%',
-                                left: '12%',
+                                bottom: 'clamp(5px, 5.5vw, 12px)',
+                                left: 'clamp(6px, 6vw, 14px)',
                                 background: isRecording ? 'rgba(239, 68, 68, 0.45)' : 'rgba(255, 255, 255, 0.08)',
                                 backdropFilter: 'blur(16px) saturate(180%)',
                                 WebkitBackdropFilter: 'blur(16px) saturate(180%)',
                                 border: '1px solid rgba(255, 255, 255, 0.12)',
-                                borderRadius: 'min(12px, 3vw)',
-                                padding: '0.6vw 1.8vw',
+                                borderRadius: 'clamp(6px, 3vw, 12px)',
+                                padding: 'clamp(3px, 1.1vw, 7px) clamp(7px, 2.4vw, 13px)',
                                 color: '#fff',
-                                fontSize: 'min(14px, max(9px, 4.5vw))',
+                                fontSize: 'clamp(8px, 4.2vw, 14px)',
                                 fontWeight: 600,
                                 letterSpacing: '0.01em',
-                                maxWidth: '75%',
+                                lineHeight: 1.15,
+                                maxWidth: 'min(78%, calc(100% - 16px))',
                                 whiteSpace: 'nowrap',
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',

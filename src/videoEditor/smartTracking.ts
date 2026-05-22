@@ -70,10 +70,10 @@ const MIN_FOCUS_GAP = 1.05;
 const MIN_ZOOM_DURATION = 0.5;
 const ZOOM_SEPARATION = 0.34;
 const MAX_ZOOM_EFFECTS = 8;
-const CLICK_RETRIGGER_HOLD = 1.8;
+const CLICK_RETRIGGER_HOLD = 2.4;
 const CLICK_RETRIGGER_GAP = 0.95;
 const TYPING_RETRIGGER_GAP = 0.5;
-const MAX_CLICK_CLUSTER_DURATION = 4.4;
+const MAX_CLICK_CLUSTER_DURATION = 5.4;
 const TYPING_CLICK_SUPPRESSION_MS = 1200;
 const CLICK_SUPPRESSES_TYPING_GAP = 0.6;
 
@@ -88,8 +88,8 @@ const SMART_TRACKING_PROFILES: Record<SmartTrackingProfile, SmartTrackingProfile
         typingZoomIntensity: DEFAULT_ZOOM_INTENSITY,
         clickZoomArea: { width: 28, height: 21 },
         typingZoomArea: { width: 34, height: 25 },
-        clickZoomDuration: 3.05,
-        clickLeadSeconds: 0.22,
+        clickZoomDuration: 4.05,
+        clickLeadSeconds: 0.34,
         clickRegionThreshold: 16,
         clickSceneShiftThreshold: 24,
         clickBurstGapSec: 1.2,
@@ -107,8 +107,8 @@ const SMART_TRACKING_PROFILES: Record<SmartTrackingProfile, SmartTrackingProfile
         typingZoomIntensity: DEFAULT_ZOOM_INTENSITY,
         clickZoomArea: { width: 32, height: 24 },
         typingZoomArea: { width: 38, height: 28 },
-        clickZoomDuration: 3.35,
-        clickLeadSeconds: 0.26,
+        clickZoomDuration: 4.45,
+        clickLeadSeconds: 0.38,
         clickRegionThreshold: 18,
         clickSceneShiftThreshold: 28,
         clickBurstGapSec: 1.4,
@@ -461,9 +461,25 @@ function buildClickZoom(intent: FocusIntent, index: number, durationLimit: numbe
     };
 }
 
-function buildTypingZooms(_intent: FocusIntent, _index: number, _durationLimit: number | null, _profile: SmartTrackingProfileConfig): ZoomCandidate[] {
-    // Typing-follow zooms are intentionally disabled; auto zoom now only uses click focus.
-    return [];
+function buildTypingZooms(intent: FocusIntent, index: number, durationLimit: number | null, profile: SmartTrackingProfileConfig): ZoomCandidate[] {
+    const startTime = durationLimit != null
+        ? clamp(intent.startTime, 0, Math.max(0, durationLimit - MIN_ZOOM_DURATION))
+        : Math.max(0, intent.startTime);
+    const maxDuration = durationLimit != null ? Math.max(MIN_ZOOM_DURATION, durationLimit - startTime) : intent.duration;
+    const duration = Math.min(intent.duration, maxDuration);
+    if (duration < MIN_ZOOM_DURATION) return [];
+
+    return [{
+        id: `smart-track-dwell-${index}-${Math.round(startTime * 1000)}`,
+        type: 'zoom',
+        startTime,
+        duration,
+        label: 'SMART FOCUS',
+        intensity: profile.typingZoomIntensity,
+        tilt: 0,
+        zoomArea: createZoomArea(intent.centerX, intent.centerY, profile.typingZoomArea),
+        sourceKind: 'typing',
+    }];
 }
 
 function packZoomCandidates(candidates: ZoomCandidate[], durationLimit: number | null, profile: SmartTrackingProfileConfig): ZoomCandidate[] {
@@ -583,7 +599,7 @@ export function buildSmartTrackingEffects(
     const effects: SmartEffect[] = packedZooms.map(({ sourceKind: _sourceKind, ...effect }) => effect);
 
     for (const zoom of packedZooms) {
-        if (zoom.sourceKind !== 'click') continue;
+        if (zoom.sourceKind !== 'click' && zoom.sourceKind !== 'typing') continue;
         effects.push({
             id: `${zoom.id}-exposure`,
             type: 'exposure',

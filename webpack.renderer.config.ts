@@ -29,7 +29,7 @@ rules.push({
 
 // Rule for assets (images, sounds, etc.)
 rules.push({
-    test: /\.(mp3|wav|png|jpg|gif|svg)$/i,
+    test: /\.(mp3|wav|png|jpg|gif|svg|obj|mtl)$/i,
     type: "asset/resource",
 });
 

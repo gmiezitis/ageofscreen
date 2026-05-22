@@ -29,6 +29,7 @@ const DrawingOverlay: React.FC = () => {
     const currentStrokeRef = useRef<{ x: number; y: number }[]>([]);
     const strokeIdRef = useRef(0);
     const animationFrameRef = useRef<number | null>(null);
+    const idleRenderTimeoutRef = useRef<number | null>(null);
 
     // Configuration - strokes fade after 2 seconds for a better professional feel
     const STROKE_LIFETIME = 2000;
@@ -190,12 +191,20 @@ const DrawingOverlay: React.FC = () => {
                 });
             }
 
-            animationFrameRef.current = requestAnimationFrame(render);
+            if (isDrawingRef.current || strokesRef.current.length > 0) {
+                animationFrameRef.current = requestAnimationFrame(render);
+            } else {
+                idleRenderTimeoutRef.current = window.setTimeout(() => {
+                    idleRenderTimeoutRef.current = null;
+                    animationFrameRef.current = requestAnimationFrame(render);
+                }, 80);
+            }
         };
 
         animationFrameRef.current = requestAnimationFrame(render);
         return () => {
             if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+            if (idleRenderTimeoutRef.current) window.clearTimeout(idleRenderTimeoutRef.current);
         };
     }, [strokeColor, getGlowColor]);
 
@@ -228,10 +237,13 @@ const DrawingOverlay: React.FC = () => {
     }, [handleMouseUp]);
 
     const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
-        if (window.drawingAPI) {
-            window.drawingAPI.send('forward-scroll', { deltaX: e.deltaX, deltaY: e.deltaY });
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (isDrawingRef.current) {
+            handleMouseUp();
         }
-    }, []);
+    }, [handleMouseUp]);
 
     return (
         <div

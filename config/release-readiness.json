@@ -1,0 +1,49 @@
+{
+  "manualBlockerGroups": [
+    {
+      "heading": "Validation",
+      "items": [
+        {
+          "id": "real-hardware-validation",
+          "label": "Manual real-hardware validation for fullscreen and window recording is still required.",
+          "done": false
+        },
+        {
+          "id": "private-beta-evidence",
+          "label": "Private beta / bug-bash evidence is still required before a broad market push.",
+          "done": false
+        }
+      ]
+    },
+    {
+      "heading": "Launch Ops",
+      "items": [
+        {
+          "id": "release-notes-checklist",
+          "label": "Release notes and a short launch checklist still need to be finalized.",
+          "done": true
+        },
+        {
+          "id": "go-no-go-owner",
+          "label": "Go/no-go ownership for the stabilization window still needs to be confirmed.",
+          "done": true
+        }
+      ]
+    },
+    {
+      "heading": "Store And Submission",
+      "items": [
+        {
+          "id": "store-material-review",
+          "label": "Store submission materials still need final review.",
+          "done": false
+        },
+        {
+          "id": "direct-download-notes",
+          "label": "Direct-download release packaging notes still need final review.",
+          "done": true
+        }
+      ]
+    }
+  ]
+}

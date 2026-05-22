@@ -102,8 +102,8 @@ export const normalizeArea = (area: { x: number; y: number; width: number; heigh
 
 /* ─── Zoom math (used by both preview CSS + FFmpeg filter) ─── */
 
-export const ZOOM_EASE_IN = 0.42;
-export const ZOOM_EASE_OUT = 0.82;
+export const ZOOM_EASE_IN = 0.52;
+export const ZOOM_EASE_OUT = 0.68;
 export const ZOOM_MAX = 2;
 export const TILT_RANGE = 18; // max % shift at full tilt
 export const PREVIEW_ZOOM_CENTER_STRENGTH = 0.88;

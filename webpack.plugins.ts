@@ -9,7 +9,8 @@ const quietCheckerLogger = {
     },
 };
 
-const shouldEnableTypeChecker = process.env.NODE_ENV !== "production";
+const shouldEnableTypeChecker = process.env.NODE_ENV !== "production"
+    && process.env.AGEOFSCREEN_RELEASE_PROFILE !== "store";
 
 export const plugins = shouldEnableTypeChecker
     ? [

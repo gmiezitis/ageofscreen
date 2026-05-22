@@ -13,6 +13,7 @@ import type {
   ImageAnnotation,
   Tool,
   PenSize,
+  ArrowType,
 } from '../types';
 
 /**
@@ -63,6 +64,7 @@ export interface AnnotationActions {
   // Batch operations
   updateLastAnnotation: (updates: Partial<AnnotationObject>) => void;
   addPointToLastAnnotation: (point: { x: number; y: number }) => void;
+  addPointsToLastAnnotation: (points: { x: number; y: number }[]) => void;
 
   // Utility
   findAnnotationById: (id: string) => AnnotationObject | undefined;
@@ -85,6 +87,7 @@ export interface CreateAnnotationParams {
   stepCounter?: number;
   blurMode?: 'spot' | 'focus';
   brushSize?: number;
+  arrowType?: ArrowType;
 }
 
 /**
@@ -379,7 +382,9 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
     });
   }, []);
 
-  const addPointToLastAnnotation = useCallback((point: { x: number; y: number }) => {
+  const addPointsToLastAnnotation = useCallback((points: { x: number; y: number }[]) => {
+    if (points.length === 0) return;
+
     setAnnotations(prev => {
       if (prev.length === 0) return prev;
       const updated = [...prev];
@@ -390,13 +395,20 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
         (lastAnnotation.type === 'blur' && 'points' in lastAnnotation)) {
         const pointsAnnotation = lastAnnotation as PenAnnotation | HighlighterAnnotation | BlurAnnotation;
         if (pointsAnnotation.points) {
-          pointsAnnotation.points.push(point);
+          updated[updated.length - 1] = {
+            ...pointsAnnotation,
+            points: [...pointsAnnotation.points, ...points],
+          } as AnnotationObject;
         }
       }
 
       return updated;
     });
   }, []);
+
+  const addPointToLastAnnotation = useCallback((point: { x: number; y: number }) => {
+    addPointsToLastAnnotation([point]);
+  }, [addPointsToLastAnnotation]);
 
   // Utility functions
   const findAnnotationById = useCallback((id: string): AnnotationObject | undefined => {
@@ -451,6 +463,7 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
       color: params.color || '#FF0000',
       width: params.width || 5,
       size: params.penSize || 'm',
+      arrowType: params.arrowType || 'sharp',
     };
   }, []);
 
@@ -613,6 +626,7 @@ export function useAnnotationManager(): [AnnotationState, AnnotationActions] {
     isDraggingAnnotation: isDraggingAnnotationFn,
     updateLastAnnotation,
     addPointToLastAnnotation,
+    addPointsToLastAnnotation,
     findAnnotationById,
     getLastAnnotation,
     // Add the factory function to actions

@@ -18,6 +18,7 @@ export interface ReleaseProfile {
         autoZoomAdvanced: boolean;
         proFeatures: boolean;
         agentSurfaces: boolean;
+        screenPlayground: boolean;
     };
 }
 
@@ -57,8 +58,8 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                 allowBundledFfmpegOnly: true,
                 allowAgentSurfaces: true,
                 defaultFeatures: {
-                    teleprompter: false,
-                    drawing: false,
+                    teleprompter: true,
+                    drawing: true,
                     focusWidget: false,
                     focusTimerBuiltinSounds: false,
                     smartTargetingOcr: false,
@@ -66,6 +67,7 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     autoZoomAdvanced: false,
                     proFeatures: false,
                     agentSurfaces: true,
+                    screenPlayground: false,
                 },
             };
         case "direct-download":
@@ -78,8 +80,8 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                 allowBundledFfmpegOnly: true,
                 allowAgentSurfaces: false,
                 defaultFeatures: {
-                    teleprompter: false,
-                    drawing: false,
+                    teleprompter: true,
+                    drawing: true,
                     focusWidget: false,
                     focusTimerBuiltinSounds: false,
                     smartTargetingOcr: false,
@@ -87,6 +89,7 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     autoZoomAdvanced: false,
                     proFeatures: false,
                     agentSurfaces: true,
+                    screenPlayground: true,
                 },
             };
         case "dev":
@@ -109,6 +112,7 @@ export const buildReleaseProfile = (name: ReleaseProfileName): ReleaseProfile =>
                     autoZoomAdvanced: false,
                     proFeatures: false,
                     agentSurfaces: true,
+                    screenPlayground: true,
                 },
             };
     }

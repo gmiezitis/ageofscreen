@@ -1,0 +1,36 @@
+import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
+
+export type ScreenPlaygroundInitPayload = {
+    screenshotDataUrl: string;
+    sources: ScreenPlaygroundSource[];
+    display: {
+        width: number;
+        height: number;
+        scaleFactor: number;
+    };
+};
+
+export type ScreenPlaygroundSource = {
+    id: string;
+    name: string;
+    kind: "screen" | "window";
+    dataUrl: string;
+};
+
+export interface ScreenPlaygroundAPI {
+    onInit: (callback: (payload: ScreenPlaygroundInitPayload) => void) => () => void;
+    saveSnapshot: (dataUrl: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
+    close: () => void;
+}
+
+const api: ScreenPlaygroundAPI = {
+    onInit: (callback) => {
+        const listener = (_event: IpcRendererEvent, payload: ScreenPlaygroundInitPayload) => callback(payload);
+        ipcRenderer.on("screen-playground:init", listener);
+        return () => ipcRenderer.removeListener("screen-playground:init", listener);
+    },
+    saveSnapshot: (dataUrl) => ipcRenderer.invoke("screen-playground:save-snapshot", dataUrl),
+    close: () => ipcRenderer.send("screen-playground:close"),
+};
+
+contextBridge.exposeInMainWorld("screenPlaygroundAPI", api);

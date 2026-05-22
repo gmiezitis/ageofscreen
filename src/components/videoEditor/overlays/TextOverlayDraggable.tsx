@@ -10,6 +10,7 @@ interface Props {
     onMove: (x: number, y: number) => void;
     onMoveEnd?: () => void;
     visualFilter?: string;
+    maxWidth?: number;
 }
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
@@ -25,7 +26,6 @@ const hexToRgba = (color: string, alpha: number): string => {
     const b = Number.parseInt(hex.slice(4, 6), 16);
     return `rgba(${r}, ${g}, ${b}, ${clamp01(alpha).toFixed(3)})`;
 };
-
 const TextOverlayDraggable: React.FC<Props> = ({
     tov,
     isSelected,
@@ -34,6 +34,7 @@ const TextOverlayDraggable: React.FC<Props> = ({
     onMove,
     onMoveEnd,
     visualFilter,
+    maxWidth,
 }) => {
     const onMoveRef = useRef(onMove);
     const onSelectRef = useRef(onSelect);
@@ -55,7 +56,7 @@ const TextOverlayDraggable: React.FC<Props> = ({
         && (shadowOffsetX !== 0 || shadowOffsetY !== 0),
     );
     const sprite = useMemo(
-        () => renderTextOverlaySprite(tov),
+        () => renderTextOverlaySprite(tov, maxWidth),
         [
             tov.backgroundColor,
             tov.backgroundOpacity,
@@ -71,6 +72,7 @@ const TextOverlayDraggable: React.FC<Props> = ({
             tov.shadowOffsetX,
             tov.shadowOffsetY,
             tov.text,
+            maxWidth,
         ],
     );
 

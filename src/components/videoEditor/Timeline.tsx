@@ -115,7 +115,7 @@ interface TimelineProps {
     mediaLoaded: boolean;
     handleImportMedia: (type: 'video' | 'audio') => void;
     mediaPath: string | null;
-    mediaLibrary: Array<{ id: string; type: 'video' | 'image' | 'audio'; path: string; name: string; thumbnail?: string }>;
+    mediaLibrary: Array<{ id: string; type: 'video' | 'image' | 'audio'; path: string; name: string; thumbnail?: string; duration?: number }>;
     draggingEffectId?: string | null;
     timelineRef: React.RefObject<HTMLDivElement>;
     onSmartFocus?: () => void;

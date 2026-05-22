@@ -6,7 +6,6 @@ contextBridge.exposeInMainWorld('drawingAPI', {
     send: (channel: string, ...args: any[]) => {
         const validChannels = [
             'toggle-drawing-overlay',
-            'forward-scroll',
             'drawing-stroke-update', // New channel for stroke data
         ];
         if (validChannels.includes(channel)) {

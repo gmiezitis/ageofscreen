@@ -27,6 +27,87 @@ const NO_EFFECT_STYLE_SET: EffectStyleSet = {
 };
 
 /* ─── Props ─── */
+const VIDEO_CLIP_EXTENSION_RE = /\.(mp4|webm|mov|m4v|avi|mkv)$/i;
+const isVideoTimelineClip = (clip: ImageClip) => clip.mediaType === 'video' || VIDEO_CLIP_EXTENSION_RE.test(clip.file);
+
+const TimelineMediaClipLayer: React.FC<{
+    clip: ImageClip;
+    opacity: number;
+    layerKey: string;
+    selectable: boolean;
+    isSelected: boolean;
+    isPlaying: boolean;
+    displayTime: number;
+    imageClipStageStyle: React.CSSProperties;
+    onSelect: (id: string) => void;
+}> = ({ clip, opacity, layerKey, selectable, isSelected, isPlaying, displayTime, imageClipStageStyle, onSelect }) => {
+    const videoClipRef = useRef<HTMLVideoElement | null>(null);
+    const isVideoClip = isVideoTimelineClip(clip);
+
+    React.useEffect(() => {
+        if (!isVideoClip) return;
+        const video = videoClipRef.current;
+        if (!video) return;
+
+        const clipTime = Math.max(0, Math.min(clip.duration, displayTime - clip.startTime));
+        if (Number.isFinite(clipTime) && Math.abs(video.currentTime - clipTime) > 0.08) {
+            try {
+                video.currentTime = clipTime;
+            } catch {}
+        }
+
+        if (isPlaying && opacity > 0.001) {
+            void video.play().catch(() => {});
+        } else {
+            video.pause();
+        }
+    }, [clip.duration, clip.file, clip.startTime, displayTime, isPlaying, isVideoClip, opacity]);
+
+    if (opacity <= 0.001) {
+        return null;
+    }
+
+    return (
+        <div
+            key={layerKey}
+            onClick={selectable ? (e) => { e.stopPropagation(); onSelect(clip.id); } : undefined}
+            style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                ...imageClipStageStyle,
+                border: selectable && isSelected ? '2px solid var(--accent)' : 'none',
+                zIndex: 6,
+                overflow: 'hidden',
+                opacity,
+                willChange: 'opacity',
+                pointerEvents: selectable && !isPlaying && isSelected ? 'auto' : 'none',
+            }}
+        >
+            {isVideoClip ? (
+                <video
+                    ref={videoClipRef}
+                    src={toMediaFileUrl(clip.file)}
+                    muted
+                    playsInline
+                    preload="auto"
+                    controls={false}
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
+                />
+            ) : (
+                <img
+                    src={toMediaFileUrl(clip.file)}
+                    alt=""
+                    draggable={false}
+                    style={{ width: '100%', height: '100%', objectFit: 'scale-down', pointerEvents: 'none' }}
+                />
+            )}
+        </div>
+    );
+};
+
 interface PreviewStageProps {
     mediaType: 'video' | 'image' | 'audio' | null;
     mediaPath: string | null;
@@ -250,40 +331,20 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
         opacity: number,
         key: string,
         selectable: boolean,
-    ) => {
-        if (opacity <= 0.001) {
-            return null;
-        }
-
-        const isSelected = selectedImageClipId === clip.id;
-        return (
-            <div
-                key={key}
-                onClick={selectable ? (e) => { e.stopPropagation(); setSelectedImageClipId(clip.id); } : undefined}
-                style={{
-                    position: 'absolute',
-                    inset: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    ...imageClipStageStyle,
-                    border: selectable && isSelected ? '2px solid var(--accent)' : 'none',
-                    zIndex: 6,
-                    overflow: 'hidden',
-                    opacity,
-                    willChange: 'opacity',
-                    pointerEvents: selectable && !isPlaying && isSelected ? 'auto' : 'none',
-                }}
-            >
-                <img
-                    src={toMediaFileUrl(clip.file)}
-                    alt=""
-                    draggable={false}
-                    style={{ width: '100%', height: '100%', objectFit: 'scale-down', pointerEvents: 'none' }}
-                />
-            </div>
-        );
-    };
+    ) => (
+        <TimelineMediaClipLayer
+            key={key}
+            clip={clip}
+            opacity={opacity}
+            layerKey={key}
+            selectable={selectable}
+            isSelected={selectedImageClipId === clip.id}
+            isPlaying={isPlaying}
+            displayTime={displayTime}
+            imageClipStageStyle={imageClipStageStyle}
+            onSelect={setSelectedImageClipId}
+        />
+    );
 
     if (!mediaPath) return null;
 

@@ -32,6 +32,12 @@ Highlights:
 5. Style/background picker
 6. Export success state
 
+## What's new in this version
+
+- App now starts automatically with Windows so the top trigger line is ready after restart.
+- Stopping a recording now opens the editor more reliably.
+- Recording controls restore the script/subtitles, drawing, webcam, and edit-after-stop options.
+
 ## Submission notes
 
 - first release is private flight only
