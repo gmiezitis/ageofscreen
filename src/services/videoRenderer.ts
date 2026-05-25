@@ -191,6 +191,20 @@ const resolveBrandingResourcePath = (fileName: string): string | null => {
 
     return null;
 };
+
+const TRANSPARENT_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+const PACKAGED_WEBPACK_ASSET_RE = /[\\/](resources[\\/]app[\\/])?\.webpack[\\/]/i;
+
+const isPackagedWebpackAssetPath = (filePath: string): boolean => (
+    PACKAGED_WEBPACK_ASSET_RE.test(filePath)
+);
+
+const writeTransparentFallbackOverlay = (index: number): string => {
+    const tempPath = path.join(getageofscreenTempDir(), `ageofscreen-missing-overlay-${Date.now()}-${index}.png`);
+    fs.writeFileSync(tempPath, Buffer.from(TRANSPARENT_PNG_BASE64, 'base64'));
+    return tempPath;
+};
+
 const ensureReadableMediaInputPath = (source: string, label: string): string => {
     const resolvedPath = fromMediaFileUrl(source);
     if (!path.isAbsolute(resolvedPath)) {
@@ -599,7 +613,18 @@ export class VideoRenderer {
                 tempOverlayFiles.push(tempPath);
                 return tempPath;
             }
-            return ensureReadableMediaInputPath(file, 'Overlay input');
+            try {
+                return ensureReadableMediaInputPath(file, 'Overlay input');
+            } catch (error) {
+                const resolvedPath = fromMediaFileUrl(file);
+                if (isPackagedWebpackAssetPath(resolvedPath)) {
+                    const fallbackPath = writeTransparentFallbackOverlay(index);
+                    tempOverlayFiles.push(fallbackPath);
+                    console.warn('[VideoRenderer] Missing packaged webpack overlay asset. Using transparent fallback for export:', resolvedPath);
+                    return fallbackPath;
+                }
+                throw error;
+            }
         };
         let nextInputIdx = 1;
         for (const a of audios) {
@@ -852,6 +877,44 @@ export class VideoRenderer {
         const contentEffects = effects.filter(e => !['3d_tilt', 'card_flip'].includes(e.type));
         const windowEffects = effects.filter(e => ['3d_tilt', 'card_flip'].includes(e.type));
         let effectIdx = 0;
+        const buildCursorTrackCoordinateExpr = (
+            cursorTrack: Array<{ time: number; x: number; y: number }>,
+            duration: number,
+            axis: 'x' | 'y',
+        ) => {
+            const validTrack = cursorTrack.filter((point) => (
+                Number.isFinite(point.time)
+                && Number.isFinite(point.x)
+                && Number.isFinite(point.y)
+            ));
+            if (validTrack.length === 0) return null;
+
+            const followExprBudget = getExpressionPointBudget(
+                duration,
+                MAX_FOLLOW_CURSOR_EXPR_POINTS,
+                FOLLOW_CURSOR_EXPR_POINTS_PER_SECOND,
+                FOLLOW_CURSOR_EXPR_MIN_POINTS,
+            );
+            const normalized = sampleTimedTrack(validTrack, followExprBudget).map((point) => {
+                const safeCoord = clamp01((axis === 'x' ? point.x : point.y) / 100);
+                return {
+                    time: point.time,
+                    coord: safeCoord,
+                };
+            });
+            if (normalized.length === 0) return null;
+
+            let expression = ff(normalized[normalized.length - 1].coord, 6);
+            for (let i = normalized.length - 2; i >= 0; i -= 1) {
+                const current = normalized[i];
+                const next = normalized[i + 1];
+                const delta = next.coord - current.coord;
+                const segmentDuration = Math.max(0.001, next.time - current.time);
+                const interpolated = `${ff(current.coord, 6)}+${ff(delta, 6)}*((t-${ff(current.time, 3)})/${ff(segmentDuration, 3)})`;
+                expression = `if(between(t\\,${ff(current.time, 3)}\\,${ff(next.time, 3)})\\,${interpolated}\\,${expression})`;
+            }
+            return expression;
+        };
 
         // 2. Apply Content Effects (Zoom, Blur, Breathing, Slow Zoom) - operates on raw/cropped video
         if (contentEffects.length > 0) {
@@ -887,35 +950,8 @@ export class VideoRenderer {
                     const baseZoom = computeBaseZoom(area);
                     const peakZoom = 1 + (baseZoom - 1) * mult;
                     const cursorTrack = Array.isArray((fx as any).cursorTrack) ? (fx as any).cursorTrack : [];
-                    const buildCursorExpr = (axis: 'x' | 'y') => {
-                        if (!fx.followCursor || cursorTrack.length === 0) return null;
-                        const followExprBudget = getExpressionPointBudget(
-                            fx.duration,
-                            MAX_FOLLOW_CURSOR_EXPR_POINTS,
-                            FOLLOW_CURSOR_EXPR_POINTS_PER_SECOND,
-                            FOLLOW_CURSOR_EXPR_MIN_POINTS,
-                        );
-                        const normalized = sampleTimedTrack(cursorTrack, followExprBudget).map((point: { time: number; x: number; y: number }) => {
-                            const safeCoord = clamp01((axis === 'x' ? point.x : point.y) / 100);
-                            return {
-                                time: point.time,
-                                coord: safeCoord,
-                            };
-                        });
-
-                        let expression = ff(normalized[normalized.length - 1].coord, 6);
-                        for (let i = normalized.length - 2; i >= 0; i -= 1) {
-                            const current = normalized[i];
-                            const next = normalized[i + 1];
-                            const delta = next.coord - current.coord;
-                            const segmentDuration = Math.max(0.001, next.time - current.time);
-                            const interpolated = `${ff(current.coord, 6)}+${ff(delta, 6)}*((t-${ff(current.time, 3)})/${ff(segmentDuration, 3)})`;
-                            expression = `if(between(t\\,${ff(current.time, 3)}\\,${ff(next.time, 3)})\\,${interpolated}\\,${expression})`;
-                        }
-                        return expression;
-                    };
-                    const dynamicFocusX = buildCursorExpr('x');
-                    const dynamicFocusY = buildCursorExpr('y');
+                    const dynamicFocusX = fx.followCursor ? buildCursorTrackCoordinateExpr(cursorTrack, fx.duration, 'x') : null;
+                    const dynamicFocusY = fx.followCursor ? buildCursorTrackCoordinateExpr(cursorTrack, fx.duration, 'y') : null;
                     const areaCenterX = (area.x + area.width / 2) / 100;
                     const areaCenterY = (area.y + area.height / 2) / 100;
                     const tiltNorm = Math.max(-100, Math.min(100, fx.tilt ?? 0)) / 100;

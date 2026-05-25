@@ -664,8 +664,8 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
                         <div
                             className="playhead-handle"
                             style={{
-                                position: 'absolute', top: -1, left: '50%', transform: 'translateX(-50%)',
-                                width: '15px', height: '15px',
+                                position: 'absolute', top: 6, left: '50%', transform: 'translateX(-50%)',
+                                width: '16px', height: '16px',
                                 background: 'rgba(255, 255, 255, 0.25)',
                                 backdropFilter: 'blur(8px)',
                                 border: '1px solid rgba(255, 255, 255, 0.5)',
@@ -702,6 +702,9 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
                 .playhead-handle:hover {
                     background: rgba(255, 255, 255, 0.4) !important;
                     transform: translateX(-50%) scale(1.1) !important;
+                }
+                .playhead::before {
+                    display: none !important;
                 }
             `}} />
         </div>

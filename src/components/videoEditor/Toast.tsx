@@ -61,7 +61,7 @@ export const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
                 <div style={{ color: 'var(--text-primary)', fontSize: '12px', fontWeight: 700, letterSpacing: '0.01em', marginBottom: 2 }}>
                     {notification.title}
                 </div>
-                <div style={{ color: 'var(--text-primary)', fontSize: '12.5px', fontWeight: 500, letterSpacing: '-0.01em', lineHeight: 1.4 }}>
+                <div style={{ color: 'var(--text-primary)', fontSize: '12.5px', fontWeight: 500, letterSpacing: 0, lineHeight: 1.4 }}>
                     {notification.message}
                 </div>
                 {notification.actionLabel && notification.onAction && (

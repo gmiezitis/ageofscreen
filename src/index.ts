@@ -22,7 +22,7 @@ import { buildSmartTrackingEffects, DEFAULT_SMART_TRACKING_PROFILE, remapSmartTr
 import { resolveBackgroundFFmpeg } from "./videoEditor/effectMath";
 import type { SmartTrackingProfile } from "./videoEditor/types";
 import type { AgentJob, AgentJobResult, AgentRecordingRequest, AgentSummaryPayload, ShieldMode, ShieldState } from "./shared/agent";
-import { getWindowsRuntimeSupport, isWindowsStorePackage } from "./config/windowsSupport";
+import { WINDOWS_STORE_IDENTITY_DEFAULT, getWindowsRuntimeSupport, isWindowsStorePackage } from "./config/windowsSupport";
 import { getageofscreenTempDir } from "./services/runtimePaths";
 import type {
     CaptureShortcutPreference,
@@ -786,6 +786,8 @@ const DEFAULT_AGENT_RECORDING_REQUEST: AgentRecordingRequest = {
     editAfterRecording: false,
 };
 
+const isAgentAutoRecordingAllowed = () => process.env.AGEOFSCREEN_ALLOW_AGENT_AUTO_RECORDING === "1";
+
 const shouldAutoSaveToDownloads = () => shieldMode === "agent_local";
 const resolveAutomatedExportPath = (defaultFolder: string, defaultFileName: string): string | null => {
     const smokeExportDir = process.env.AGEOFSCREEN_SMOKE_EXPORT_DIR?.trim();
@@ -846,7 +848,7 @@ const MENU_REOPEN_GUARD_MS = 260;
 const MENU_TRIGGER_REARM_DELAY_MS = 120;
 const MENU_PREWARM_DELAY_MS = 260;
 const MENU_IDLE_RELEASE_DELAY_MS = 6000;
-const CAPTURE_WINDOW_SETTLE_MS = 160;
+const CAPTURE_WINDOW_SETTLE_MS = 100;
 const STOP_RECORDING_RETRY_DELAYS_MS = [0, 160, 420] as const;
 const PRINT_SCREEN_REGISTRATION_RETRY_DELAYS_MS = [1000, 5000, 15000] as const;
 const AUTO_LAUNCH_ARG = "--ageofscreen-startup";
@@ -1025,8 +1027,13 @@ const resolveWindowsStoreAppUserModelId = async (): Promise<string | null> => {
 
     const script = `
 $ErrorActionPreference = 'Stop'
-$names = @('Age of Screen', 'AgeofScreen', 'ageofscreen')
-$app = Get-StartApps | Where-Object { $names -contains $_.Name -or $_.AppID -like '*AgeofScreen*' } | Select-Object -First 1
+$patterns = @('Age of Screen', 'AgeofScreen', 'ageofscreen', '${WINDOWS_STORE_IDENTITY_DEFAULT}')
+$app = Get-StartApps | Where-Object {
+    foreach ($pattern in $patterns) {
+        if ($_.Name -like "*$pattern*" -or $_.AppID -like "*$pattern*") { return $true }
+    }
+    return $false
+} | Sort-Object @{ Expression = { if ($_.AppID -like '*${WINDOWS_STORE_IDENTITY_DEFAULT}*') { 0 } else { 1 } } }, Name | Select-Object -First 1
 if (-not $app) { exit 2 }
 [Console]::Out.Write($app.AppID)
 `;
@@ -1053,15 +1060,99 @@ if (-not $app) { exit 2 }
     return null;
 };
 
-const createWindowsStoreDesktopShortcut = async () => {
+const quotePowerShellLiteral = (value: string) => `'${value.replace(/'/g, "''")}'`;
+
+const writeWindowsShortcutViaPowerShell = async ({
+    shortcutPath,
+    target,
+    args,
+    cwd,
+    description,
+    icon,
+}: {
+    shortcutPath: string;
+    target: string;
+    args?: string;
+    cwd?: string;
+    description: string;
+    icon?: string;
+}): Promise<boolean> => {
+    const script = `
+$ErrorActionPreference = 'Stop'
+$shortcutPath = ${quotePowerShellLiteral(shortcutPath)}
+$targetPath = ${quotePowerShellLiteral(target)}
+$arguments = ${quotePowerShellLiteral(args || "")}
+$workingDirectory = ${quotePowerShellLiteral(cwd || "")}
+$description = ${quotePowerShellLiteral(description)}
+$iconLocation = ${quotePowerShellLiteral(icon || "")}
+$desktopDir = Split-Path -Parent $shortcutPath
+if (-not (Test-Path -LiteralPath $desktopDir)) {
+    New-Item -ItemType Directory -Path $desktopDir -Force | Out-Null
+}
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = $targetPath
+$shortcut.Arguments = $arguments
+if ($workingDirectory) { $shortcut.WorkingDirectory = $workingDirectory }
+$shortcut.Description = $description
+if ($iconLocation) { $shortcut.IconLocation = $iconLocation }
+$shortcut.Save()
+if (-not (Test-Path -LiteralPath $shortcutPath)) { exit 3 }
+`;
+
+    try {
+        const result = await runWindowsCommand("powershell.exe", [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ]);
+
+        if (result.code === 0 && fs.existsSync(shortcutPath)) {
+            return true;
+        }
+
+        console.warn("[ageofscreen] PowerShell desktop shortcut fallback failed:", result);
+    } catch (error) {
+        console.warn("[ageofscreen] PowerShell desktop shortcut fallback threw:", error);
+    }
+
+    return false;
+};
+
+const writeWindowsDesktopShortcut = async (
+    shortcutPath: string,
+    shortcutOptions: Electron.ShortcutDetails,
+): Promise<boolean> => {
+    try {
+        const created = shell.writeShortcutLink(shortcutPath, "create", shortcutOptions);
+        if (created && fs.existsSync(shortcutPath)) {
+            return true;
+        }
+    } catch (error) {
+        console.warn("[ageofscreen] shell.writeShortcutLink failed:", error);
+    }
+
+    return writeWindowsShortcutViaPowerShell({
+        shortcutPath,
+        target: shortcutOptions.target,
+        args: shortcutOptions.args,
+        cwd: shortcutOptions.cwd,
+        description: shortcutOptions.description || "Age of Screen",
+        icon: typeof shortcutOptions.icon === "string" ? shortcutOptions.icon : undefined,
+    });
+};
+
+const createWindowsStoreDesktopShortcut = async (): Promise<boolean> => {
     if (process.platform !== "win32" || !app.isPackaged) {
-        return;
+        return false;
     }
 
     const shortcutPath = path.join(app.getPath("desktop"), "Age of Screen.lnk");
     if (fs.existsSync(shortcutPath)) {
         writeAppPreference("windowsDesktopShortcutCreated", true);
-        return;
+        return true;
     }
 
     if (readAppPreference<boolean>("windowsDesktopShortcutCreated")) {
@@ -1089,17 +1180,31 @@ const createWindowsStoreDesktopShortcut = async () => {
                 icon: iconPath || process.execPath,
                 iconIndex: 0,
             };
-        const created = shell.writeShortcutLink(shortcutPath, "create", shortcutOptions);
+        const created = await writeWindowsDesktopShortcut(shortcutPath, shortcutOptions);
 
         if (created && fs.existsSync(shortcutPath)) {
             writeAppPreference("windowsDesktopShortcutCreated", true);
             console.log("[ageofscreen] Created Windows Store desktop shortcut:", shortcutPath);
-            return;
+            return true;
         }
 
         console.warn("[ageofscreen] Windows Store desktop shortcut was not created.");
     } catch (error) {
         console.warn("[ageofscreen] Failed to create Windows Store desktop shortcut:", error);
+    }
+
+    return false;
+};
+
+const ensureWindowsStoreDesktopShortcut = async () => {
+    if (await createWindowsStoreDesktopShortcut()) {
+        return;
+    }
+
+    for (const delayMs of [5000, 20000]) {
+        setTimeout(() => {
+            void createWindowsStoreDesktopShortcut();
+        }, delayMs);
     }
 };
 
@@ -1873,7 +1978,60 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
         await wait(CAPTURE_WINDOW_SETTLE_MS);
     }
 
-    // Take screenshot first - Request exact physical pixels to match cropping logic
+    const interactiveCapture = type !== "fullscreen";
+    let createdCaptureWindow: BrowserWindow | null = null;
+    let captureWindowLoaded = false;
+    const showInteractiveCaptureWindow = () => {
+        if (!createdCaptureWindow) {
+            return;
+        }
+        if (captureWindow === createdCaptureWindow && tempScreenshotDataUrl) {
+            createdCaptureWindow.show();
+            createdCaptureWindow.focus();
+            createdCaptureWindow.webContents.send("capture-mode", type === "window" ? "window" : "region");
+            createdCaptureWindow.webContents.send("screenshot-data", tempScreenshotDataUrl);
+        }
+    };
+
+    if (interactiveCapture) {
+        createdCaptureWindow = new BrowserWindow({
+            x: primaryDisplay.bounds.x,
+            y: primaryDisplay.bounds.y,
+            width,
+            height,
+            frame: false,
+            transparent: true,
+            backgroundColor: "#00000000",
+            alwaysOnTop: true,
+            skipTaskbar: true,
+            autoHideMenuBar: true,
+            show: false,
+            paintWhenInitiallyHidden: false,
+            webPreferences: {
+                preload: CAPTURE_WINDOW_PRELOAD_WEBPACK_ENTRY,
+                nodeIntegration: false,
+                contextIsolation: true,
+                backgroundThrottling: false,
+            },
+        });
+        captureWindow = createdCaptureWindow;
+
+        createdCaptureWindow.loadURL(CAPTURE_WINDOW_WEBPACK_ENTRY);
+
+        createdCaptureWindow.webContents.once("did-finish-load", () => {
+            captureWindowLoaded = true;
+            showInteractiveCaptureWindow();
+        });
+
+        createdCaptureWindow.on("closed", () => {
+            if (captureWindow === createdCaptureWindow) {
+                captureWindow = null;
+                tempScreenshotDataUrl = null;
+            }
+        });
+    }
+
+    // Request exact physical pixels to match cropping logic.
     const sources = await desktopCapturer.getSources({
         types: ["screen"],
         thumbnailSize: {
@@ -1895,45 +2053,9 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
         return;
     }
 
-    const createdCaptureWindow = new BrowserWindow({
-        x: primaryDisplay.bounds.x,
-        y: primaryDisplay.bounds.y,
-        width,
-        height,
-        frame: false,
-        transparent: true,
-        backgroundColor: "#00000000",
-        alwaysOnTop: true,
-        skipTaskbar: true,
-        autoHideMenuBar: true,
-        show: false,
-        paintWhenInitiallyHidden: false,
-        webPreferences: {
-            preload: CAPTURE_WINDOW_PRELOAD_WEBPACK_ENTRY,
-            nodeIntegration: false,
-            contextIsolation: true,
-            backgroundThrottling: false,
-        },
-    });
-    captureWindow = createdCaptureWindow;
-
-    createdCaptureWindow.loadURL(CAPTURE_WINDOW_WEBPACK_ENTRY);
-
-    createdCaptureWindow.webContents.once("did-finish-load", () => {
-        if (captureWindow === createdCaptureWindow && tempScreenshotDataUrl) {
-            createdCaptureWindow.show();
-            createdCaptureWindow.focus();
-            createdCaptureWindow.webContents.send("capture-mode", type === "window" ? "window" : "region");
-            createdCaptureWindow.webContents.send("screenshot-data", tempScreenshotDataUrl);
-        }
-    });
-
-    createdCaptureWindow.on("closed", () => {
-        if (captureWindow === createdCaptureWindow) {
-            captureWindow = null;
-            tempScreenshotDataUrl = null;
-        }
-    });
+    if (interactiveCapture && captureWindowLoaded) {
+        showInteractiveCaptureWindow();
+    }
 };
 
 // --- Focus Window (Timer Widget) ---
@@ -3064,7 +3186,14 @@ const dispatchRecordingStartRequest = (config?: AgentRecordingRequest) => {
 };
 
 const maybeAutoStartAgentRecording = (reason: string) => {
-    if (shieldMode !== "agent_local" || isRecordingActive || agentAutoRecordingRequested) {
+    if (
+        !isAgentAutoRecordingAllowed()
+        || isWindowsAutoLaunch()
+        || reason === "app startup"
+        || shieldMode !== "agent_local"
+        || isRecordingActive
+        || agentAutoRecordingRequested
+    ) {
         return;
     }
 
@@ -4655,7 +4784,7 @@ app.on('web-contents-created', (_event, contents) => {
 });
 
 app.whenReady().then(async () => {
-    if (process.platform === "win32") {
+    if (process.platform === "win32" && !isWindowsStorePackage()) {
         app.setAppUserModelId("com.ageofscreen.app");
     }
     // Install privacy filter before any windows are created
@@ -4699,7 +4828,7 @@ app.whenReady().then(async () => {
     broadcastLicenseState(cachedEntitlementState);
     await cleanupBrokenWindowsAutoLaunchRegistration();
     ensureWindowsAutoLaunchRegistration();
-    await createWindowsStoreDesktopShortcut();
+    await ensureWindowsStoreDesktopShortcut();
     await ensureWindowsPrintScreenPreference();
     registerCaptureShortcut();
     createAppTray();
@@ -4723,10 +4852,6 @@ app.whenReady().then(async () => {
         setTimeout(() => {
             createMenuWindow({ show: false, bypassReopenGuard: true });
         }, MENU_PREWARM_DELAY_MS);
-    }
-
-    if (shieldMode === "agent_local") {
-        setTimeout(() => maybeAutoStartAgentRecording("app startup"), 250);
     }
 
     // Register Alt+Z for Auto-Zoom toggle (only if feature flag allows)

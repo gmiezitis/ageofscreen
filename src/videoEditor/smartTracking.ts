@@ -35,7 +35,7 @@ type FocusIntent = {
 };
 
 type ZoomCandidate = SmartEffect & {
-    sourceKind: 'click' | 'typing';
+    sourceKind: 'click' | 'typing' | 'motion';
 };
 
 type SmartTrackingProfileConfig = {
@@ -76,6 +76,14 @@ const TYPING_RETRIGGER_GAP = 0.5;
 const MAX_CLICK_CLUSTER_DURATION = 5.4;
 const TYPING_CLICK_SUPPRESSION_MS = 1200;
 const CLICK_SUPPRESSES_TYPING_GAP = 0.6;
+const MOTION_FALLBACK_BUCKET_SECONDS = 3.8;
+const MOTION_FALLBACK_GAP_MS = 850;
+const MOTION_FALLBACK_MIN_EVENTS = 5;
+const MOTION_FALLBACK_MIN_DISTANCE_PX = 80;
+const MOTION_FALLBACK_MIN_SPREAD_PERCENT = 8;
+const MOTION_FALLBACK_TAIL_SECONDS = 0.75;
+const MOTION_FALLBACK_MAX_DURATION = 3.8;
+const MOTION_FALLBACK_MAX_ZOOMS = 3;
 
 export const DEFAULT_SMART_TRACKING_PROFILE: SmartTrackingProfile = 'smooth_focus';
 
@@ -482,6 +490,80 @@ function buildTypingZooms(intent: FocusIntent, index: number, durationLimit: num
     }];
 }
 
+function buildMotionFallbackZooms(events: SmoothedCursorEvent[], bounds: CursorBounds, durationLimit: number | null, profile: SmartTrackingProfileConfig): ZoomCandidate[] {
+    const moves = events
+        .filter((event) => event.type === 'move')
+        .filter((event) => durationLimit == null || event.t / 1000 <= durationLimit + 0.25)
+        .sort((a, b) => a.t - b.t);
+
+    if (moves.length < MOTION_FALLBACK_MIN_EVENTS) return [];
+
+    const candidates: ZoomCandidate[] = [];
+    let bucket: SmoothedCursorEvent[] = [moves[0]];
+
+    const flushBucket = () => {
+        if (bucket.length < MOTION_FALLBACK_MIN_EVENTS || candidates.length >= MOTION_FALLBACK_MAX_ZOOMS) {
+            return;
+        }
+
+        let travelPx = 0;
+        for (let i = 1; i < bucket.length; i++) {
+            travelPx += Math.hypot(bucket[i].smoothX - bucket[i - 1].smoothX, bucket[i].smoothY - bucket[i - 1].smoothY);
+        }
+
+        const firstPoint = toNormalizedPoint(bounds, bucket[0].smoothX, bucket[0].smoothY);
+        const lastPoint = toNormalizedPoint(bounds, bucket[bucket.length - 1].smoothX, bucket[bucket.length - 1].smoothY);
+        const spreadPercent = Math.hypot(lastPoint.x - firstPoint.x, lastPoint.y - firstPoint.y);
+        if (travelPx < MOTION_FALLBACK_MIN_DISTANCE_PX && spreadPercent < MOTION_FALLBACK_MIN_SPREAD_PERCENT) {
+            return;
+        }
+
+        const avgX = bucket.reduce((sum, event) => sum + event.smoothX, 0) / bucket.length;
+        const avgY = bucket.reduce((sum, event) => sum + event.smoothY, 0) / bucket.length;
+        const center = toNormalizedPoint(bounds, avgX, avgY);
+        const rawStart = Math.max(0, bucket[0].t / 1000 - profile.clickLeadSeconds);
+        const startTime = durationLimit != null
+            ? clamp(rawStart, 0, Math.max(0, durationLimit - MIN_ZOOM_DURATION))
+            : rawStart;
+        const rawDuration = (bucket[bucket.length - 1].t / 1000) - startTime + MOTION_FALLBACK_TAIL_SECONDS;
+        const maxDuration = durationLimit != null ? Math.max(MIN_ZOOM_DURATION, durationLimit - startTime) : rawDuration;
+        const duration = Math.min(Math.max(MIN_ZOOM_DURATION, rawDuration), MOTION_FALLBACK_MAX_DURATION, maxDuration);
+        if (duration < MIN_ZOOM_DURATION) return;
+
+        candidates.push({
+            id: `smart-track-motion-${candidates.length}-${Math.round(startTime * 1000)}`,
+            type: 'zoom',
+            startTime,
+            duration,
+            label: 'SMART CURSOR FOLLOW',
+            intensity: Math.max(55, Math.round(profile.typingZoomIntensity * 0.78)),
+            tilt: 0,
+            zoomArea: createZoomArea(center.x, center.y, profile.clickZoomArea),
+            followCursor: true,
+            followCursorIntensity: DEFAULT_ZOOM_INTENSITY,
+            sourceKind: 'motion',
+        });
+    };
+
+    for (let i = 1; i < moves.length; i++) {
+        const event = moves[i];
+        const previous = bucket[bucket.length - 1];
+        const bucketDuration = (event.t - bucket[0].t) / 1000;
+        const gapMs = event.t - previous.t;
+
+        if (gapMs > MOTION_FALLBACK_GAP_MS || bucketDuration > MOTION_FALLBACK_BUCKET_SECONDS) {
+            flushBucket();
+            bucket = [event];
+            continue;
+        }
+
+        bucket.push(event);
+    }
+
+    flushBucket();
+    return candidates;
+}
+
 function packZoomCandidates(candidates: ZoomCandidate[], durationLimit: number | null, profile: SmartTrackingProfileConfig): ZoomCandidate[] {
     const sorted = [...candidates].sort((a, b) => a.startTime - b.startTime);
     const packed: ZoomCandidate[] = [];
@@ -580,26 +662,30 @@ export function buildSmartTrackingEffects(
         ...detectTypingFocuses(smoothedEvents, bounds, profile),
     ], profile);
 
-    if (intents.length === 0) return [];
-
     const durationLimit = Number.isFinite(options.durationHint) && options.durationHint ? options.durationHint : null;
     const zoomCandidates: ZoomCandidate[] = [];
 
-    intents.forEach((intent, index) => {
-        if (intent.kind === 'typing') {
-            zoomCandidates.push(...buildTypingZooms(intent, index, durationLimit, profile));
-            return;
-        }
+    if (intents.length === 0) {
+        zoomCandidates.push(...buildMotionFallbackZooms(smoothedEvents, bounds, durationLimit, profile));
+    } else {
+        intents.forEach((intent, index) => {
+            if (intent.kind === 'typing') {
+                zoomCandidates.push(...buildTypingZooms(intent, index, durationLimit, profile));
+                return;
+            }
 
-        const clickZoom = buildClickZoom(intent, index, durationLimit, profile);
-        if (clickZoom) zoomCandidates.push(clickZoom);
-    });
+            const clickZoom = buildClickZoom(intent, index, durationLimit, profile);
+            if (clickZoom) zoomCandidates.push(clickZoom);
+        });
+    }
+
+    if (zoomCandidates.length === 0) return [];
 
     const packedZooms = packZoomCandidates(zoomCandidates, durationLimit, profile);
     const effects: SmartEffect[] = packedZooms.map(({ sourceKind: _sourceKind, ...effect }) => effect);
 
     for (const zoom of packedZooms) {
-        if (zoom.sourceKind !== 'click' && zoom.sourceKind !== 'typing') continue;
+        if (zoom.sourceKind !== 'click' && zoom.sourceKind !== 'typing' && zoom.sourceKind !== 'motion') continue;
         effects.push({
             id: `${zoom.id}-exposure`,
             type: 'exposure',

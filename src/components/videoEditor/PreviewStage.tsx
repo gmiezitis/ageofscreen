@@ -39,6 +39,7 @@ const TimelineMediaClipLayer: React.FC<{
     selectable: boolean;
     isSelected: boolean;
     isPlaying: boolean;
+    playbackSpeed: number;
     displayTime: number;
     imageClipStageStyle: React.CSSProperties;
     onSelect: (id: string) => void;
@@ -48,6 +49,7 @@ const TimelineMediaClipLayer: React.FC<{
     selectable,
     isSelected,
     isPlaying,
+    playbackSpeed,
     displayTime,
     imageClipStageStyle,
     onSelect,
@@ -67,6 +69,7 @@ const TimelineMediaClipLayer: React.FC<{
         }
 
         const targetTime = Math.max(0, Math.min(localTime, Math.max(0, clip.duration)));
+        video.playbackRate = Math.max(0.1, playbackSpeed || 1);
         if (Number.isFinite(targetTime) && !video.seeking && Math.abs(video.currentTime - targetTime) > 0.12) {
             try {
                 video.currentTime = targetTime;
@@ -78,7 +81,7 @@ const TimelineMediaClipLayer: React.FC<{
         } else {
             video.pause();
         }
-    }, [clip.duration, isPlaying, isVideoClip, localTime]);
+    }, [clip.duration, isPlaying, isVideoClip, localTime, playbackSpeed]);
 
     if (opacity <= 0.001) {
         return null;
@@ -132,6 +135,7 @@ interface PreviewStageProps {
     threeContainerRef: React.RefObject<HTMLDivElement>;
     crop: any;
     isPlaying: boolean;
+    playbackSpeed?: number;
     togglePlay: () => void;
     mediaLoaded: boolean;
     displayTime: number;
@@ -180,7 +184,7 @@ interface PreviewStageProps {
 export const PreviewStage: React.FC<PreviewStageProps> = ({
     mediaType, mediaPath, getMediaSrc,
     videoRef, audioRef: _audioRef, threeContainerRef,
-    crop, isPlaying, togglePlay, mediaLoaded, displayTime,
+    crop, isPlaying, playbackSpeed = 1, togglePlay, mediaLoaded, displayTime,
     activeEffects, selectedZoomEffect, selectedBlurEffect,
     segments, imageClips, selectedImageClipId, setSelectedImageClipId,
     overlayImages, selectedOverlayId, setSelectedOverlayId, onEditOverlayImage,
@@ -356,6 +360,7 @@ export const PreviewStage: React.FC<PreviewStageProps> = ({
                 selectable={selectable}
                 isSelected={selectedImageClipId === clip.id}
                 isPlaying={isPlaying}
+                playbackSpeed={playbackSpeed}
                 displayTime={displayTime}
                 imageClipStageStyle={imageClipStageStyle}
                 onSelect={setSelectedImageClipId}

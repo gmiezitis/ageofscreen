@@ -91,7 +91,7 @@ const VideoEditorApp: React.FC = () => {
     usePlaybackLoop(state, handlers);
     useEditorKeyboard(state, handlers);
     useDragResize(state, handlers);
-    useAudioSync(state.isPlaying, state.displayTime, state.audioSegments, state.playbackSpeed);
+    useAudioSync(state.isPlaying, state.displayTime, state.audioSegments, state.playbackSpeed, state.audioRefs);
 
     useEffect(() => {
         const video = state.videoRef.current;
@@ -559,6 +559,7 @@ const VideoEditorApp: React.FC = () => {
                         threeContainerRef={state.threeContainerRef}
                         crop={state.crop}
                         isPlaying={state.isPlaying}
+                        playbackSpeed={state.playbackSpeed}
                         togglePlay={handlers.togglePlay}
                         mediaLoaded={state.mediaLoaded}
                         displayTime={state.displayTime}

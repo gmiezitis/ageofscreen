@@ -1198,7 +1198,7 @@ const App: React.FC = () => {
                                 backdropFilter: "blur(18px)",
                             }}
                         >
-                            <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.04em", marginBottom: 8 }}>ageofscreen</h1>
+                            <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: 0, marginBottom: 8 }}>ageofscreen</h1>
                             <p style={{ color: "rgba(226, 232, 240, 0.74)", fontSize: 14, lineHeight: 1.6 }}>
                                 Capture something to start editing.
                             </p>

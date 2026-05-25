@@ -124,11 +124,43 @@ const expectedBundledFfmpegPaths = [
 ];
 const hasBundledFfmpegPayloads = expectedBundledFfmpegPaths.every((candidatePath) => fs.existsSync(candidatePath));
 const extraResources = [
-    ...(fs.existsSync(ffmpegResourceRoot) ? [ffmpegResourceRoot] : []),
     ...(fs.existsSync(brandingResourceRoot) ? [brandingResourceRoot] : []),
     ...(fs.existsSync(appIconPngPath) ? [appIconPngPath] : []),
     ...(fs.existsSync(nativeCaptureAddonPath) ? [nativeCaptureAddonPath] : []),
 ];
+
+const copyTargetFfmpegResources = (
+    buildPath: string,
+    _electronVersion: string,
+    platform: string,
+    arch: string,
+    callback: (error?: Error | null) => void,
+) => {
+    try {
+        if (platform !== "win32") {
+            callback();
+            return;
+        }
+
+        const platformArch = `${platform}-${arch}`;
+        const sourceDir = path.join(ffmpegResourceRoot, platformArch);
+        if (!fs.existsSync(sourceDir)) {
+            console.warn(`[forge.config] FFmpeg resources missing for ${platformArch}: ${sourceDir}`);
+            callback();
+            return;
+        }
+
+        const targetDir = path.join(buildPath, "resources", "ffmpeg", platformArch);
+        fs.rmSync(targetDir, { recursive: true, force: true });
+        fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+        fs.cpSync(sourceDir, targetDir, { recursive: true });
+    } catch (error) {
+        callback(error instanceof Error ? error : new Error(String(error)));
+        return;
+    }
+
+    callback();
+};
 
 if (releaseProfile.allowBundledFfmpegOnly && !hasBundledFfmpegPayloads) {
     console.warn("[forge.config] Bundled FFmpeg payloads are incomplete. Add resources/ffmpeg/win32-x64/* and resources/ffmpeg/win32-arm64/* before creating release packages.");
@@ -280,6 +312,7 @@ const config: ForgeConfig = {
         prune: true,
         icon: fs.existsSync(appIconIcoPath) ? appIconIcoPath : undefined,
         extraResource: extraResources,
+        afterCopyExtraResources: [copyTargetFfmpegResources],
     },
     rebuildConfig: {},
     makers: releaseProfile.storeSafe ? storeMakers : directDownloadMakers,

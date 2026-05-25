@@ -5,7 +5,13 @@ import { toMediaFileUrl } from '../shared/mediaPaths';
  * Manages audio element lifecycle and time-synchronisation
  * with the video playback loop.
  */
-export function useAudioSync(isPlaying: boolean, displayTime: number, audioSegments: any[], playbackSpeed = 1) {
+export function useAudioSync(
+    isPlaying: boolean,
+    displayTime: number,
+    audioSegments: any[],
+    playbackSpeed = 1,
+    audioRefs?: { current: { [key: string]: HTMLAudioElement } },
+) {
     const activeAudioElements = useRef<Map<string, HTMLAudioElement>>(new Map());
 
     const getAudioSrc = useCallback((filePath: string): string => {
@@ -29,6 +35,12 @@ export function useAudioSync(isPlaying: boolean, displayTime: number, audioSegme
                     el.volume = seg.volume ?? 1;
                     el.playbackRate = playbackSpeed;
                     activeAudioElements.current.set(seg.id, el);
+                    if (audioRefs) {
+                        audioRefs.current[seg.id] = el;
+                    }
+                }
+                if (audioRefs) {
+                    audioRefs.current[seg.id] = el;
                 }
                 const audioTime = displayTime - seg.startTime;
                 el.playbackRate = playbackSpeed;
@@ -41,16 +53,27 @@ export function useAudioSync(isPlaying: boolean, displayTime: number, audioSegme
 
         const ids = new Set(audioSegments.map((s: any) => s.id));
         activeAudioElements.current.forEach((audio, id) => {
-            if (!ids.has(id)) { audio.pause(); activeAudioElements.current.delete(id); }
+            if (!ids.has(id)) {
+                audio.pause();
+                activeAudioElements.current.delete(id);
+                if (audioRefs) {
+                    delete audioRefs.current[id];
+                }
+            }
         });
-    }, [isPlaying, displayTime, audioSegments, playbackSpeed, getAudioSrc]);
+    }, [isPlaying, displayTime, audioSegments, playbackSpeed, getAudioSrc, audioRefs]);
 
     useEffect(() => {
         return () => {
             activeAudioElements.current.forEach((a) => a.pause());
             activeAudioElements.current.clear();
+            if (audioRefs) {
+                Object.keys(audioRefs.current).forEach((id) => {
+                    delete audioRefs.current[id];
+                });
+            }
         };
-    }, []);
+    }, [audioRefs]);
 }
 
 

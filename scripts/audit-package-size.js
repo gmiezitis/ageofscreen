@@ -107,10 +107,19 @@ if (appDirs.length === 0) {
 }
 
 let hasBannedPaths = false;
+let hasWrongArchFfmpeg = false;
+
+const getExpectedFfmpegArch = (appName) => {
+    const normalized = appName.toLowerCase();
+    if (normalized.endsWith("-x64")) return "win32-x64";
+    if (normalized.endsWith("-arm64")) return "win32-arm64";
+    return null;
+};
 
 for (const appDir of appDirs) {
     const appName = path.basename(appDir);
     const appAsarPath = path.join(appDir, "resources", "app.asar");
+    const expectedFfmpegArch = getExpectedFfmpegArch(appName);
 
     if (!fs.existsSync(appAsarPath)) {
         console.warn(`[audit:package-size] Skipping ${appName}: missing resources/app.asar`);
@@ -143,9 +152,26 @@ for (const appDir of appDirs) {
         hasBannedPaths = true;
     }
 
+    const ffmpegDir = path.join(appDir, "resources", "ffmpeg");
+    const ffmpegArchDirs = fs.existsSync(ffmpegDir)
+        ? fs.readdirSync(ffmpegDir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && /^win32-/.test(entry.name))
+            .map((entry) => entry.name)
+            .sort()
+        : [];
+    const wrongFfmpegArchDirs = expectedFfmpegArch
+        ? ffmpegArchDirs.filter((entry) => entry !== expectedFfmpegArch)
+        : [];
+    if (wrongFfmpegArchDirs.length > 0) {
+        hasWrongArchFfmpeg = true;
+    }
+
     console.log(`\n[audit:package-size] ${appName}`);
     console.log(`  unpacked app folder: ${formatMb(appSize)}`);
     console.log(`  app.asar: ${formatMb(appAsarSize)}`);
+    if (expectedFfmpegArch) {
+        console.log(`  ffmpeg arch payloads: ${ffmpegArchDirs.join(", ") || "none"} (expected ${expectedFfmpegArch})`);
+    }
     console.log("  top-level packaged paths:");
     for (const row of topLevelRows.slice(0, 12)) {
         console.log(`    - ${row.path}: ${formatMb(row.size)}`);
@@ -158,10 +184,18 @@ for (const appDir of appDirs) {
     if (bannedEntries.length > 0) {
         console.error(`  banned packaged paths detected: ${bannedEntries.join(", ")}`);
     }
+    if (wrongFfmpegArchDirs.length > 0) {
+        console.error(`  wrong-architecture FFmpeg payloads detected: ${wrongFfmpegArchDirs.join(", ")}`);
+    }
 }
 
 if (hasBannedPaths) {
     console.error("\n[audit:package-size] Failed: packaged app still contains banned repo-only paths.");
+    process.exit(1);
+}
+
+if (hasWrongArchFfmpeg) {
+    console.error("\n[audit:package-size] Failed: packaged app contains FFmpeg payloads for another CPU architecture.");
     process.exit(1);
 }
 

@@ -427,6 +427,8 @@ export const useVideoEditorHandlers = (state: any) => {
                 if (playbackRequestIdRef.current !== requestId) {
                     return false;
                 }
+                displayTimeRef.current = playbackTarget.displayTime;
+                setDisplayTime(playbackTarget.displayTime);
                 pendingPlaybackTargetRef.current = null;
                 resumePlaybackAfterSeekRef.current = false;
                 setIsPlaying(true);
