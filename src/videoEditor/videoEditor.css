@@ -918,7 +918,7 @@ body {
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition: background 120ms ease, color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
 }
 
 .sidebar-action:active {
@@ -1492,29 +1492,59 @@ body {
 /* Playhead */
 .playhead {
     position: absolute;
-    top: -6px;
+    top: 0;
     bottom: 0;
-    width: 2px;
-    background: #f5f5f5;
-    z-index: 50;
-    transform: translateX(-50%);
-    pointer-events: auto;
-    cursor: ew-resize;
-    box-shadow: 0 0 6px rgba(255, 255, 255, 0.25);
+    left: calc(100px + (100% - 100px) * var(--playhead-progress, 0));
+    width: 1px;
+    background: rgba(226, 232, 240, 0.72);
+    z-index: 100;
+    transform: translate3d(-50%, 0, 0);
+    pointer-events: none;
+    box-shadow: 0 0 10px rgba(125, 211, 252, 0.14);
+    contain: layout paint;
+    will-change: left;
 }
 
 .playhead::before {
     content: '';
     position: absolute;
-    top: 0;
+    top: 2px;
     left: 50%;
     transform: translateX(-50%);
-    width: 10px;
-    height: 10px;
-    background: #f5f5f5;
-    border-radius: 50%;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    width: 5px;
+    height: 18px;
+    border-radius: 999px;
+    background: rgba(226, 232, 240, 0.92);
+    box-shadow: 0 5px 14px rgba(2, 6, 23, 0.22);
+    pointer-events: none;
+}
+
+.playhead-handle {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translate3d(-50%, 0, 0);
+    border-radius: 999px;
+    background: #e2e8f0;
+    border: 2px solid rgba(15, 23, 42, 0.72);
+    box-shadow: 0 6px 16px rgba(2, 6, 23, 0.28);
     cursor: ew-resize;
+    pointer-events: auto;
+    transition: transform 90ms ease, box-shadow 90ms ease, background 90ms ease;
+    will-change: transform;
+}
+
+.playhead-handle:hover,
+.playhead-handle.dragging {
+    transform: translate3d(-50%, 0, 0) scale(1.06);
+    background: #f8fafc;
+    box-shadow: 0 8px 18px rgba(2, 6, 23, 0.32), 0 0 0 3px rgba(125, 211, 252, 0.12);
+}
+
+.playhead-handle.dragging {
+    cursor: grabbing;
 }
 
 /* Timeline footer */

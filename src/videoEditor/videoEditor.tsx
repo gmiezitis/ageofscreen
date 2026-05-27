@@ -666,6 +666,7 @@ const VideoEditorApp: React.FC = () => {
                         mediaLibrary={state.libraryAssets}
                         draggingEffectId={state.draggingEffectId}
                         timelineRef={state.timelineRef}
+                        playheadRef={state.playheadRef}
                         hasCursorData={hasRecordingMetadata}
                     />
                 </div>

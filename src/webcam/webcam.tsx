@@ -24,6 +24,7 @@ declare global {
 const DEFAULT_CAMERA_BORDER_COLOR = '#000000';
 const DEFAULT_CAMERA_BORDER_WIDTH = 4;
 const DEFAULT_CAMERA_GLOW_ENABLED = false;
+const WEBCAM_RETRY_DELAYS_MS = [0, 180, 500, 900];
 
 const normalizeBorderColor = (value: string): string => value.trim().toLowerCase();
 
@@ -91,18 +92,18 @@ const WebcamWindow: React.FC = () => {
                     [
                         {
                             video: {
-                                width: { ideal: 240 },
-                                height: { ideal: 240 },
-                                frameRate: { ideal: 20, max: 24 },
+                                width: { ideal: 220 },
+                                height: { ideal: 220 },
+                                frameRate: { ideal: 18, max: 22 },
                                 facingMode: 'user'
                             },
                             audio: micEnabled
                         },
                         {
                             video: {
-                                width: { ideal: 240 },
-                                height: { ideal: 240 },
-                                frameRate: { ideal: 20, max: 24 },
+                                width: { ideal: 220 },
+                                height: { ideal: 220 },
+                                frameRate: { ideal: 18, max: 22 },
                             },
                             audio: micEnabled
                         },
@@ -118,10 +119,10 @@ const WebcamWindow: React.FC = () => {
         };
 
         const initWebcam = async () => {
-            const maxRetries = 4;
-            for (let i = 1; i <= maxRetries && !cancelled; i++) {
-                if (i > 1) await new Promise(r => setTimeout(r, 600 * i));
-                stream = await tryGetMedia(i);
+            for (let i = 0; i < WEBCAM_RETRY_DELAYS_MS.length && !cancelled; i++) {
+                const delay = WEBCAM_RETRY_DELAYS_MS[i];
+                if (delay > 0) await new Promise(r => setTimeout(r, delay));
+                stream = await tryGetMedia(i + 1);
                 if (stream) break;
             }
             if (cancelled) { stopStreamTracks(stream); return; }
@@ -133,6 +134,7 @@ const WebcamWindow: React.FC = () => {
                 stopStreamTracks(webcamStreamRef.current);
                 webcamStreamRef.current = stream;
                 videoRef.current.srcObject = stream;
+                setHasStream(true);
                 videoRef.current.onloadeddata = () => setHasStream(true);
             } else {
                 console.error('[Webcam] Could not acquire camera after retries');
@@ -273,7 +275,7 @@ const WebcamWindow: React.FC = () => {
                 background: 'transparent',
                 position: 'relative',
                 opacity: hasStream ? 1 : 0,
-                transition: 'opacity 0.4s ease-out',
+                transition: 'opacity 0.16s ease-out',
                 pointerEvents: 'auto'
             }}
         >

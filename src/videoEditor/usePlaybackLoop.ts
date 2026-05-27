@@ -45,6 +45,8 @@ export function usePlaybackLoop(state: any, handlers: any) {
     const displayTimeRef = useRef(displayTime);
     const playbackSpeedRef = useRef(playbackSpeed);
     const lastRenderedTime = useRef<number>(-1);
+    const lastDisplayTimeCommitAt = useRef<number>(0);
+    const lastCommittedDisplayTime = useRef<number>(displayTime);
     const activeSegmentIndexRef = useRef<number>(-1);
 
     useEffect(() => {
@@ -78,9 +80,32 @@ export function usePlaybackLoop(state: any, handlers: any) {
         const SEGMENT_TOLERANCE = 0.15; // Increased for better seek settlement tolerance
         const TRANSFORM_EPSILON = 0.0005;
 
-        const updateDisplayTime = (nextDisplayTime: number) => {
+        const syncPlayheadPosition = (nextDisplayTime: number) => {
+            const playhead = state.playheadRef?.current as HTMLDivElement | null | undefined;
+            if (!playhead) return;
+            const duration = Math.max(0, lastSegmentEndRef.current || 0);
+            const progress = duration > 0
+                ? Math.max(0, Math.min(1, nextDisplayTime / duration))
+                : 0;
+            playhead.style.setProperty('--playhead-progress', progress.toFixed(5));
+        };
+
+        const updateDisplayTime = (nextDisplayTime: number, options?: { forceCommit?: boolean }) => {
             if (!Number.isFinite(nextDisplayTime)) return;
             displayTimeRef.current = nextDisplayTime;
+            syncPlayheadPosition(nextDisplayTime);
+
+            const now = performance.now();
+            const shouldCommit = Boolean(options?.forceCommit)
+                || now - lastDisplayTimeCommitAt.current >= 32
+                || Math.abs(nextDisplayTime - lastCommittedDisplayTime.current) >= 0.05;
+
+            if (!shouldCommit) {
+                return;
+            }
+
+            lastDisplayTimeCommitAt.current = now;
+            lastCommittedDisplayTime.current = nextDisplayTime;
             state.setDisplayTime(nextDisplayTime);
         };
 
@@ -145,7 +170,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
             ) {
                 lastRenderedTime.current = finalDisplayTime;
                 updateInterpolatedTransform(finalDisplayTime);
-                updateDisplayTime(finalDisplayTime);
+                updateDisplayTime(finalDisplayTime, { forceCommit: true });
             }
 
             state.setIsPlaying(false);
@@ -229,7 +254,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
                     imageClipPlaybackRef.current = null;
 
                     if (!nextItem) {
-                        updateDisplayTime(Math.max(lastSegmentEndRef.current, clipEnd));
+                        updateDisplayTime(Math.max(lastSegmentEndRef.current, clipEnd), { forceCommit: true });
                         state.setIsPlaying(false);
                         frameId = requestAnimationFrame(loop);
                         return;
@@ -238,7 +263,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
                     if (nextItem.kind === 'image') {
                         clearPendingPlaybackTargetRef.current?.();
                         lastRenderedTime.current = nextItem.startTime;
-                        updateDisplayTime(nextItem.startTime);
+                        updateDisplayTime(nextItem.startTime, { forceCommit: true });
                         frameId = requestAnimationFrame(loop);
                         return;
                     }
@@ -253,10 +278,10 @@ export function usePlaybackLoop(state: any, handlers: any) {
                             displayTime: nextSegment.timelineStart,
                             videoTime: nextSegment.startTime,
                         };
-                        updateDisplayTime(nextSegment.timelineStart);
+                        updateDisplayTime(nextSegment.timelineStart, { forceCommit: true });
                         requestVideoResume(nextTarget);
                     } else {
-                        updateDisplayTime(Math.max(lastSegmentEndRef.current, clipEnd));
+                        updateDisplayTime(Math.max(lastSegmentEndRef.current, clipEnd), { forceCommit: true });
                         state.setIsPlaying(false);
                     }
                     frameId = requestAnimationFrame(loop);
@@ -319,7 +344,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
                         if (seekInFlight || video.seeking) {
                             if (Math.abs(displayTimeRef.current - pendingPlaybackTarget.displayTime) > 0.008) {
                                 lastRenderedTime.current = pendingPlaybackTarget.displayTime;
-                                updateDisplayTime(pendingPlaybackTarget.displayTime);
+                                updateDisplayTime(pendingPlaybackTarget.displayTime, { forceCommit: true });
                             }
                             frameId = requestAnimationFrame(loop);
                             return;
@@ -332,7 +357,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
                         if (!isPassed || diff > 0.5) {
                             if (Math.abs(displayTimeRef.current - pendingPlaybackTarget.displayTime) > 0.008) {
                                 lastRenderedTime.current = pendingPlaybackTarget.displayTime;
-                                updateDisplayTime(pendingPlaybackTarget.displayTime);
+                                updateDisplayTime(pendingPlaybackTarget.displayTime, { forceCommit: true });
                             }
                             clearPendingPlaybackTargetRef.current?.(pendingPlaybackTarget);
                             frameId = requestAnimationFrame(loop);
@@ -421,7 +446,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
                             clipStart: nextItem.startTime,
                         };
                         lastRenderedTime.current = nextItem.startTime;
-                        updateDisplayTime(nextItem.startTime);
+                        updateDisplayTime(nextItem.startTime, { forceCommit: true });
                         video.pause();
                         frameId = requestAnimationFrame(loop);
                         return;
@@ -434,7 +459,7 @@ export function usePlaybackLoop(state: any, handlers: any) {
                             displayTime: nextItem.segment.timelineStart,
                             videoTime: nextItem.segment.startTime,
                         };
-                        updateDisplayTime(nextItem.segment.timelineStart);
+                        updateDisplayTime(nextItem.segment.timelineStart, { forceCommit: true });
                         requestVideoResume(nextTarget);
                     } else {
                         video.pause();

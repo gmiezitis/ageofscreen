@@ -226,9 +226,7 @@ export const useVideoEditorHandlers = (state: any) => {
 
     const waitForVideoPaint = useCallback(() => (
         new Promise<void>((resolve) => {
-            window.requestAnimationFrame(() => {
-                window.requestAnimationFrame(() => resolve());
-            });
+            window.requestAnimationFrame(() => resolve());
         })
     ), []);
 
@@ -237,7 +235,7 @@ export const useVideoEditorHandlers = (state: any) => {
         targetTime: number,
         operationId: number,
         tolerance = 0.18,
-        timeoutMs = 1200,
+        timeoutMs = 850,
     ) => (
         new Promise<boolean>((resolve) => {
             let timeoutId: number | null = null;
@@ -495,6 +493,7 @@ export const useVideoEditorHandlers = (state: any) => {
                 playbackTarget: getSeekTargetDebugState(playbackTarget),
                 ...getVideoDebugState(),
             });
+            setIsPlaying(true);
             const playPromise = video.play();
             await playPromise;
             if (playbackRequestIdRef.current !== requestId) {
@@ -522,6 +521,7 @@ export const useVideoEditorHandlers = (state: any) => {
             }
             pendingPlaybackTargetRef.current = null;
             resumePlaybackAfterSeekRef.current = false;
+            setIsPlaying(false);
             console.error('[VideoEditor] Playback start failed:', error);
             logTimelineDebug('startPlaybackFromTarget:error', {
                 requestId,
