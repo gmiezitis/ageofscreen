@@ -110,6 +110,8 @@ let cachedEntitlementState: EntitlementState = {
     lastSyncAt: null,
 };
 
+const AGEOFSCREEN_UPGRADE_URL = "https://ageofscreen.com";
+
 const readAppPreference = <T = unknown>(key: keyof AppPreferences): T => (
     (appPreferencesStore as any).get(key as string) as T
 );
@@ -212,11 +214,12 @@ const manualEntitlementProvider: EntitlementProvider = {
     },
     async purchasePro(source: UpgradeSource = "generic"): Promise<PurchaseProResult> {
         const state = await this.refresh();
+        await shell.openExternal(AGEOFSCREEN_UPGRADE_URL);
 
         return {
             success: false,
             state,
-            message: "This release is free and does not include paid upgrades.",
+            message: "Opened ageofscreen.com.",
             source,
         };
     },
@@ -842,13 +845,13 @@ const TRIGGER_WINDOW_WIDTH = 40;
 const TRIGGER_WINDOW_HEIGHT = 2;
 const TRIGGER_WINDOW_TOP_OFFSET = 0;
 const MENU_WINDOW_TOP_OFFSET = TRIGGER_WINDOW_HEIGHT + 1;
-const TRIGGER_HOVER_OPEN_MS = 180;
-const TRIGGER_TRACK_INTERVAL_MS = 50;
-const MENU_REOPEN_GUARD_MS = 260;
-const MENU_TRIGGER_REARM_DELAY_MS = 120;
-const MENU_PREWARM_DELAY_MS = 260;
+const TRIGGER_HOVER_OPEN_MS = 110;
+const TRIGGER_TRACK_INTERVAL_MS = 33;
+const MENU_REOPEN_GUARD_MS = 170;
+const MENU_TRIGGER_REARM_DELAY_MS = 80;
+const MENU_PREWARM_DELAY_MS = 120;
 const MENU_IDLE_RELEASE_DELAY_MS = 6000;
-const CAPTURE_WINDOW_SETTLE_MS = 100;
+const CAPTURE_WINDOW_SETTLE_MS = 90;
 const STOP_RECORDING_RETRY_DELAYS_MS = [0, 160, 420] as const;
 const PRINT_SCREEN_REGISTRATION_RETRY_DELAYS_MS = [1000, 5000, 15000] as const;
 const AUTO_LAUNCH_ARG = "--ageofscreen-startup";
@@ -4839,7 +4842,7 @@ app.whenReady().then(async () => {
     if (!onboardingState.hasCompletedOnboarding && RELEASE_PROFILE.name !== "dev") {
         setTimeout(() => {
             createIntroWindow();
-        }, 220);
+        }, 120);
     } else if (launchedFromWindowsStartup) {
         setTimeout(() => {
             restoreTriggerWindowIfEnabled(40);
@@ -4847,7 +4850,7 @@ app.whenReady().then(async () => {
     } else if (RELEASE_PROFILE.name !== "dev") {
         setTimeout(() => {
             openAgeofScreenLauncher();
-        }, 280);
+        }, 140);
     } else {
         setTimeout(() => {
             createMenuWindow({ show: false, bypassReopenGuard: true });

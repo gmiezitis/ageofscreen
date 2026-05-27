@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     saveVideo: (buffer: ArrayBuffer) => ipcRenderer.invoke("save-video", buffer),
     saveTempVideo: (buffer: ArrayBuffer) => ipcRenderer.invoke("save-temp-video", buffer),
     deleteTempVideo: (filePath: string) => ipcRenderer.invoke("delete-temp-video", filePath),
+    openMediaEditor: () => ipcRenderer.send("open-media-editor"),
     showVideoEditorShell: () => ipcRenderer.send("open-media-editor"),
     showVideoEditor: (videoDataUrl: string, name?: string) => ipcRenderer.send("show-video-editor", videoDataUrl, name),
 
@@ -62,6 +63,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     showWebcamWindow: () => ipcRenderer.send("webcam-show-camera"),
     sendSourceStatus: (status: { screen: boolean; camera: boolean; mic: boolean }) => ipcRenderer.send("send-source-status", status),
     setEditAfterRecording: (enabled: boolean) => ipcRenderer.send("set-edit-after-recording", enabled),
+    onEditAfterRecordingChanged: (callback: (enabled: boolean) => void) => {
+        const listener = (_event: IpcRendererEvent, enabled: boolean) => callback(enabled);
+        ipcRenderer.on("edit-after-recording-changed", listener);
+        return () => ipcRenderer.removeListener("edit-after-recording-changed", listener);
+    },
     license: {
         getState: (): Promise<EntitlementState> => ipcRenderer.invoke("license:get-state"),
         refresh: (): Promise<EntitlementState> => ipcRenderer.invoke("license:refresh"),

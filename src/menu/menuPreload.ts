@@ -42,6 +42,7 @@ export interface IMenuElectronAPI {
     saveVideo: (buffer: ArrayBuffer) => Promise<any>;
     saveTempVideo: (buffer: ArrayBuffer) => Promise<{ filePath?: string, error?: string }>;
     makeWidgetCaptureInvisible: () => void;
+    showVideoEditorShell: () => void;
     showVideoEditor: (videoDataUrl: string, name?: string) => void;
     openMediaEditor: () => void;
     openMediaFile: (type: 'video' | 'image' | 'audio') => Promise<{ filePath: string, fileName: string } | null>;
@@ -119,6 +120,7 @@ const menuAPI: IMenuElectronAPI = {
     saveVideo: (buffer: ArrayBuffer) => ipcRenderer.invoke("save-video", buffer),
     saveTempVideo: (buffer: ArrayBuffer) => ipcRenderer.invoke("save-temp-video", buffer),
     makeWidgetCaptureInvisible: () => ipcRenderer.send("make-widget-capture-invisible"),
+    showVideoEditorShell: () => ipcRenderer.send("open-media-editor"),
     showVideoEditor: (videoDataUrl: string, name?: string) => ipcRenderer.send("show-video-editor", videoDataUrl, name),
     openMediaEditor: () => ipcRenderer.send("open-media-editor"),
     openMediaFile: (type: 'video' | 'image' | 'audio') => ipcRenderer.invoke("open-media-file", type),

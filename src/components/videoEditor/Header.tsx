@@ -1,5 +1,5 @@
-﻿import React, { useState, useRef, useEffect } from 'react';
-import { PanelLeft, Monitor, Palette, Undo2, Redo2, ChevronDown, Sparkles, Crop, Wand2, Activity, Loader2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { PanelLeft, Monitor, Palette, Undo2, Redo2, ChevronDown, Sparkles, Crop, Wand2, Activity, Loader2, ArrowUpRight } from 'lucide-react';
 import {
     ExportQuality,
     PlatformPreset,
@@ -101,6 +101,10 @@ export const Header: React.FC<HeaderProps> = React.memo(({
 
     const importedVideoLacksMetadata = mediaType === 'video' && !hasRecordingMetadata;
     const autoPolishButtonDisabled = isAutoPolishing || isExporting || importedVideoLacksMetadata;
+    const handleGoPro = () => {
+        void (window as any).videoEditorAPI?.license?.purchasePro?.('export_watermark');
+        setShowExports(false);
+    };
 
     return (
         <div className="editor-header" style={{ height: '56px', background: 'rgba(26,26,31,0.8)', backdropFilter: 'blur(20px)', zIndex: 1100, overflow: 'visible', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px', gap: '8px' }}>
@@ -343,7 +347,42 @@ export const Header: React.FC<HeaderProps> = React.memo(({
                                     lineHeight: 1.45,
                                 }}
                             >
-                                Exports include a subtle ageofscreen watermark.
+                                <div>Exports include a subtle ageofscreen watermark.</div>
+                                <button
+                                    onClick={handleGoPro}
+                                    style={{
+                                        marginTop: '9px',
+                                        width: '100%',
+                                        height: '30px',
+                                        border: '1px solid rgba(191,219,254,0.32)',
+                                        borderRadius: '999px',
+                                        background: 'rgba(255,255,255,0.92)',
+                                        color: '#0f172a',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '6px',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        letterSpacing: '0.01em',
+                                        boxShadow: '0 8px 20px rgba(15,23,42,0.22)',
+                                        transition: 'transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.background = '#ffffff';
+                                        e.currentTarget.style.transform = 'translateY(-1px)';
+                                        e.currentTarget.style.boxShadow = '0 10px 24px rgba(15,23,42,0.28)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.background = 'rgba(255,255,255,0.92)';
+                                        e.currentTarget.style.transform = 'translateY(0)';
+                                        e.currentTarget.style.boxShadow = '0 8px 20px rgba(15,23,42,0.22)';
+                                    }}
+                                >
+                                    <span>Go Pro</span>
+                                    <ArrowUpRight size={13} strokeWidth={2.4} />
+                                </button>
                             </div>
                             <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '4px 8px 8px 8px' }} />
                             <div style={{ fontSize: '10px', color: 'var(--text-muted)', padding: '8px 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Quality</div>
