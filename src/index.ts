@@ -86,7 +86,12 @@ if (smokeLogFile) {
     };
 }
 
-
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+    console.warn("[ageofscreen] Another app instance is already running. Exiting duplicate launch.");
+    app.quit();
+    process.exit(0);
+}
 
 const appPreferencesStore = new (Store as any)({
     name: "app-preferences",
@@ -109,6 +114,8 @@ let cachedEntitlementState: EntitlementState = {
     provider: isWindowsStorePackage() ? "store_stub" : "manual",
     lastSyncAt: null,
 };
+
+const AGEOFSCREEN_UPGRADE_URL = "https://ageofscreen.com";
 
 const readAppPreference = <T = unknown>(key: keyof AppPreferences): T => (
     (appPreferencesStore as any).get(key as string) as T
@@ -212,11 +219,12 @@ const manualEntitlementProvider: EntitlementProvider = {
     },
     async purchasePro(source: UpgradeSource = "generic"): Promise<PurchaseProResult> {
         const state = await this.refresh();
+        await shell.openExternal(AGEOFSCREEN_UPGRADE_URL);
 
         return {
             success: false,
             state,
-            message: "This release is free and does not include paid upgrades.",
+            message: "Opened ageofscreen.com.",
             source,
         };
     },
@@ -671,6 +679,42 @@ let menuReopenBlockedUntil = 0;
 let menuWindowShouldShowOnReady = true;
 let menuWindowBlurGuardUntil = 0;
 
+const focusExistingAppInstance = (reason: string) => {
+    console.log("[ageofscreen] Focusing existing app instance:", reason);
+    const candidates = [
+        videoEditorWindow,
+        editorWindow,
+        menuWindow,
+        introWindow,
+        recordingWidget,
+        webcamWindow,
+        triggerWindow,
+    ];
+
+    const targetWindow = candidates.find((windowRef) => windowRef && !windowRef.isDestroyed()) ?? null;
+    if (!targetWindow) {
+        if (app.isReady()) {
+            createTriggerWindow();
+            restoreTriggerWindowIfEnabled(40);
+        }
+        return;
+    }
+
+    if (targetWindow.isMinimized()) {
+        targetWindow.restore();
+    }
+
+    if (!targetWindow.isVisible()) {
+        targetWindow.show();
+    }
+
+    targetWindow.focus();
+};
+
+app.on("second-instance", () => {
+    focusExistingAppInstance("second-instance");
+});
+
 const toShieldState = (mode: ShieldMode): ShieldState => ({
     mode,
     localOnly: true,
@@ -773,6 +817,8 @@ let pendingMediaName: string | null = null;
 let pendingAgentSummary: AgentSummaryPayload | null = null;
 let latestAgentVideoPath: string | null = null;
 let pendingVideoDeliveryInFlight = false;
+let pendingVideoDeliveryRetryTimeout: NodeJS.Timeout | null = null;
+let pendingVideoDeliveryAttempt = 0;
 let agentAutoRecordingRequested = false;
 let _latestCaptureHealth: { droppedFrames: number; bufferErrors: number; effectiveFps: number | null; status: string } | null = null;
 let _latestSourceStatus: { screen: boolean; camera: boolean; mic: boolean } | null = null;
@@ -842,14 +888,15 @@ const TRIGGER_WINDOW_WIDTH = 40;
 const TRIGGER_WINDOW_HEIGHT = 2;
 const TRIGGER_WINDOW_TOP_OFFSET = 0;
 const MENU_WINDOW_TOP_OFFSET = TRIGGER_WINDOW_HEIGHT + 1;
-const TRIGGER_HOVER_OPEN_MS = 180;
-const TRIGGER_TRACK_INTERVAL_MS = 50;
-const MENU_REOPEN_GUARD_MS = 260;
-const MENU_TRIGGER_REARM_DELAY_MS = 120;
-const MENU_PREWARM_DELAY_MS = 260;
+const TRIGGER_HOVER_OPEN_MS = 110;
+const TRIGGER_TRACK_INTERVAL_MS = 33;
+const MENU_REOPEN_GUARD_MS = 170;
+const MENU_TRIGGER_REARM_DELAY_MS = 80;
+const MENU_PREWARM_DELAY_MS = 120;
 const MENU_IDLE_RELEASE_DELAY_MS = 6000;
-const CAPTURE_WINDOW_SETTLE_MS = 100;
+const CAPTURE_WINDOW_SETTLE_MS = 90;
 const STOP_RECORDING_RETRY_DELAYS_MS = [0, 160, 420] as const;
+const PENDING_VIDEO_DELIVERY_RETRY_DELAYS_MS = [120, 500, 1200, 2500, 5000] as const;
 const PRINT_SCREEN_REGISTRATION_RETRY_DELAYS_MS = [1000, 5000, 15000] as const;
 const AUTO_LAUNCH_ARG = "--ageofscreen-startup";
 let isWebcamSmall = false; // Toggle for webcam size
@@ -1974,10 +2021,6 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
 
     shouldRestoreEditorAfterCaptureCancel = hiddenEditorWindow;
 
-    if (hiddenAnyWindow) {
-        await wait(CAPTURE_WINDOW_SETTLE_MS);
-    }
-
     const interactiveCapture = type !== "fullscreen";
     let createdCaptureWindow: BrowserWindow | null = null;
     let captureWindowLoaded = false;
@@ -2029,6 +2072,10 @@ const createCaptureWindow = async (type: "region" | "fullscreen" | "window" = "r
                 tempScreenshotDataUrl = null;
             }
         });
+    }
+
+    if (hiddenAnyWindow) {
+        await wait(CAPTURE_WINDOW_SETTLE_MS);
     }
 
     // Request exact physical pixels to match cropping logic.
@@ -2815,7 +2862,11 @@ const showRecordingWidgetForDrawing = () => {
 };
 
 const sendPendingMediaToVideoEditor = (reason: string) => {
-    if (!videoEditorWindow || videoEditorWindow.isDestroyed() || !pendingVideoDataUrl || pendingVideoDeliveryInFlight) {
+    if (!videoEditorWindow || videoEditorWindow.isDestroyed() || !pendingVideoDataUrl) {
+        return;
+    }
+
+    if (pendingVideoDeliveryInFlight && !reason.includes("retry") && reason !== "video-editor-ready") {
         return;
     }
 
@@ -2835,6 +2886,23 @@ const sendPendingMediaToVideoEditor = (reason: string) => {
         undefined,
     );
     pendingVideoDeliveryInFlight = true;
+
+    if (pendingVideoDeliveryRetryTimeout) {
+        clearTimeout(pendingVideoDeliveryRetryTimeout);
+    }
+    const retryDelay = PENDING_VIDEO_DELIVERY_RETRY_DELAYS_MS[
+        Math.min(pendingVideoDeliveryAttempt, PENDING_VIDEO_DELIVERY_RETRY_DELAYS_MS.length - 1)
+    ];
+    pendingVideoDeliveryRetryTimeout = setTimeout(() => {
+        pendingVideoDeliveryRetryTimeout = null;
+        if (!pendingVideoDataUrl || !videoEditorWindow || videoEditorWindow.isDestroyed()) {
+            return;
+        }
+
+        pendingVideoDeliveryAttempt += 1;
+        pendingVideoDeliveryInFlight = false;
+        sendPendingMediaToVideoEditor(`retry-${pendingVideoDeliveryAttempt}`);
+    }, retryDelay);
 };
 
 const getPendingVideoEditorMedia = () => {
@@ -2863,6 +2931,11 @@ const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
             approveMediaPath(videoDataUrl);
             pendingVideoDataUrl = videoDataUrl;
             pendingVideoDeliveryInFlight = false;
+            pendingVideoDeliveryAttempt = 0;
+            if (pendingVideoDeliveryRetryTimeout) {
+                clearTimeout(pendingVideoDeliveryRetryTimeout);
+                pendingVideoDeliveryRetryTimeout = null;
+            }
         }
         if (name !== undefined) {
             pendingMediaName = name;
@@ -2918,6 +2991,11 @@ const createVideoEditorWindow = (videoDataUrl?: string, name?: string) => {
             videoEditorWindow = null;
             pendingVideoDataUrl = null;
             pendingVideoDeliveryInFlight = false;
+            pendingVideoDeliveryAttempt = 0;
+            if (pendingVideoDeliveryRetryTimeout) {
+                clearTimeout(pendingVideoDeliveryRetryTimeout);
+                pendingVideoDeliveryRetryTimeout = null;
+            }
             pendingAgentSummary = null;
         });
 
@@ -2938,6 +3016,11 @@ const closeVideoEditorWindow = () => {
     videoEditorWindow = null;
     pendingVideoDataUrl = null;
     pendingVideoDeliveryInFlight = false;
+    pendingVideoDeliveryAttempt = 0;
+    if (pendingVideoDeliveryRetryTimeout) {
+        clearTimeout(pendingVideoDeliveryRetryTimeout);
+        pendingVideoDeliveryRetryTimeout = null;
+    }
     pendingAgentSummary = null;
 };
 
@@ -4419,9 +4502,14 @@ const registerIpcHandlers = () => {
         if (!pendingVideoDataUrl) return;
         if (consumedUrl && consumedUrl !== pendingVideoDataUrl) return;
         console.log("[ageofscreen] Video editor consumed pending media");
+        if (pendingVideoDeliveryRetryTimeout) {
+            clearTimeout(pendingVideoDeliveryRetryTimeout);
+            pendingVideoDeliveryRetryTimeout = null;
+        }
         pendingVideoDataUrl = null;
         pendingMediaName = null;
         pendingVideoDeliveryInFlight = false;
+        pendingVideoDeliveryAttempt = 0;
     });
 
     ipcMain.handle("get-pending-editor-media", () => {
@@ -4839,7 +4927,7 @@ app.whenReady().then(async () => {
     if (!onboardingState.hasCompletedOnboarding && RELEASE_PROFILE.name !== "dev") {
         setTimeout(() => {
             createIntroWindow();
-        }, 220);
+        }, 120);
     } else if (launchedFromWindowsStartup) {
         setTimeout(() => {
             restoreTriggerWindowIfEnabled(40);
@@ -4847,7 +4935,7 @@ app.whenReady().then(async () => {
     } else if (RELEASE_PROFILE.name !== "dev") {
         setTimeout(() => {
             openAgeofScreenLauncher();
-        }, 280);
+        }, 140);
     } else {
         setTimeout(() => {
             createMenuWindow({ show: false, bypassReopenGuard: true });
