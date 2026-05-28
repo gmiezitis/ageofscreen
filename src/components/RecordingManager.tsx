@@ -60,15 +60,6 @@ const getWindowModeWebcamStream = async (): Promise<MediaStream> => {
   );
 };
 
-const openVideoEditorShell = () => {
-  const api = window.electronAPI;
-  if (api?.showVideoEditorShell) {
-    api.showVideoEditorShell();
-    return;
-  }
-  api?.openMediaEditor?.();
-};
-
 export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgradePrompt }: RecordingManagerProps) => {
   const [isRecording, setIsRecording] = useState(false);
   const engineRef = useRef<RecordingEngine | null>(null);
@@ -103,7 +94,6 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
     if (editAfterRecordingRef.current) {
       if (!window.electronAPI.saveTempVideo) return null;
 
-      openVideoEditorShell();
       const buffer = await videoBlob.arrayBuffer();
       const { filePath, error } = await window.electronAPI.saveTempVideo(buffer);
       if (filePath) {
