@@ -94,7 +94,6 @@ export const useRecordingManager = ({ onMessage, enableWebcam = false, onUpgrade
     if (editAfterRecordingRef.current) {
       if (!window.electronAPI.saveTempVideo) return null;
 
-      window.electronAPI.showVideoEditorShell?.();
       const buffer = await videoBlob.arrayBuffer();
       const { filePath, error } = await window.electronAPI.saveTempVideo(buffer);
       if (filePath) {

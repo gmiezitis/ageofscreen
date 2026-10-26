@@ -14,8 +14,8 @@ import { WindowSource } from '../types';
 const DEFAULT_CAMERA_SIZE = 100;
 const MIN_CAMERA_SIZE = 60;
 const MAX_CAMERA_SIZE = 250;
-const CAMERA_START_RETRY_DELAYS_MS = [0, 500, 1000, 2000];
-const CAMERA_RELEASE_DELAY_MS = 120;
+const CAMERA_START_RETRY_DELAYS_MS = [0, 250, 750];
+const CAMERA_RELEASE_DELAY_MS = 50;
 
 const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
 
@@ -155,7 +155,11 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
             const mediaStream = await getUserMediaWithFallback(
                 [
                     {
-                        video: { width: { ideal: 320 }, height: { ideal: 240 } },
+                        video: {
+                            width: { ideal: 240 },
+                            height: { ideal: 180 },
+                            frameRate: { ideal: 15, max: 20 },
+                        },
                         audio: false,
                     },
                     { video: true, audio: false },
@@ -282,14 +286,11 @@ export const RecordingSetup: React.FC<RecordingSetupProps> = ({
             setIsWindowSourcesLoading(true);
             setWindowSources([]);
             try {
-                // Fetch window sources before showing selector
-                const sources = await (window as any).electronAPI.getScreenSources();
-                // Prefer dedicated getWindowSources for better thumbnails
                 let nextWindowSources: WindowSource[];
                 if ((window as any).electronAPI.getWindowSources) {
-                    const winSources = await (window as any).electronAPI.getWindowSources();
-                    nextWindowSources = winSources;
+                    nextWindowSources = await (window as any).electronAPI.getWindowSources();
                 } else {
+                    const sources = await (window as any).electronAPI.getScreenSources();
                     // Fallback to primary screen sources but mapped correctly
                     nextWindowSources = sources.map((s: any) => ({
                         id: s.id,

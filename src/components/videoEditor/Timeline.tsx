@@ -118,6 +118,7 @@ interface TimelineProps {
     mediaLibrary: Array<{ id: string; type: 'video' | 'image' | 'audio'; path: string; name: string; thumbnail?: string; duration?: number }>;
     draggingEffectId?: string | null;
     timelineRef: React.RefObject<HTMLDivElement>;
+    playheadRef?: React.RefObject<HTMLDivElement | null>;
     onSmartFocus?: () => void;
     hasCursorData?: boolean;
 }
@@ -139,7 +140,7 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
         handleOverlayDragStart, handleTextOverlayDragStart,
         onDeleteEffect, onDeleteTextOverlay, isDraggingPlayhead,
         draggedSegmentId, dragOverIndex, handleImportMedia,
-        mediaPath, mediaLibrary, draggingEffectId, timelineRef,
+        mediaPath, mediaLibrary, draggingEffectId, timelineRef, playheadRef,
     } = props;
 
     const LANE_H = 22;
@@ -653,60 +654,19 @@ export const Timeline: React.FC<TimelineProps> = (props) => {
 
                     {/* Playhead */}
                     <div
+                        ref={playheadRef}
                         className="playhead"
                         style={{
-                            position: 'absolute', top: 0, bottom: 0,
-                            left: `calc(100px + (100% - 100px) * ${totalKeptDuration > 0 ? Math.min(displayTime / totalKeptDuration, 1) : 0})`,
-                            width: '1px', background: 'var(--accent-light, #7a8fb3)', zIndex: 100, pointerEvents: 'none',
-                            boxShadow: 'var(--shadow-md)',
-                        }}
+                            '--playhead-progress': totalKeptDuration > 0 ? Math.min(displayTime / totalKeptDuration, 1) : 0,
+                        } as React.CSSProperties}
                     >
                         <div
-                            className="playhead-handle"
-                            style={{
-                                position: 'absolute', top: 6, left: '50%', transform: 'translateX(-50%)',
-                                width: '16px', height: '16px',
-                                background: 'rgba(255, 255, 255, 0.25)',
-                                backdropFilter: 'blur(8px)',
-                                border: '1px solid rgba(255, 255, 255, 0.5)',
-                                borderRadius: '50%',
-                                cursor: isDraggingPlayhead ? 'grabbing' : 'ew-resize',
-                                pointerEvents: 'auto',
-                                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15), inset 0 0 4px rgba(255, 255, 255, 0.4)',
-                                transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center'
-                            }}
+                            className={`playhead-handle ${isDraggingPlayhead ? 'dragging' : ''}`}
                             onMouseDown={handlePlayheadDragStart}
-                        >
-                             <div className="playhead-label" style={{ 
-                                 opacity: 0, position: 'absolute', top: -24, 
-                                 background: 'rgba(20, 20, 25, 0.85)', backdropFilter: 'blur(4px)',
-                                 color: 'white', padding: '3px 8px', borderRadius: '6px', 
-                                 fontSize: '9px', fontWeight: 600, pointerEvents: 'none',
-                                 border: '1px solid rgba(255,255,255,0.1)',
-                                 boxShadow: '0 4px 10px rgba(0,0,0,0.3)',
-                                 transition: 'opacity 0.2s, transform 0.2s',
-                                 transform: 'translateY(4px)'
-                             }}>
-                                CAMERA
-                             </div>
-                        </div>
+                        />
                     </div>
                 </div>
             </div>
-            <style dangerouslySetInnerHTML={{ __html: `
-                .playhead-handle:hover .playhead-label {
-                    opacity: 1 !important;
-                    transform: translateY(0) !important;
-                }
-                .playhead-handle:hover {
-                    background: rgba(255, 255, 255, 0.4) !important;
-                    transform: translateX(-50%) scale(1.1) !important;
-                }
-                .playhead::before {
-                    display: none !important;
-                }
-            `}} />
         </div>
     );
 };
