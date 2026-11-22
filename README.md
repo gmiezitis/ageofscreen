@@ -38,9 +38,6 @@ For support, bug reports, and certification questions, use the repository issues
 
 https://github.com/gmiezitis/ageofscreen/issues
 
-You can also contact the publisher by email:
-
-g.miezitis@gmail.com
 
 ## Microsoft Store Notes
 
